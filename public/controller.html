@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>AirConsole-Local — Controller</title>
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; background:#222; color:#fff;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  #wrap { display:flex; flex-direction:column; height:100%; }
+  #status { padding:12px; text-align:center; font-size:15px; }
+  #pad { flex:1; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr);
+         gap:10px; padding:18px; }
+  button { font-size:30px; border:none; border-radius:16px; background:rgba(0,0,0,.35); color:#fff; }
+  button:active { background:rgba(255,255,255,.25); }
+  .up{grid-area:1/2} .left{grid-area:2/1} .right{grid-area:2/3} .down{grid-area:3/2}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="status">Verbinde…</div>
+  <div id="pad">
+    <button class="up"    data-move="up">▲</button>
+    <button class="left"  data-move="left">◀</button>
+    <button class="right" data-move="right">▶</button>
+    <button class="down"  data-move="down">▼</button>
+  </div>
+</div>
+
+<script>window.__AC_ROLE__ = 'controller';</script>
+<script src="airconsole-local.js"></script>
+<script>
+  const ac = new AirConsole();
+  const status = document.getElementById('status');
+
+  ac.onReady = function () { status.textContent = 'Verbunden – warte auf Screen…'; };
+
+  ac.onMessage = function (from, data) {
+    if (data && data.type === 'welcome') {
+      document.body.style.background = data.color;
+      status.textContent = 'Du bist Spieler ' + data.player;
+    }
+  };
+
+  function press(move) { ac.message(AirConsole.SCREEN, { move }); } // an den Screen (ID 0)
+
+  document.querySelectorAll('button[data-move]').forEach(function (btn) {
+    const move = btn.getAttribute('data-move');
+    let timer = null;
+    const start = (e) => { e.preventDefault(); press(move); timer = setInterval(() => press(move), 80); };
+    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+    btn.addEventListener('touchstart', start);
+    btn.addEventListener('touchend', stop);
+    btn.addEventListener('mousedown', start);
+    btn.addEventListener('mouseup', stop);
+    btn.addEventListener('mouseleave', stop);
+  });
+</script>
+</body>
+</html>

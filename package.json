@@ -1,0 +1,12 @@
+{
+  "name": "airconsole-local",
+  "version": "1.0.0",
+  "description": "Lokale, server-lose AirConsole-kompatible Laufzeitumgebung fuer eigene Spiele",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

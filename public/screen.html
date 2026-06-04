@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirConsole-Local — Screen</title>
+<style>
+  body { margin:0; background:#111; color:#eee; font-family:system-ui,sans-serif; }
+  #info { padding:8px 12px; font-size:14px; }
+  canvas { display:block; background:#1b1b1b; max-width:100%; }
+</style>
+</head>
+<body>
+<div id="info">Warte auf Spieler… öffne <b>/controller.html</b> auf dem Handy.</div>
+<canvas id="c" width="800" height="500"></canvas>
+
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="airconsole-local.js"></script>
+<script>
+  const ac = new AirConsole();
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const info = document.getElementById('info');
+  const COLORS = ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#1abc9c'];
+  const players = {};        // device_id -> {x, y, color}
+  const SPEED = 12;
+
+  ac.onConnect = function (id) {
+    const color = COLORS[(id - 1) % COLORS.length];
+    players[id] = { x: canvas.width / 2, y: canvas.height / 2, color };
+    ac.message(id, { type: 'welcome', color, player: id });  // Farbe zurueck ans Handy
+    updateInfo();
+  };
+
+  ac.onDisconnect = function (id) { delete players[id]; updateInfo(); };
+
+  ac.onMessage = function (id, data) {
+    const p = players[id];
+    if (!p || !data || !data.move) return;
+    if (data.move === 'up')    p.y -= SPEED;
+    if (data.move === 'down')  p.y += SPEED;
+    if (data.move === 'left')  p.x -= SPEED;
+    if (data.move === 'right') p.x += SPEED;
+    p.x = Math.max(15, Math.min(canvas.width - 15, p.x));
+    p.y = Math.max(15, Math.min(canvas.height - 15, p.y));
+  };
+
+  function updateInfo() {
+    const n = Object.keys(players).length;
+    info.textContent = n ? n + ' Spieler verbunden' : 'Warte auf Spieler… öffne /controller.html auf dem Handy.';
+  }
+
+  (function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const id in players) {
+      const p = players[id];
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('P' + id, p.x, p.y - 22);
+    }
+    requestAnimationFrame(draw);
+  })();
+</script>
+</body>
+</html>
