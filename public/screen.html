@@ -6,15 +6,19 @@
 <title>Drawing Evolution — Screen</title>
 <style>
   html,body { margin:0; background:#0a0a14; color:#eee; font-family:system-ui,sans-serif; height:100%; }
-  #wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px; }
+  #wrap { display:flex; flex-direction:column; align-items:center; gap:10px; padding:10px; }
   #info { font-size:14px; opacity:.75; }
   canvas { background:#0d0d1a; border-radius:10px; max-width:100%; box-shadow:0 0 50px rgba(120,90,255,.18); }
+  #saveBtn { display:none; border:none; border-radius:12px; padding:12px 20px; font-size:16px; font-weight:700;
+             background:#30d158; color:#06250f; cursor:pointer; }
+  #saveBtn:active { filter:brightness(1.1); }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="info">Drawing Evolution — öffne <b>/controller.html</b> auf den Handys</div>
   <canvas id="c" width="960" height="600"></canvas>
+  <button id="saveBtn">💾 Evolution als Bild speichern</button>
 </div>
 
 <script>window.__AC_ROLE__ = 'screen';</script>
@@ -23,10 +27,10 @@
   const ac = new AirConsole();
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
+  const saveBtn = document.getElementById('saveBtn');
 
   const COLORS = ['#ff2d55','#0a84ff','#30d158','#ffd60a','#bf5af2','#64d2ff','#ff9f0a','#ac8e68'];
 
-  // --- Wort-Kategorien ---
   const WORD_PACKS = {
     casual: [
       'Sonne','Mond','Baum','Haus','Auto','Fahrrad','Pizza','Banane','Roboter','Rakete',
@@ -41,37 +45,32 @@
       'Krake','Qualle','Schildkröte','Pferd','Kuh','Schwein','Schaf','Huhn','Ente','Biene',
       'Schmetterling','Marienkäfer','Spinne','Fledermaus','Kamel','Känguru','Faultier','Flamingo','Pfau','Eisbär'
     ],
+    laender: [
+      'Deutschland','Frankreich','Italien','Spanien','Portugal','England','Irland','Niederlande','Belgien','Schweiz',
+      'Österreich','Griechenland','Türkei','Ägypten','Marokko','Nigeria','Kenia','Südafrika','Brasilien','Argentinien',
+      'Mexiko','Kanada','USA','Kuba','Japan','China','Indien','Thailand','Australien','Neuseeland',
+      'Russland','Schweden','Norwegen','Island','Polen','Finnland'
+    ],
     versaut: [
       'Tanga','Stringtanga','Kondom','Dildo','Vibrator','Handschellen','Peitsche','Strapse','Reizwäsche','Dessous',
       'Stripperstange','Striptease','Lapdance','Zungenkuss','Knutschfleck','Morgenlatte','Nackedei','Hintern','Busen','Sexpuppe',
       'Liebesschaukel','Rotlichtviertel','Sexshop','Pornoheft','Domina','FKK-Strand','Nacktbaden','Höschen','Spanner','Aktmodell'
     ]
   };
-  const MODE_LABELS = { casual: 'Casual', tiere: 'Tiere 🐾', versaut: 'Versaut 🌶️', custom: 'Eigene Wörter ✍️' };
-  const VALID_MODES = ['casual', 'tiere', 'versaut', 'custom'];
+  const MODE_LABELS = { casual: 'Casual', tiere: 'Tiere 🐾', laender: 'Länder 🌍', versaut: 'Versaut 🌶️', custom: 'Eigene Wörter ✍️' };
+  const VALID_MODES = ['casual', 'tiere', 'laender', 'versaut', 'custom'];
 
   const RECAP_STEP_MS = 2600;
-  const COLLECT_SECONDS = 30;
 
   let players = {};        // id -> {color}
-  let state = 'lobby';     // lobby | collect | play | recap
+  let state = 'lobby';     // lobby | collect | play | preRecap | recap
   let settings = { drawTime: 60, guessTime: 30, mode: 'casual' };
 
-  let gameOrder = [];      // eingefrorene Reihenfolge bei Spielstart
-  let N = 0;
-  let chains = [];         // chains[c] = [ {type:'word'|'drawing', by, word?, strokes?} ]
-  let round = 0;
-  let subPhase = 'draw';
-  let assign = {};
-  let subm = {};
-  let deadline = 0;
-  let phaseMs = 1;
-
-  // Sammelphase (Modus "Eigene Wörter")
+  let gameOrder = [], N = 0;
+  let chains = [];
+  let round = 0, subPhase = 'draw', assign = {}, subm = {};
+  let deadline = 0, phaseMs = 1;
   let collectSubm = {};
-  let collectDeadline = 0;
-  let collectMs = 1;
-
   let recapChain = 0, recapShown = 1, recapAccum = 0;
   let banner = '', bannerUntil = 0;
 
@@ -80,20 +79,21 @@
   const hostId = () => { const c = connectedIds(); return c.length ? Math.min(...c) : null; };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-  const chainFor = (p, r) => ((p - r) % N + N) % N;   // Rotation: keine Wiederholung pro Spieler
+  const chainFor = (p, r) => ((p - r) % N + N) % N;
   function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 4000); }
 
-  // --- Lobby / Reset ---
+  // --- Lobby / Reset / Phasen-Mitteilungen ---
   function sendLobby() {
     const h = hostId();
     connectedIds().forEach(id => ac.message(id, {
       t: 'lobby', host: id === h, color: players[id].color, player: id,
-      drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode,
-      playerCount: connectedIds().length
+      drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode, playerCount: connectedIds().length
     }));
   }
-  function resetToLobby() { state = 'lobby'; gameOrder = []; chains = []; sendLobby(); }
-  function abortToLobby(msg) { setBanner(msg, 6000); resetToLobby(); }
+  function sendPreRecap() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'prerecap', host: id === h })); }
+  function sendRecapViews() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'recap', host: id === h })); }
+  function resetToLobby(keepChains) { state = 'lobby'; gameOrder = []; if (!keepChains) chains = []; sendLobby(); }
+  function abortToLobby(msg) { setBanner(msg, 6000); resetToLobby(false); }
 
   // --- Spielstart ---
   function beginGame() {
@@ -109,13 +109,8 @@
     }
   }
 
-  // Sammelphase: jeder denkt sich ein Wort aus -> seedet seine eigene Kette
-  function enterCollect() {
-    state = 'collect'; collectSubm = {};
-    collectMs = COLLECT_SECONDS * 1000;
-    collectDeadline = performance.now() + collectMs;
-    gameOrder.forEach(id => ac.message(id, { t: 'prompt', ms: collectMs }));
-  }
+  // Sammelphase: endet, sobald ALLE ein Wort abgegeben haben (kein Timer)
+  function enterCollect() { state = 'collect'; collectSubm = {}; gameOrder.forEach(id => ac.message(id, { t: 'prompt' })); }
   let collectClosing = false;
   function finalizeCollect() {
     if (collectClosing) return; collectClosing = true;
@@ -123,7 +118,7 @@
     chains = gameOrder.map((id, c) => {
       let w = (collectSubm[id] || '').trim();
       if (!w) w = fallback[c % fallback.length];
-      return [{ type: 'word', by: id, word: w }];   // by=Autor, Index 0 = Startwort
+      return [{ type: 'word', by: id, word: w }];
     });
     collectClosing = false;
     state = 'play'; startRound(0);
@@ -153,8 +148,7 @@
 
   let closing = false;
   function finalizeRound() {
-    if (closing) return;
-    closing = true;
+    if (closing) return; closing = true;
     gameOrder.forEach(id => {
       const c = assign[id], s = subm[id];
       if (subPhase === 'draw') chains[c].push({ type: 'drawing', by: id, strokes: (s && s.strokes) || [] });
@@ -162,20 +156,17 @@
     });
     closing = false;
     if (round + 1 < N) startRound(round + 1);
-    else startRecap();
+    else { state = 'preRecap'; sendPreRecap(); }   // NICHT automatisch in den Recap — Host startet ihn
   }
 
-  function startRecap() {
-    state = 'recap'; recapChain = 0; recapShown = 1; recapAccum = 0;
-    connectedIds().forEach(id => ac.message(id, { t: 'recap' }));
-  }
+  function startRecap() { state = 'recap'; recapChain = 0; recapShown = 1; recapAccum = 0; sendRecapViews(); }
   function advanceRecap() {
     if (state !== 'recap') return;
     recapAccum = 0;
     const len = chains[recapChain].length;
     if (recapShown < len) recapShown++;
     else if (recapChain < N - 1) { recapChain++; recapShown = 1; }
-    else { setBanner('🎉 Fertig! Host kann eine neue Runde starten.', 8000); resetToLobby(); }
+    else { setBanner('🎉 Fertig! Bild speichern oder neue Runde starten.', 8000); resetToLobby(true); }
   }
 
   // --- Events ---
@@ -188,6 +179,8 @@
     const wasPlayer = gameOrder.includes(id);
     delete players[id];
     if ((state === 'play' || state === 'collect') && wasPlayer) abortToLobby('Ein Spieler hat die Verbindung verloren — zurück zur Lobby.');
+    else if (state === 'preRecap') sendPreRecap();
+    else if (state === 'recap') sendRecapViews();
     else if (state === 'lobby') sendLobby();
   };
   ac.onMessage = (id, d) => {
@@ -209,43 +202,86 @@
       submit(id, { strokes: d.strokes });
     } else if (d.t === 'guess' && state === 'play' && subPhase === 'guess') {
       submit(id, { text: d.text });
+    } else if (d.t === 'startRecap' && id === hostId() && state === 'preRecap') {
+      startRecap();
     } else if (d.t === 'advance' && state === 'recap') {
       advanceRecap();
+    } else if (d.t === 'save' && id === hostId()) {
+      downloadEvolution();
     }
   };
 
-  // --- Striche in eine Box zeichnen (weißer Hintergrund) ---
-  function drawStrokes(strokes, bx, by, bw, bh) {
-    ctx.save();
-    ctx.fillStyle = '#fff'; ctx.fillRect(bx, by, bw, bh);
-    ctx.beginPath(); ctx.rect(bx, by, bw, bh); ctx.clip();
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // --- generisches Zeichnen (für Live-Render UND Bild-Export) ---
+  function drawStrokesOn(o, strokes, bx, by, bw, bh) {
+    o.save(); o.fillStyle = '#fff'; o.fillRect(bx, by, bw, bh);
+    o.beginPath(); o.rect(bx, by, bw, bh); o.clip();
+    o.lineCap = 'round'; o.lineJoin = 'round';
     for (const s of (strokes || [])) {
       if (!s.p || !s.p.length) continue;
-      ctx.strokeStyle = s.c; ctx.lineWidth = Math.max(1, s.w * bw);
-      ctx.beginPath();
-      ctx.moveTo(bx + s.p[0][0] * bw, by + s.p[0][1] * bh);
-      for (let i = 1; i < s.p.length; i++) ctx.lineTo(bx + s.p[i][0] * bw, by + s.p[i][1] * bh);
-      if (s.p.length === 1) ctx.lineTo(bx + s.p[0][0] * bw + 0.5, by + s.p[0][1] * bh);
-      ctx.stroke();
+      o.strokeStyle = s.c; o.lineWidth = Math.max(1, s.w * bw);
+      o.beginPath(); o.moveTo(bx + s.p[0][0] * bw, by + s.p[0][1] * bh);
+      for (let i = 1; i < s.p.length; i++) o.lineTo(bx + s.p[i][0] * bw, by + s.p[i][1] * bh);
+      if (s.p.length === 1) o.lineTo(bx + s.p[0][0] * bw + 0.5, by + s.p[0][1] * bh);
+      o.stroke();
     }
-    ctx.restore();
+    o.restore();
   }
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
-  }
-  function fitFont(text, max, start) {
-    let f = start; ctx.font = 'bold ' + f + 'px system-ui,sans-serif';
-    while (ctx.measureText(text).width > max && f > 10) { f -= 2; ctx.font = 'bold ' + f + 'px system-ui,sans-serif'; }
-    return f;
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } return f; }
+
+  function captionFor(e, i) {
+    return (i === 0) ? (e.by === null ? 'Startwort' : ('P' + e.by + 's Wort'))
+      : (e.type === 'drawing' ? ('P' + e.by + ' zeichnete') : ('P' + e.by + ' riet'));
   }
 
-  // --- Render-Bausteine ---
+  // --- Evolution als PNG exportieren ---
+  function buildEvolutionCanvas() {
+    const margin = 40, titleH = 90, gap = 20, capH = 30, rowPad = 34, W = 1400;
+    const maxN = Math.max(2, ...chains.map(c => c.length));
+    const cw = Math.min(170, Math.floor((W - 2 * margin - (maxN - 1) * gap) / maxN));
+    const rowH = cw + capH + rowPad;
+    const H = titleH + chains.length * rowH + margin;
+    const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
+    const o = oc.getContext('2d');
+    o.fillStyle = '#fff'; o.fillRect(0, 0, W, H);
+    o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle';
+    o.font = 'bold 42px system-ui,sans-serif'; o.fillText('Drawing Evolution', W / 2, titleH / 2);
+
+    chains.forEach((ch, ci) => {
+      const n = ch.length, totalW = n * cw + (n - 1) * gap;
+      let x = (W - totalW) / 2; const y = titleH + ci * rowH;
+      for (let i = 0; i < n; i++) {
+        const e = ch[i];
+        if (e.type === 'drawing') {
+          o.strokeStyle = '#ccc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 10); o.stroke();
+          drawStrokesOn(o, e.strokes, x + 2, y + 2, cw - 4, cw - 4);
+        } else {
+          o.fillStyle = i === 0 ? '#fff6d6' : '#eef'; rr(o, x, y, cw, cw, 12); o.fill();
+          o.strokeStyle = i === 0 ? '#e0b400' : '#bbc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 12); o.stroke();
+          o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle';
+          o.font = 'bold ' + fitFont(o, e.word, cw - 16, 26) + 'px system-ui,sans-serif';
+          o.fillText(e.word, x + cw / 2, y + cw / 2);
+        }
+        o.fillStyle = '#555'; o.font = '14px system-ui,sans-serif'; o.textAlign = 'center'; o.textBaseline = 'middle';
+        o.fillText(captionFor(e, i), x + cw / 2, y + cw + capH / 2);
+        if (i < n - 1) { o.fillStyle = '#999'; o.font = 'bold 22px system-ui,sans-serif'; o.fillText('→', x + cw + gap / 2, y + cw / 2); }
+        x += cw + gap;
+      }
+    });
+    return oc;
+  }
+  function downloadEvolution() {
+    if (!chains.length) return;
+    const a = document.createElement('a');
+    a.href = buildEvolutionCanvas().toDataURL('image/png');
+    a.download = 'drawing-evolution.png';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  saveBtn.addEventListener('click', downloadEvolution);
+
+  // --- Render ---
   function chips(yPos) {
-    const totalW = gameOrder.length * 120;
-    let x = cv.width / 2 - totalW / 2 + 60;
+    const totalW = gameOrder.length * 120; let x = cv.width / 2 - totalW / 2 + 60;
     gameOrder.forEach(id => {
       const done = (state === 'collect') ? (collectSubm[id] !== undefined) : (subm[id] && subm[id].done);
       ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.globalAlpha = done ? 1 : 0.4;
@@ -260,105 +296,80 @@
   function renderLobby() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif';
-    ctx.fillText('Drawing Evolution', cv.width / 2, 64);
-    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif';
-    ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 100);
-    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif';
-    ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 128);
-
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('Drawing Evolution', cv.width / 2, 64);
+    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif'; ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 100);
+    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 128);
     const list = connectedIds().sort((a, b) => a - b), h = hostId();
     ctx.font = 'bold 22px system-ui,sans-serif';
     list.forEach((id, i) => {
       const y = 190 + i * 44;
-      ctx.fillStyle = players[id].color;
-      ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.textAlign = 'left'; ctx.fillStyle = '#eee';
-      ctx.fillText('Spieler ' + id + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
+      ctx.fillStyle = players[id].color; ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText('Spieler ' + id + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
     });
-    ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a';
-    ctx.font = '20px system-ui,sans-serif';
+    ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
     ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 56);
   }
 
   function renderCollect() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    const secs = Math.ceil(Math.max(0, collectDeadline - performance.now()) / 1000);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 40px system-ui,sans-serif';
-    ctx.fillText('💭 Denkt euch ein Wort aus!', cv.width / 2, 110);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 64px system-ui,sans-serif';
-    ctx.fillText(secs, cv.width / 2, 240);
+    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('💭 Denkt euch ein Wort aus!', cv.width / 2, 120);
+    const done = gameOrder.filter(id => collectSubm[id] !== undefined).length;
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 48px system-ui,sans-serif'; ctx.fillText(done + ' / ' + N + ' eingereicht', cv.width / 2, 240);
     chips(390);
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Tippt euer Wort am Handy ein — es startet eure Kette', cv.width / 2, 480);
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Es geht weiter, sobald alle ein Wort haben', cv.width / 2, 480);
   }
 
   function renderPlay() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    const remaining = Math.max(0, deadline - performance.now());
-    const secs = Math.ceil(remaining / 1000);
-    const frac = clamp(remaining / phaseMs, 0, 1);
-
+    const remaining = Math.max(0, deadline - performance.now()), secs = Math.ceil(remaining / 1000), frac = clamp(remaining / phaseMs, 0, 1);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff';
-    ctx.font = 'bold 44px system-ui,sans-serif';
+    ctx.fillStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.font = 'bold 44px system-ui,sans-serif';
     ctx.fillText(subPhase === 'draw' ? '✏️  ZEICHNEN' : '❓  RATEN', cv.width / 2, 80);
-    ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif';
-    ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
-
+    ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif'; ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
     const cx = cv.width / 2, cy = 270, R = 80;
-    ctx.lineWidth = 12; ctx.strokeStyle = '#222';
-    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff';
-    ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif';
-    ctx.fillText(secs, cx, cy);
-
+    ctx.lineWidth = 12; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif'; ctx.fillText(secs, cx, cy);
     chips(430);
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif';
     ctx.fillText(subPhase === 'draw' ? 'Zeichnet euer Wort auf dem Handy!' : 'Ratet, was das Bild zeigt!', cv.width / 2, 510);
+  }
+
+  function renderPreRecap() {
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#30d158'; ctx.font = 'bold 46px system-ui,sans-serif'; ctx.fillText('✅ Alle Runden geschafft!', cv.width / 2, cv.height / 2 - 30);
+    ctx.fillStyle = '#ddd'; ctx.font = '22px system-ui,sans-serif';
+    ctx.fillText('Host (Spieler ' + (hostId() || 1) + ') startet den Rückblick am Handy', cv.width / 2, cv.height / 2 + 28);
   }
 
   function renderRecap() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui,sans-serif';
-    ctx.fillText('🎬 Evolution ' + (recapChain + 1) + ' / ' + N, cv.width / 2, 56);
-
-    const ch = chains[recapChain], n = ch.length;
-    const gap = 22;
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui,sans-serif'; ctx.fillText('🎬 Evolution ' + (recapChain + 1) + ' / ' + N, cv.width / 2, 56);
+    const ch = chains[recapChain], n = ch.length, gap = 22;
     const cw = Math.min(150, Math.floor((cv.width - 80 - (n - 1) * gap) / n));
-    const totalW = n * cw + (n - 1) * gap;
-    let x = (cv.width - totalW) / 2;
-    const y = 230, capY = y + cw + 28;
-
+    const totalW = n * cw + (n - 1) * gap; let x = (cv.width - totalW) / 2; const y = 230, capY = y + cw + 28;
     for (let i = 0; i < n; i++) {
       const e = ch[i], shown = i < recapShown;
       if (shown) {
         if (e.type === 'drawing') {
-          ctx.save(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 10); ctx.stroke(); ctx.restore();
-          drawStrokes(e.strokes, x + 2, y + 2, cw - 4, cw - 4);
+          ctx.save(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 10); ctx.stroke(); ctx.restore();
+          drawStrokesOn(ctx, e.strokes, x + 2, y + 2, cw - 4, cw - 4);
         } else {
-          ctx.fillStyle = '#1a1a2e'; roundRect(x, y, cw, cw, 12); ctx.fill();
-          ctx.strokeStyle = i === 0 ? '#ffd60a' : '#555'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 12); ctx.stroke();
+          ctx.fillStyle = '#1a1a2e'; rr(ctx, x, y, cw, cw, 12); ctx.fill();
+          ctx.strokeStyle = i === 0 ? '#ffd60a' : '#555'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 12); ctx.stroke();
           ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          const fs = fitFont(e.word, cw - 16, 26);
-          ctx.font = 'bold ' + fs + 'px system-ui,sans-serif';
+          ctx.font = 'bold ' + fitFont(ctx, e.word, cw - 16, 26) + 'px system-ui,sans-serif';
           ctx.fillText(e.word, x + cw / 2, y + cw / 2);
         }
         ctx.fillStyle = e.by === null ? '#ffd60a' : (players[e.by] ? players[e.by].color : '#aaa');
         ctx.font = '14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const cap = (i === 0)
-          ? (e.by === null ? 'Startwort' : ('P' + e.by + 's Wort'))
-          : (e.type === 'drawing' ? ('P' + e.by + ' zeichnete') : ('P' + e.by + ' riet'));
-        ctx.fillText(cap, x + cw / 2, capY);
-      } else {
-        ctx.fillStyle = '#15151f'; roundRect(x, y, cw, cw, 10); ctx.fill();
-      }
+        ctx.fillText(captionFor(e, i), x + cw / 2, capY);
+      } else { ctx.fillStyle = '#15151f'; rr(ctx, x, y, cw, cw, 10); ctx.fill(); }
       if (i < n - 1) {
-        ctx.fillStyle = i < recapShown - 1 ? '#888' : '#333';
-        ctx.font = 'bold 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = i < recapShown - 1 ? '#888' : '#333'; ctx.font = 'bold 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillText('→', x + cw + gap / 2, y + cw / 2);
       }
       x += cw + gap;
@@ -371,19 +382,18 @@
     if (state === 'lobby') renderLobby();
     else if (state === 'collect') renderCollect();
     else if (state === 'play') renderPlay();
+    else if (state === 'preRecap') renderPreRecap();
     else if (state === 'recap') renderRecap();
     if (performance.now() < bannerUntil && banner) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, cv.height / 2 - 34, cv.width, 68);
-      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.font = 'bold 24px system-ui,sans-serif';
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 24px system-ui,sans-serif';
       ctx.fillText(banner, cv.width / 2, cv.height / 2);
     }
+    saveBtn.style.display = (chains.length > 0 && state !== 'play' && state !== 'collect') ? 'inline-block' : 'none';
   }
 
-  // --- Ticks ---
   setInterval(() => {
     const now = performance.now();
-    if (state === 'collect' && now >= collectDeadline) finalizeCollect();
     if (state === 'play' && now >= deadline) finalizeRound();
     if (state === 'recap') { recapAccum += 120; if (recapAccum >= RECAP_STEP_MS) advanceRecap(); }
   }, 120);

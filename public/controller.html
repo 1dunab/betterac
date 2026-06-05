@@ -40,6 +40,7 @@
       <div class="modes">
         <button class="modebtn" data-mode="casual">Casual</button>
         <button class="modebtn" data-mode="tiere">Tiere</button>
+        <button class="modebtn" data-mode="laender">Länder</button>
         <button class="modebtn" data-mode="versaut">Versaut</button>
         <button class="modebtn" data-mode="custom">Eigene</button>
       </div>
@@ -56,13 +57,14 @@
   </div>
 </div>
 
-<!-- EIGENES WORT AUSDENKEN -->
+<!-- EIGENES WORT (ohne Timer) -->
 <div id="v-prompt" class="view">
-  <div class="bar"><span class="word">Denk dir ein Wort aus 💭</span><span id="promptTimer" class="timer">–</span></div>
+  <div class="bar"><span class="word">Denk dir ein Wort aus 💭</span></div>
   <div class="center">
     <div class="muted">Dieses Wort startet eine Kette und wandert durch alle anderen.</div>
     <input id="promptInput" type="text" placeholder="z.B. Einhorn…" autocomplete="off">
     <button id="submitPrompt" class="btn go" style="width:100%; max-width:340px">Abschicken</button>
+    <div class="muted">Es geht weiter, sobald alle abgegeben haben.</div>
   </div>
 </div>
 
@@ -96,16 +98,34 @@
 <!-- WARTEN -->
 <div id="v-wait" class="view"><div class="center"><div class="big">Eingereicht ✓</div><div class="muted">Warte auf die anderen…</div></div></div>
 
+<!-- VOR DEM RECAP: Host startet -->
+<div id="v-prerecap" class="view">
+  <div class="center">
+    <div class="big">✅ Alle Runden geschafft!</div>
+    <div id="recapHostBox" style="display:none; width:100%; max-width:340px;">
+      <button id="startRecapBtn" class="btn go" style="width:100%; font-size:20px">🎬 Recap starten</button>
+    </div>
+    <div id="recapGuestBox" class="muted" style="display:none">Warte auf den Host, der den Rückblick startet…</div>
+  </div>
+</div>
+
 <!-- RECAP -->
-<div id="v-recap" class="view"><div class="center"><div class="big">🎬 Schaut auf den großen Bildschirm!</div><button id="advanceBtn" class="btn" style="font-size:20px">Weiter ▶</button></div></div>
+<div id="v-recap" class="view">
+  <div class="center">
+    <div class="big">🎬 Schaut auf den großen Bildschirm!</div>
+    <button id="advanceBtn" class="btn" style="font-size:20px">Weiter ▶</button>
+    <button id="saveEvoBtn" class="btn" style="font-size:18px; display:none">💾 Evolution speichern</button>
+  </div>
+</div>
 
 <script>window.__AC_ROLE__ = 'controller';</script>
 <script src="airconsole-local.js"></script>
 <script>
   const ac = new AirConsole();
   const $ = (id) => document.getElementById(id);
-  const views = ['lobby', 'prompt', 'draw', 'guess', 'wait', 'recap'];
+  const views = ['lobby', 'prompt', 'draw', 'guess', 'wait', 'prerecap', 'recap'];
   function show(v) { views.forEach(n => $('v-' + n).classList.toggle('active', n === v)); }
+  let myHost = false;
 
   // ---------- Host-Einstellungen ----------
   let cfg = { draw: 60, guess: 30, mode: 'casual' };
@@ -122,7 +142,9 @@
     });
   });
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'start' }));
+  $('startRecapBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'startRecap' }));
   $('advanceBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'advance' }));
+  $('saveEvoBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'save' }));
 
   // ---------- Countdown ----------
   let timerInt = null, endAt = 0, onZero = null, timerEl = null;
@@ -139,11 +161,10 @@
 
   let submittedThisPhase = false;
 
-  // ---------- Eigenes Wort ----------
+  // ---------- Eigenes Wort (kein Timer) ----------
   function submitPrompt() {
-    if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
-    ac.message(AirConsole.SCREEN, { t: 'word', text: $('promptInput').value });
-    show('wait');
+    if (submittedThisPhase) return; submittedThisPhase = true;
+    ac.message(AirConsole.SCREEN, { t: 'word', text: $('promptInput').value }); show('wait');
   }
   $('submitPrompt').addEventListener('click', submitPrompt);
   $('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPrompt(); });
@@ -237,7 +258,6 @@
       show('lobby');
     } else if (d.t === 'prompt') {
       submittedThisPhase = false; $('promptInput').value = ''; show('prompt');
-      startTimer(d.ms, $('promptTimer'), submitPrompt);
       setTimeout(() => $('promptInput').focus(), 50);
     } else if (d.t === 'draw') {
       submittedThisPhase = false; strokes = []; redraw();
@@ -250,8 +270,15 @@
       setTimeout(() => $('guessInput').focus(), 50);
     } else if (d.t === 'wait') {
       stopTimer(); show('wait');
+    } else if (d.t === 'prerecap') {
+      stopTimer(); myHost = d.host;
+      $('recapHostBox').style.display = d.host ? 'block' : 'none';
+      $('recapGuestBox').style.display = d.host ? 'none' : 'block';
+      show('prerecap');
     } else if (d.t === 'recap') {
-      stopTimer(); show('recap');
+      stopTimer(); myHost = d.host;
+      $('saveEvoBtn').style.display = d.host ? 'inline-block' : 'none';
+      show('recap');
     }
   };
 
