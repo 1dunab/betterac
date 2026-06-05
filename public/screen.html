@@ -25,31 +25,52 @@
   const ctx = cv.getContext('2d');
 
   const COLORS = ['#ff2d55','#0a84ff','#30d158','#ffd60a','#bf5af2','#64d2ff','#ff9f0a','#ac8e68'];
-  const WORDS = [
-    'Sonne','Mond','Hund','Katze','Baum','Haus','Auto','Fahrrad','Pizza','Banane',
-    'Roboter','Rakete','Drache','Burg','Regenbogen','Schneemann','Pinguin','Elefant','Giraffe','Krone',
-    'Geist','Vulkan','Insel','Leuchtturm','Brille','Gitarre','Trommel','Fußball','Eistüte','Kaktus',
-    'Pilz','Krake','Hai','Wal','Biene','Schmetterling','Spinne','Marienkäfer','Schnecke','Frosch',
-    'Eule','Fuchs','Bär','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange','Dinosaurier',
-    'Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut','Clown','Ninja','Ampel',
-    'Regenschirm','Kerze','Geschenk','Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt',
-    'Heißluftballon','Ufo','Planet','Komet','Blitz','Schneeflocke','Igel','Eichhörnchen','Krabbe','Qualle'
-  ];
+
+  // --- Wort-Kategorien ---
+  const WORD_PACKS = {
+    casual: [
+      'Sonne','Mond','Baum','Haus','Auto','Fahrrad','Pizza','Banane','Roboter','Rakete',
+      'Drache','Burg','Regenbogen','Schneemann','Krone','Geist','Vulkan','Insel','Leuchtturm','Brille',
+      'Gitarre','Trommel','Fußball','Eistüte','Kaktus','Pilz','Ampel','Regenschirm','Kerze','Geschenk',
+      'Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt','Heißluftballon','Ufo','Planet',
+      'Komet','Blitz','Schneeflocke','Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut'
+    ],
+    tiere: [
+      'Hund','Katze','Elefant','Giraffe','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange',
+      'Frosch','Pinguin','Eule','Fuchs','Bär','Igel','Eichhörnchen','Wal','Hai','Delfin',
+      'Krake','Qualle','Schildkröte','Pferd','Kuh','Schwein','Schaf','Huhn','Ente','Biene',
+      'Schmetterling','Marienkäfer','Spinne','Fledermaus','Kamel','Känguru','Faultier','Flamingo','Pfau','Eisbär'
+    ],
+    versaut: [
+      'Tanga','Stringtanga','Kondom','Dildo','Vibrator','Handschellen','Peitsche','Strapse','Reizwäsche','Dessous',
+      'Stripperstange','Striptease','Lapdance','Zungenkuss','Knutschfleck','Morgenlatte','Nackedei','Hintern','Busen','Sexpuppe',
+      'Liebesschaukel','Rotlichtviertel','Sexshop','Pornoheft','Domina','FKK-Strand','Nacktbaden','Höschen','Spanner','Aktmodell'
+    ]
+  };
+  const MODE_LABELS = { casual: 'Casual', tiere: 'Tiere 🐾', versaut: 'Versaut 🌶️', custom: 'Eigene Wörter ✍️' };
+  const VALID_MODES = ['casual', 'tiere', 'versaut', 'custom'];
+
   const RECAP_STEP_MS = 2600;
+  const COLLECT_SECONDS = 30;
 
   let players = {};        // id -> {color}
-  let state = 'lobby';     // lobby | play | recap
-  let settings = { drawTime: 60, guessTime: 30 };
+  let state = 'lobby';     // lobby | collect | play | recap
+  let settings = { drawTime: 60, guessTime: 30, mode: 'casual' };
 
   let gameOrder = [];      // eingefrorene Reihenfolge bei Spielstart
   let N = 0;
   let chains = [];         // chains[c] = [ {type:'word'|'drawing', by, word?, strokes?} ]
   let round = 0;
-  let subPhase = 'draw';   // draw | guess
-  let assign = {};         // playerId -> chainIndex (aktuelle Runde)
-  let subm = {};           // playerId -> {done, strokes?|text?}
+  let subPhase = 'draw';
+  let assign = {};
+  let subm = {};
   let deadline = 0;
   let phaseMs = 1;
+
+  // Sammelphase (Modus "Eigene Wörter")
+  let collectSubm = {};
+  let collectDeadline = 0;
+  let collectMs = 1;
 
   let recapChain = 0, recapShown = 1, recapAccum = 0;
   let banner = '', bannerUntil = 0;
@@ -59,7 +80,7 @@
   const hostId = () => { const c = connectedIds(); return c.length ? Math.min(...c) : null; };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-  const chainFor = (p, r) => ((p - r) % N + N) % N;   // Rotation: garantiert keine Wiederholung pro Spieler
+  const chainFor = (p, r) => ((p - r) % N + N) % N;   // Rotation: keine Wiederholung pro Spieler
   function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 4000); }
 
   // --- Lobby / Reset ---
@@ -67,21 +88,45 @@
     const h = hostId();
     connectedIds().forEach(id => ac.message(id, {
       t: 'lobby', host: id === h, color: players[id].color, player: id,
-      drawTime: settings.drawTime, guessTime: settings.guessTime, playerCount: connectedIds().length
+      drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode,
+      playerCount: connectedIds().length
     }));
   }
   function resetToLobby() { state = 'lobby'; gameOrder = []; chains = []; sendLobby(); }
   function abortToLobby(msg) { setBanner(msg, 6000); resetToLobby(); }
 
-  // --- Spielablauf ---
+  // --- Spielstart ---
   function beginGame() {
     gameOrder = connectedIds().sort((a, b) => a - b);
     N = gameOrder.length;
-    const words = shuffle(WORDS.slice()).slice(0, N);
-    chains = gameOrder.map((id, c) => [{ type: 'word', by: null, word: words[c] }]);
-    state = 'play';
     connectedIds().filter(id => !gameOrder.includes(id)).forEach(id => ac.message(id, { t: 'wait' }));
-    startRound(0);
+    if (settings.mode === 'custom') enterCollect();
+    else {
+      const pack = WORD_PACKS[settings.mode] || WORD_PACKS.casual;
+      const words = shuffle(pack.slice()).slice(0, N);
+      chains = gameOrder.map((id, c) => [{ type: 'word', by: null, word: words[c] }]);
+      state = 'play'; startRound(0);
+    }
+  }
+
+  // Sammelphase: jeder denkt sich ein Wort aus -> seedet seine eigene Kette
+  function enterCollect() {
+    state = 'collect'; collectSubm = {};
+    collectMs = COLLECT_SECONDS * 1000;
+    collectDeadline = performance.now() + collectMs;
+    gameOrder.forEach(id => ac.message(id, { t: 'prompt', ms: collectMs }));
+  }
+  let collectClosing = false;
+  function finalizeCollect() {
+    if (collectClosing) return; collectClosing = true;
+    const fallback = shuffle(WORD_PACKS.casual.slice());
+    chains = gameOrder.map((id, c) => {
+      let w = (collectSubm[id] || '').trim();
+      if (!w) w = fallback[c % fallback.length];
+      return [{ type: 'word', by: id, word: w }];   // by=Autor, Index 0 = Startwort
+    });
+    collectClosing = false;
+    state = 'play'; startRound(0);
   }
 
   function startRound(r) {
@@ -142,7 +187,7 @@
   ac.onDisconnect = (id) => {
     const wasPlayer = gameOrder.includes(id);
     delete players[id];
-    if (state !== 'lobby' && wasPlayer) abortToLobby('Ein Spieler hat die Verbindung verloren — zurück zur Lobby.');
+    if ((state === 'play' || state === 'collect') && wasPlayer) abortToLobby('Ein Spieler hat die Verbindung verloren — zurück zur Lobby.');
     else if (state === 'lobby') sendLobby();
   };
   ac.onMessage = (id, d) => {
@@ -150,9 +195,16 @@
     if (d.t === 'config' && id === hostId()) {
       settings.drawTime = clamp(d.drawTime | 0, 10, 180);
       settings.guessTime = clamp(d.guessTime | 0, 10, 120);
+      if (VALID_MODES.includes(d.mode)) settings.mode = d.mode;
       if (state === 'lobby') sendLobby();
     } else if (d.t === 'start' && id === hostId() && state === 'lobby') {
       if (connectedIds().length >= 2) beginGame();
+    } else if (d.t === 'word' && state === 'collect') {
+      if (gameOrder.includes(id) && collectSubm[id] === undefined) {
+        collectSubm[id] = (d.text || '').trim();
+        ac.message(id, { t: 'wait' });
+        if (gameOrder.every(p => collectSubm[p] !== undefined)) finalizeCollect();
+      }
     } else if (d.t === 'drawing' && state === 'play' && subPhase === 'draw') {
       submit(id, { strokes: d.strokes });
     } else if (d.t === 'guess' && state === 'play' && subPhase === 'guess') {
@@ -162,7 +214,7 @@
     }
   };
 
-  // --- Zeichnen von Strichen in eine Box (weißer Hintergrund) ---
+  // --- Striche in eine Box zeichnen (weißer Hintergrund) ---
   function drawStrokes(strokes, bx, by, bw, bh) {
     ctx.save();
     ctx.fillStyle = '#fff'; ctx.fillRect(bx, by, bw, bh);
@@ -179,33 +231,46 @@
     }
     ctx.restore();
   }
-
   function roundRect(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
   }
-
   function fitFont(text, max, start) {
-    let f = start;
-    ctx.font = 'bold ' + f + 'px system-ui,sans-serif';
+    let f = start; ctx.font = 'bold ' + f + 'px system-ui,sans-serif';
     while (ctx.measureText(text).width > max && f > 10) { f -= 2; ctx.font = 'bold ' + f + 'px system-ui,sans-serif'; }
     return f;
   }
 
-  // --- Render ---
+  // --- Render-Bausteine ---
+  function chips(yPos) {
+    const totalW = gameOrder.length * 120;
+    let x = cv.width / 2 - totalW / 2 + 60;
+    gameOrder.forEach(id => {
+      const done = (state === 'collect') ? (collectSubm[id] !== undefined) : (subm[id] && subm[id].done);
+      ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.globalAlpha = done ? 1 : 0.4;
+      ctx.beginPath(); ctx.arc(x, yPos, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(done ? '✓' : '…', x, yPos);
+      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif'; ctx.fillText('P' + id, x, yPos + 36);
+      x += 120;
+    });
+  }
+
   function renderLobby() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif';
-    ctx.fillText('Drawing Evolution', cv.width / 2, 70);
+    ctx.fillText('Drawing Evolution', cv.width / 2, 64);
     ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif';
-    ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 110);
+    ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 100);
+    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif';
+    ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 128);
 
     const list = connectedIds().sort((a, b) => a - b), h = hostId();
     ctx.font = 'bold 22px system-ui,sans-serif';
     list.forEach((id, i) => {
-      const y = 180 + i * 46;
+      const y = 190 + i * 44;
       ctx.fillStyle = players[id].color;
       ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
       ctx.textAlign = 'left'; ctx.fillStyle = '#eee';
@@ -213,7 +278,20 @@
     });
     ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a';
     ctx.font = '20px system-ui,sans-serif';
-    ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 60);
+    ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 56);
+  }
+
+  function renderCollect() {
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    const secs = Math.ceil(Math.max(0, collectDeadline - performance.now()) / 1000);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 40px system-ui,sans-serif';
+    ctx.fillText('💭 Denkt euch ein Wort aus!', cv.width / 2, 110);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 64px system-ui,sans-serif';
+    ctx.fillText(secs, cv.width / 2, 240);
+    chips(390);
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Tippt euer Wort am Handy ein — es startet eure Kette', cv.width / 2, 480);
   }
 
   function renderPlay() {
@@ -229,7 +307,6 @@
     ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif';
     ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
 
-    // Timer-Ring
     const cx = cv.width / 2, cy = 270, R = 80;
     ctx.lineWidth = 12; ctx.strokeStyle = '#222';
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
@@ -238,21 +315,8 @@
     ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif';
     ctx.fillText(secs, cx, cy);
 
-    // Wer ist fertig?
-    const chipY = 430;
-    const totalW = gameOrder.length * 120;
-    let x = cv.width / 2 - totalW / 2 + 60;
-    ctx.font = 'bold 16px system-ui,sans-serif';
-    gameOrder.forEach(id => {
-      const done = subm[id] && subm[id].done;
-      ctx.fillStyle = players[id].color; ctx.globalAlpha = done ? 1 : 0.4;
-      ctx.beginPath(); ctx.arc(x, chipY, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-      ctx.fillStyle = '#fff'; ctx.fillText(done ? '✓' : '…', x, chipY);
-      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif';
-      ctx.fillText('P' + id, x, chipY + 36); ctx.font = 'bold 16px system-ui,sans-serif';
-      x += 120;
-    });
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif';
+    chips(430);
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText(subPhase === 'draw' ? 'Zeichnet euer Wort auf dem Handy!' : 'Ratet, was das Bild zeigt!', cv.width / 2, 510);
   }
 
@@ -277,16 +341,17 @@
           drawStrokes(e.strokes, x + 2, y + 2, cw - 4, cw - 4);
         } else {
           ctx.fillStyle = '#1a1a2e'; roundRect(x, y, cw, cw, 12); ctx.fill();
-          ctx.strokeStyle = e.by === null ? '#ffd60a' : '#555'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 12); ctx.stroke();
+          ctx.strokeStyle = i === 0 ? '#ffd60a' : '#555'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 12); ctx.stroke();
           ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           const fs = fitFont(e.word, cw - 16, 26);
           ctx.font = 'bold ' + fs + 'px system-ui,sans-serif';
           ctx.fillText(e.word, x + cw / 2, y + cw / 2);
         }
-        // Bildunterschrift
         ctx.fillStyle = e.by === null ? '#ffd60a' : (players[e.by] ? players[e.by].color : '#aaa');
         ctx.font = '14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const cap = e.by === null ? 'Startwort' : ('P' + e.by + (e.type === 'drawing' ? ' zeichnete' : ' riet'));
+        const cap = (i === 0)
+          ? (e.by === null ? 'Startwort' : ('P' + e.by + 's Wort'))
+          : (e.type === 'drawing' ? ('P' + e.by + ' zeichnete') : ('P' + e.by + ' riet'));
         ctx.fillText(cap, x + cw / 2, capY);
       } else {
         ctx.fillStyle = '#15151f'; roundRect(x, y, cw, cw, 10); ctx.fill();
@@ -304,6 +369,7 @@
 
   function render() {
     if (state === 'lobby') renderLobby();
+    else if (state === 'collect') renderCollect();
     else if (state === 'play') renderPlay();
     else if (state === 'recap') renderRecap();
     if (performance.now() < bannerUntil && banner) {
@@ -317,6 +383,7 @@
   // --- Ticks ---
   setInterval(() => {
     const now = performance.now();
+    if (state === 'collect' && now >= collectDeadline) finalizeCollect();
     if (state === 'play' && now >= deadline) finalizeRound();
     if (state === 'recap') { recapAccum += 120; if (recapAccum >= RECAP_STEP_MS) advanceRecap(); }
   }, 120);

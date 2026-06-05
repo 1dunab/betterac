@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Drawing Evolution — Controller</title>
 <style>
-  :root { --accent:#444; }
   html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff;
                background:#1a1a24; -webkit-user-select:none; user-select:none; touch-action:none; }
   .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
@@ -21,11 +20,14 @@
   .btn.go { background:#30d158; color:#06250f; flex:1; }
   .btn:active { filter:brightness(1.2); }
   .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:20px; }
-  input[type=text] { font-size:20px; padding:14px; border-radius:12px; border:none; width:100%; box-sizing:border-box; }
+  input[type=text] { font-size:20px; padding:14px; border-radius:12px; border:none; width:100%; max-width:340px; box-sizing:border-box; }
   .step { display:flex; align-items:center; gap:14px; }
   .step button { width:48px; height:48px; border-radius:12px; border:none; background:#3a3a48; color:#fff; font-size:24px; font-weight:800; }
   .big { font-size:26px; font-weight:800; }
   .muted { opacity:.75; font-size:15px; }
+  .modes { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-bottom:18px; }
+  .modebtn { padding:8px 12px; border-radius:10px; border:none; background:#3a3a48; color:#fff; font-weight:700; font-size:14px; }
+  .modebtn.sel { background:#bf5af2; }
 </style>
 </head>
 <body>
@@ -35,6 +37,12 @@
   <div class="center">
     <div id="lobbyId" class="big">Verbinde…</div>
     <div id="hostBox" style="display:none; width:100%; max-width:340px;">
+      <div class="modes">
+        <button class="modebtn" data-mode="casual">Casual</button>
+        <button class="modebtn" data-mode="tiere">Tiere</button>
+        <button class="modebtn" data-mode="versaut">Versaut</button>
+        <button class="modebtn" data-mode="custom">Eigene</button>
+      </div>
       <div class="step"><span style="flex:1">Zeichenzeit</span>
         <button data-d="-1" data-k="draw">−</button><span id="drawVal" class="big">60s</span><button data-d="1" data-k="draw">+</button>
       </div>
@@ -45,6 +53,16 @@
       <div id="needPlayers" class="muted" style="margin-top:10px"></div>
     </div>
     <div id="guestBox" class="muted" style="display:none">Warte auf den Host, der das Spiel startet…</div>
+  </div>
+</div>
+
+<!-- EIGENES WORT AUSDENKEN -->
+<div id="v-prompt" class="view">
+  <div class="bar"><span class="word">Denk dir ein Wort aus 💭</span><span id="promptTimer" class="timer">–</span></div>
+  <div class="center">
+    <div class="muted">Dieses Wort startet eine Kette und wandert durch alle anderen.</div>
+    <input id="promptInput" type="text" placeholder="z.B. Einhorn…" autocomplete="off">
+    <button id="submitPrompt" class="btn go" style="width:100%; max-width:340px">Abschicken</button>
   </div>
 </div>
 
@@ -70,7 +88,7 @@
   <div class="bar"><span class="word">Was ist das?</span><span id="guessTimer" class="timer">–</span></div>
   <canvas id="guessCanvas" width="600" height="520"></canvas>
   <div class="tools" style="flex-direction:column; align-items:stretch">
-    <input id="guessInput" type="text" placeholder="Dein Tipp…" autocomplete="off">
+    <input id="guessInput" type="text" placeholder="Dein Tipp…" autocomplete="off" style="max-width:none">
     <button id="submitGuess" class="btn go" style="margin-top:8px">Abschicken</button>
   </div>
 </div>
@@ -86,12 +104,14 @@
 <script>
   const ac = new AirConsole();
   const $ = (id) => document.getElementById(id);
-  const views = ['lobby', 'draw', 'guess', 'wait', 'recap'];
+  const views = ['lobby', 'prompt', 'draw', 'guess', 'wait', 'recap'];
   function show(v) { views.forEach(n => $('v-' + n).classList.toggle('active', n === v)); }
 
-  // ---------- Lobby (Host-Einstellungen) ----------
-  let cfg = { draw: 60, guess: 30 };
-  function sendConfig() { ac.message(AirConsole.SCREEN, { t: 'config', drawTime: cfg.draw, guessTime: cfg.guess }); }
+  // ---------- Host-Einstellungen ----------
+  let cfg = { draw: 60, guess: 30, mode: 'casual' };
+  function sendConfig() { ac.message(AirConsole.SCREEN, { t: 'config', drawTime: cfg.draw, guessTime: cfg.guess, mode: cfg.mode }); }
+  function highlightMode() { document.querySelectorAll('.modebtn').forEach(b => b.classList.toggle('sel', b.getAttribute('data-mode') === cfg.mode)); }
+  document.querySelectorAll('.modebtn').forEach(b => b.addEventListener('click', () => { cfg.mode = b.getAttribute('data-mode'); highlightMode(); sendConfig(); }));
   document.querySelectorAll('#hostBox button[data-d]').forEach(b => {
     b.addEventListener('click', () => {
       const k = b.getAttribute('data-k'), d = parseInt(b.getAttribute('data-d'), 10) * 5;
@@ -117,10 +137,23 @@
   }
   function stopTimer() { clearInterval(timerInt); onZero = null; }
 
+  let submittedThisPhase = false;
+
+  // ---------- Eigenes Wort ----------
+  function submitPrompt() {
+    if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
+    ac.message(AirConsole.SCREEN, { t: 'word', text: $('promptInput').value });
+    show('wait');
+  }
+  $('submitPrompt').addEventListener('click', submitPrompt);
+  $('promptInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitPrompt(); });
+
   // ---------- Zeichnen ----------
   const pad = $('pad'), pctx = pad.getContext('2d');
   let strokes = [], cur = null, drawing = false;
   let color = '#111111', sizeFrac = 0.012, erasing = false;
+  const clampN = (v) => Math.max(0, Math.min(1, v));
+  const r3 = (v) => Math.round(v * 1000) / 1000;
 
   function clearPad() { pctx.fillStyle = '#fff'; pctx.fillRect(0, 0, pad.width, pad.height); }
   function redraw() {
@@ -135,21 +168,12 @@
     }
   }
   function padPos(e) {
-    const r = pad.getBoundingClientRect();
-    const t = e.touches ? e.touches[0] : e;
+    const r = pad.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e;
     return [clampN((t.clientX - r.left) / r.width), clampN((t.clientY - r.top) / r.height)];
   }
-  const clampN = (v) => Math.max(0, Math.min(1, v));
-  const r3 = (v) => Math.round(v * 1000) / 1000;
-
-  function startStroke(e) {
-    e.preventDefault(); drawing = true;
-    cur = { c: erasing ? '#ffffff' : color, w: erasing ? 0.06 : sizeFrac, p: [padPos(e).map(r3)] };
-    strokes.push(cur); redraw();
-  }
+  function startStroke(e) { e.preventDefault(); drawing = true; cur = { c: erasing ? '#ffffff' : color, w: erasing ? 0.06 : sizeFrac, p: [padPos(e).map(r3)] }; strokes.push(cur); redraw(); }
   function moveStroke(e) { if (!drawing || !cur) return; e.preventDefault(); cur.p.push(padPos(e).map(r3)); redraw(); }
   function endStroke(e) { if (e) e.preventDefault(); drawing = false; cur = null; }
-
   pad.addEventListener('touchstart', startStroke); pad.addEventListener('touchmove', moveStroke);
   pad.addEventListener('touchend', endStroke); pad.addEventListener('touchcancel', endStroke);
   pad.addEventListener('mousedown', startStroke); pad.addEventListener('mousemove', moveStroke);
@@ -166,11 +190,9 @@
   $('undo').addEventListener('click', () => { strokes.pop(); redraw(); });
   $('clear').addEventListener('click', () => { strokes = []; redraw(); });
 
-  let submittedThisPhase = false;
   function submitDrawing() {
     if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
-    ac.message(AirConsole.SCREEN, { t: 'drawing', strokes });
-    show('wait');
+    ac.message(AirConsole.SCREEN, { t: 'drawing', strokes }); show('wait');
   }
   $('submitDraw').addEventListener('click', submitDrawing);
 
@@ -190,8 +212,7 @@
   }
   function submitGuess() {
     if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
-    ac.message(AirConsole.SCREEN, { t: 'guess', text: $('guessInput').value });
-    show('wait');
+    ac.message(AirConsole.SCREEN, { t: 'guess', text: $('guessInput').value }); show('wait');
   }
   $('submitGuess').addEventListener('click', submitGuess);
   $('guessInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitGuess(); });
@@ -203,8 +224,9 @@
     if (d.t === 'lobby') {
       $('lobbyId').textContent = 'Du bist Spieler ' + d.player;
       document.body.style.background = shade(d.color);
-      cfg.draw = d.drawTime; cfg.guess = d.guessTime;
+      cfg.draw = d.drawTime; cfg.guess = d.guessTime; cfg.mode = d.mode || cfg.mode;
       $('drawVal').textContent = cfg.draw + 's'; $('guessVal').textContent = cfg.guess + 's';
+      highlightMode();
       $('hostBox').style.display = d.host ? 'block' : 'none';
       $('guestBox').style.display = d.host ? 'none' : 'block';
       if (d.host) {
@@ -213,6 +235,10 @@
         $('needPlayers').textContent = ok ? (d.playerCount + ' Spieler bereit') : 'Mind. 2 Spieler nötig…';
       }
       show('lobby');
+    } else if (d.t === 'prompt') {
+      submittedThisPhase = false; $('promptInput').value = ''; show('prompt');
+      startTimer(d.ms, $('promptTimer'), submitPrompt);
+      setTimeout(() => $('promptInput').focus(), 50);
     } else if (d.t === 'draw') {
       submittedThisPhase = false; strokes = []; redraw();
       $('drawWord').textContent = d.word; show('draw');
@@ -229,7 +255,7 @@
     }
   };
 
-  function shade(hex) { // dunklere Variante als Hintergrund
+  function shade(hex) {
     const n = parseInt(hex.slice(1), 16);
     return 'rgb(' + Math.round(((n >> 16) & 255) * 0.4) + ',' + Math.round(((n >> 8) & 255) * 0.4) + ',' + Math.round((n & 255) * 0.4) + ')';
   }
