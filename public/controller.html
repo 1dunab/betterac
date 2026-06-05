@@ -3,58 +3,239 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>AirConsole-Local — Controller</title>
+<title>Drawing Evolution — Controller</title>
 <style>
-  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; background:#222; color:#fff;
-               -webkit-user-select:none; user-select:none; touch-action:none; }
-  #wrap { display:flex; flex-direction:column; height:100%; }
-  #status { padding:12px; text-align:center; font-size:15px; }
-  #pad { flex:1; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(3,1fr);
-         gap:10px; padding:18px; }
-  button { font-size:30px; border:none; border-radius:16px; background:rgba(0,0,0,.35); color:#fff; }
-  button:active { background:rgba(255,255,255,.25); }
-  .up{grid-area:1/2} .left{grid-area:2/1} .right{grid-area:2/3} .down{grid-area:3/2}
+  :root { --accent:#444; }
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff;
+               background:#1a1a24; -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.active { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
+  canvas { background:#fff; flex:1; border-radius:10px; margin:0 10px; touch-action:none; }
+  .tools { display:flex; gap:8px; padding:10px; flex-wrap:wrap; align-items:center; }
+  .sw { width:34px; height:34px; border-radius:50%; border:3px solid transparent; }
+  .sw.sel { border-color:#fff; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .btn.go { background:#30d158; color:#06250f; flex:1; }
+  .btn:active { filter:brightness(1.2); }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; padding:20px; }
+  input[type=text] { font-size:20px; padding:14px; border-radius:12px; border:none; width:100%; box-sizing:border-box; }
+  .step { display:flex; align-items:center; gap:14px; }
+  .step button { width:48px; height:48px; border-radius:12px; border:none; background:#3a3a48; color:#fff; font-size:24px; font-weight:800; }
+  .big { font-size:26px; font-weight:800; }
+  .muted { opacity:.75; font-size:15px; }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <div id="status">Verbinde…</div>
-  <div id="pad">
-    <button class="up"    data-move="up">▲</button>
-    <button class="left"  data-move="left">◀</button>
-    <button class="right" data-move="right">▶</button>
-    <button class="down"  data-move="down">▼</button>
+
+<!-- LOBBY -->
+<div id="v-lobby" class="view">
+  <div class="center">
+    <div id="lobbyId" class="big">Verbinde…</div>
+    <div id="hostBox" style="display:none; width:100%; max-width:340px;">
+      <div class="step"><span style="flex:1">Zeichenzeit</span>
+        <button data-d="-1" data-k="draw">−</button><span id="drawVal" class="big">60s</span><button data-d="1" data-k="draw">+</button>
+      </div>
+      <div class="step" style="margin-top:14px"><span style="flex:1">Ratezeit</span>
+        <button data-d="-1" data-k="guess">−</button><span id="guessVal" class="big">30s</span><button data-d="1" data-k="guess">+</button>
+      </div>
+      <button id="startBtn" class="btn go" style="margin-top:24px; width:100%">START</button>
+      <div id="needPlayers" class="muted" style="margin-top:10px"></div>
+    </div>
+    <div id="guestBox" class="muted" style="display:none">Warte auf den Host, der das Spiel startet…</div>
   </div>
 </div>
+
+<!-- ZEICHNEN -->
+<div id="v-draw" class="view">
+  <div class="bar"><span class="word">Zeichne: <span id="drawWord">…</span></span><span id="drawTimer" class="timer">–</span></div>
+  <canvas id="pad" width="600" height="700"></canvas>
+  <div class="tools">
+    <span class="sw sel" data-col="#111111" style="background:#111"></span>
+    <span class="sw" data-col="#ff2d55" style="background:#ff2d55"></span>
+    <span class="sw" data-col="#0a84ff" style="background:#0a84ff"></span>
+    <span class="sw" data-col="#30d158" style="background:#30d158"></span>
+    <span class="sw" data-col="#ffd60a" style="background:#ffd60a"></span>
+    <button id="eraser" class="btn">Radierer</button>
+    <button id="undo" class="btn">↶</button>
+    <button id="clear" class="btn">Leeren</button>
+    <button id="submitDraw" class="btn go">Fertig</button>
+  </div>
+</div>
+
+<!-- RATEN -->
+<div id="v-guess" class="view">
+  <div class="bar"><span class="word">Was ist das?</span><span id="guessTimer" class="timer">–</span></div>
+  <canvas id="guessCanvas" width="600" height="520"></canvas>
+  <div class="tools" style="flex-direction:column; align-items:stretch">
+    <input id="guessInput" type="text" placeholder="Dein Tipp…" autocomplete="off">
+    <button id="submitGuess" class="btn go" style="margin-top:8px">Abschicken</button>
+  </div>
+</div>
+
+<!-- WARTEN -->
+<div id="v-wait" class="view"><div class="center"><div class="big">Eingereicht ✓</div><div class="muted">Warte auf die anderen…</div></div></div>
+
+<!-- RECAP -->
+<div id="v-recap" class="view"><div class="center"><div class="big">🎬 Schaut auf den großen Bildschirm!</div><button id="advanceBtn" class="btn" style="font-size:20px">Weiter ▶</button></div></div>
 
 <script>window.__AC_ROLE__ = 'controller';</script>
 <script src="airconsole-local.js"></script>
 <script>
   const ac = new AirConsole();
-  const status = document.getElementById('status');
+  const $ = (id) => document.getElementById(id);
+  const views = ['lobby', 'draw', 'guess', 'wait', 'recap'];
+  function show(v) { views.forEach(n => $('v-' + n).classList.toggle('active', n === v)); }
 
-  ac.onReady = function () { status.textContent = 'Verbunden – warte auf Screen…'; };
+  // ---------- Lobby (Host-Einstellungen) ----------
+  let cfg = { draw: 60, guess: 30 };
+  function sendConfig() { ac.message(AirConsole.SCREEN, { t: 'config', drawTime: cfg.draw, guessTime: cfg.guess }); }
+  document.querySelectorAll('#hostBox button[data-d]').forEach(b => {
+    b.addEventListener('click', () => {
+      const k = b.getAttribute('data-k'), d = parseInt(b.getAttribute('data-d'), 10) * 5;
+      if (k === 'draw') cfg.draw = Math.max(10, Math.min(180, cfg.draw + d));
+      else cfg.guess = Math.max(10, Math.min(120, cfg.guess + d));
+      $('drawVal').textContent = cfg.draw + 's'; $('guessVal').textContent = cfg.guess + 's';
+      sendConfig();
+    });
+  });
+  $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'start' }));
+  $('advanceBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'advance' }));
 
-  ac.onMessage = function (from, data) {
-    if (data && data.type === 'welcome') {
-      document.body.style.background = data.color;
-      status.textContent = 'Du bist Spieler ' + data.player;
+  // ---------- Countdown ----------
+  let timerInt = null, endAt = 0, onZero = null, timerEl = null;
+  function startTimer(ms, el, zeroCb) {
+    clearInterval(timerInt); endAt = performance.now() + ms; timerEl = el; onZero = zeroCb;
+    const upd = () => {
+      const s = Math.max(0, Math.ceil((endAt - performance.now()) / 1000));
+      timerEl.textContent = s;
+      if (s <= 0) { clearInterval(timerInt); if (onZero) { const cb = onZero; onZero = null; cb(); } }
+    };
+    upd(); timerInt = setInterval(upd, 200);
+  }
+  function stopTimer() { clearInterval(timerInt); onZero = null; }
+
+  // ---------- Zeichnen ----------
+  const pad = $('pad'), pctx = pad.getContext('2d');
+  let strokes = [], cur = null, drawing = false;
+  let color = '#111111', sizeFrac = 0.012, erasing = false;
+
+  function clearPad() { pctx.fillStyle = '#fff'; pctx.fillRect(0, 0, pad.width, pad.height); }
+  function redraw() {
+    clearPad(); pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+    for (const s of strokes) {
+      if (!s.p.length) continue;
+      pctx.strokeStyle = s.c; pctx.lineWidth = Math.max(1, s.w * pad.width);
+      pctx.beginPath(); pctx.moveTo(s.p[0][0] * pad.width, s.p[0][1] * pad.height);
+      for (let i = 1; i < s.p.length; i++) pctx.lineTo(s.p[i][0] * pad.width, s.p[i][1] * pad.height);
+      if (s.p.length === 1) pctx.lineTo(s.p[0][0] * pad.width + 0.5, s.p[0][1] * pad.height);
+      pctx.stroke();
+    }
+  }
+  function padPos(e) {
+    const r = pad.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return [clampN((t.clientX - r.left) / r.width), clampN((t.clientY - r.top) / r.height)];
+  }
+  const clampN = (v) => Math.max(0, Math.min(1, v));
+  const r3 = (v) => Math.round(v * 1000) / 1000;
+
+  function startStroke(e) {
+    e.preventDefault(); drawing = true;
+    cur = { c: erasing ? '#ffffff' : color, w: erasing ? 0.06 : sizeFrac, p: [padPos(e).map(r3)] };
+    strokes.push(cur); redraw();
+  }
+  function moveStroke(e) { if (!drawing || !cur) return; e.preventDefault(); cur.p.push(padPos(e).map(r3)); redraw(); }
+  function endStroke(e) { if (e) e.preventDefault(); drawing = false; cur = null; }
+
+  pad.addEventListener('touchstart', startStroke); pad.addEventListener('touchmove', moveStroke);
+  pad.addEventListener('touchend', endStroke); pad.addEventListener('touchcancel', endStroke);
+  pad.addEventListener('mousedown', startStroke); pad.addEventListener('mousemove', moveStroke);
+  window.addEventListener('mouseup', endStroke);
+
+  document.querySelectorAll('#v-draw .sw').forEach(sw => sw.addEventListener('click', () => {
+    document.querySelectorAll('#v-draw .sw').forEach(o => o.classList.remove('sel'));
+    sw.classList.add('sel'); color = sw.getAttribute('data-col'); erasing = false; $('eraser').style.outline = '';
+  }));
+  $('eraser').addEventListener('click', () => {
+    erasing = !erasing; $('eraser').style.outline = erasing ? '3px solid #fff' : '';
+    if (erasing) document.querySelectorAll('#v-draw .sw').forEach(o => o.classList.remove('sel'));
+  });
+  $('undo').addEventListener('click', () => { strokes.pop(); redraw(); });
+  $('clear').addEventListener('click', () => { strokes = []; redraw(); });
+
+  let submittedThisPhase = false;
+  function submitDrawing() {
+    if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
+    ac.message(AirConsole.SCREEN, { t: 'drawing', strokes });
+    show('wait');
+  }
+  $('submitDraw').addEventListener('click', submitDrawing);
+
+  // ---------- Raten ----------
+  const gc = $('guessCanvas'), gctx = gc.getContext('2d');
+  function renderGuess(strokesIn) {
+    gctx.fillStyle = '#fff'; gctx.fillRect(0, 0, gc.width, gc.height);
+    gctx.lineCap = 'round'; gctx.lineJoin = 'round';
+    for (const s of (strokesIn || [])) {
+      if (!s.p || !s.p.length) continue;
+      gctx.strokeStyle = s.c; gctx.lineWidth = Math.max(1, s.w * gc.width);
+      gctx.beginPath(); gctx.moveTo(s.p[0][0] * gc.width, s.p[0][1] * gc.height);
+      for (let i = 1; i < s.p.length; i++) gctx.lineTo(s.p[i][0] * gc.width, s.p[i][1] * gc.height);
+      if (s.p.length === 1) gctx.lineTo(s.p[0][0] * gc.width + 0.5, s.p[0][1] * gc.height);
+      gctx.stroke();
+    }
+  }
+  function submitGuess() {
+    if (submittedThisPhase) return; submittedThisPhase = true; stopTimer();
+    ac.message(AirConsole.SCREEN, { t: 'guess', text: $('guessInput').value });
+    show('wait');
+  }
+  $('submitGuess').addEventListener('click', submitGuess);
+  $('guessInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitGuess(); });
+
+  // ---------- Nachrichten vom Screen ----------
+  ac.onReady = () => { $('lobbyId').textContent = 'Verbunden – warte…'; };
+  ac.onMessage = (from, d) => {
+    if (!d || !d.t) return;
+    if (d.t === 'lobby') {
+      $('lobbyId').textContent = 'Du bist Spieler ' + d.player;
+      document.body.style.background = shade(d.color);
+      cfg.draw = d.drawTime; cfg.guess = d.guessTime;
+      $('drawVal').textContent = cfg.draw + 's'; $('guessVal').textContent = cfg.guess + 's';
+      $('hostBox').style.display = d.host ? 'block' : 'none';
+      $('guestBox').style.display = d.host ? 'none' : 'block';
+      if (d.host) {
+        const ok = d.playerCount >= 2;
+        $('startBtn').disabled = !ok; $('startBtn').style.opacity = ok ? 1 : 0.5;
+        $('needPlayers').textContent = ok ? (d.playerCount + ' Spieler bereit') : 'Mind. 2 Spieler nötig…';
+      }
+      show('lobby');
+    } else if (d.t === 'draw') {
+      submittedThisPhase = false; strokes = []; redraw();
+      $('drawWord').textContent = d.word; show('draw');
+      startTimer(d.ms, $('drawTimer'), submitDrawing);
+    } else if (d.t === 'guess') {
+      submittedThisPhase = false; $('guessInput').value = '';
+      renderGuess(d.strokes); show('guess');
+      startTimer(d.ms, $('guessTimer'), submitGuess);
+      setTimeout(() => $('guessInput').focus(), 50);
+    } else if (d.t === 'wait') {
+      stopTimer(); show('wait');
+    } else if (d.t === 'recap') {
+      stopTimer(); show('recap');
     }
   };
 
-  function press(move) { ac.message(AirConsole.SCREEN, { move }); } // an den Screen (ID 0)
+  function shade(hex) { // dunklere Variante als Hintergrund
+    const n = parseInt(hex.slice(1), 16);
+    return 'rgb(' + Math.round(((n >> 16) & 255) * 0.4) + ',' + Math.round(((n >> 8) & 255) * 0.4) + ',' + Math.round((n & 255) * 0.4) + ')';
+  }
 
-  document.querySelectorAll('button[data-move]').forEach(function (btn) {
-    const move = btn.getAttribute('data-move');
-    let timer = null;
-    const start = (e) => { e.preventDefault(); press(move); timer = setInterval(() => press(move), 80); };
-    const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
-    btn.addEventListener('touchstart', start);
-    btn.addEventListener('touchend', stop);
-    btn.addEventListener('mousedown', start);
-    btn.addEventListener('mouseup', stop);
-    btn.addEventListener('mouseleave', stop);
-  });
+  clearPad();
+  show('lobby');
 </script>
 </body>
 </html>

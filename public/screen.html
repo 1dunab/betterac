@@ -3,64 +3,326 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AirConsole-Local — Screen</title>
+<title>Drawing Evolution — Screen</title>
 <style>
-  body { margin:0; background:#111; color:#eee; font-family:system-ui,sans-serif; }
-  #info { padding:8px 12px; font-size:14px; }
-  canvas { display:block; background:#1b1b1b; max-width:100%; }
+  html,body { margin:0; background:#0a0a14; color:#eee; font-family:system-ui,sans-serif; height:100%; }
+  #wrap { display:flex; flex-direction:column; align-items:center; gap:8px; padding:10px; }
+  #info { font-size:14px; opacity:.75; }
+  canvas { background:#0d0d1a; border-radius:10px; max-width:100%; box-shadow:0 0 50px rgba(120,90,255,.18); }
 </style>
 </head>
 <body>
-<div id="info">Warte auf Spieler… öffne <b>/controller.html</b> auf dem Handy.</div>
-<canvas id="c" width="800" height="500"></canvas>
+<div id="wrap">
+  <div id="info">Drawing Evolution — öffne <b>/controller.html</b> auf den Handys</div>
+  <canvas id="c" width="960" height="600"></canvas>
+</div>
 
 <script>window.__AC_ROLE__ = 'screen';</script>
 <script src="airconsole-local.js"></script>
 <script>
   const ac = new AirConsole();
-  const canvas = document.getElementById('c');
-  const ctx = canvas.getContext('2d');
-  const info = document.getElementById('info');
-  const COLORS = ['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6','#1abc9c'];
-  const players = {};        // device_id -> {x, y, color}
-  const SPEED = 12;
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
 
-  ac.onConnect = function (id) {
-    const color = COLORS[(id - 1) % COLORS.length];
-    players[id] = { x: canvas.width / 2, y: canvas.height / 2, color };
-    ac.message(id, { type: 'welcome', color, player: id });  // Farbe zurueck ans Handy
-    updateInfo();
-  };
+  const COLORS = ['#ff2d55','#0a84ff','#30d158','#ffd60a','#bf5af2','#64d2ff','#ff9f0a','#ac8e68'];
+  const WORDS = [
+    'Sonne','Mond','Hund','Katze','Baum','Haus','Auto','Fahrrad','Pizza','Banane',
+    'Roboter','Rakete','Drache','Burg','Regenbogen','Schneemann','Pinguin','Elefant','Giraffe','Krone',
+    'Geist','Vulkan','Insel','Leuchtturm','Brille','Gitarre','Trommel','Fußball','Eistüte','Kaktus',
+    'Pilz','Krake','Hai','Wal','Biene','Schmetterling','Spinne','Marienkäfer','Schnecke','Frosch',
+    'Eule','Fuchs','Bär','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange','Dinosaurier',
+    'Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut','Clown','Ninja','Ampel',
+    'Regenschirm','Kerze','Geschenk','Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt',
+    'Heißluftballon','Ufo','Planet','Komet','Blitz','Schneeflocke','Igel','Eichhörnchen','Krabbe','Qualle'
+  ];
+  const RECAP_STEP_MS = 2600;
 
-  ac.onDisconnect = function (id) { delete players[id]; updateInfo(); };
+  let players = {};        // id -> {color}
+  let state = 'lobby';     // lobby | play | recap
+  let settings = { drawTime: 60, guessTime: 30 };
 
-  ac.onMessage = function (id, data) {
-    const p = players[id];
-    if (!p || !data || !data.move) return;
-    if (data.move === 'up')    p.y -= SPEED;
-    if (data.move === 'down')  p.y += SPEED;
-    if (data.move === 'left')  p.x -= SPEED;
-    if (data.move === 'right') p.x += SPEED;
-    p.x = Math.max(15, Math.min(canvas.width - 15, p.x));
-    p.y = Math.max(15, Math.min(canvas.height - 15, p.y));
-  };
+  let gameOrder = [];      // eingefrorene Reihenfolge bei Spielstart
+  let N = 0;
+  let chains = [];         // chains[c] = [ {type:'word'|'drawing', by, word?, strokes?} ]
+  let round = 0;
+  let subPhase = 'draw';   // draw | guess
+  let assign = {};         // playerId -> chainIndex (aktuelle Runde)
+  let subm = {};           // playerId -> {done, strokes?|text?}
+  let deadline = 0;
+  let phaseMs = 1;
 
-  function updateInfo() {
-    const n = Object.keys(players).length;
-    info.textContent = n ? n + ' Spieler verbunden' : 'Warte auf Spieler… öffne /controller.html auf dem Handy.';
+  let recapChain = 0, recapShown = 1, recapAccum = 0;
+  let banner = '', bannerUntil = 0;
+
+  // --- Helfer ---
+  const connectedIds = () => Object.keys(players).map(Number);
+  const hostId = () => { const c = connectedIds(); return c.length ? Math.min(...c) : null; };
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  const chainFor = (p, r) => ((p - r) % N + N) % N;   // Rotation: garantiert keine Wiederholung pro Spieler
+  function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 4000); }
+
+  // --- Lobby / Reset ---
+  function sendLobby() {
+    const h = hostId();
+    connectedIds().forEach(id => ac.message(id, {
+      t: 'lobby', host: id === h, color: players[id].color, player: id,
+      drawTime: settings.drawTime, guessTime: settings.guessTime, playerCount: connectedIds().length
+    }));
+  }
+  function resetToLobby() { state = 'lobby'; gameOrder = []; chains = []; sendLobby(); }
+  function abortToLobby(msg) { setBanner(msg, 6000); resetToLobby(); }
+
+  // --- Spielablauf ---
+  function beginGame() {
+    gameOrder = connectedIds().sort((a, b) => a - b);
+    N = gameOrder.length;
+    const words = shuffle(WORDS.slice()).slice(0, N);
+    chains = gameOrder.map((id, c) => [{ type: 'word', by: null, word: words[c] }]);
+    state = 'play';
+    connectedIds().filter(id => !gameOrder.includes(id)).forEach(id => ac.message(id, { t: 'wait' }));
+    startRound(0);
   }
 
-  (function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const id in players) {
-      const p = players[id];
-      ctx.fillStyle = p.color;
-      ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('P' + id, p.x, p.y - 22);
+  function startRound(r) {
+    round = r;
+    subPhase = r % 2 === 0 ? 'draw' : 'guess';
+    assign = {};
+    gameOrder.forEach((id, p) => { assign[id] = chainFor(p, r); });
+    subm = {};
+    phaseMs = (subPhase === 'draw' ? settings.drawTime : settings.guessTime) * 1000;
+    deadline = performance.now() + phaseMs;
+    gameOrder.forEach(id => {
+      const last = chains[assign[id]][chains[assign[id]].length - 1];
+      if (subPhase === 'draw') ac.message(id, { t: 'draw', word: last.word, ms: phaseMs });
+      else ac.message(id, { t: 'guess', strokes: last.strokes || [], ms: phaseMs });
+    });
+  }
+
+  function submit(id, payload) {
+    if (!gameOrder.includes(id) || (subm[id] && subm[id].done)) return;
+    subm[id] = Object.assign({ done: true }, payload);
+    ac.message(id, { t: 'wait' });
+    if (gameOrder.every(p => subm[p] && subm[p].done)) finalizeRound();
+  }
+
+  let closing = false;
+  function finalizeRound() {
+    if (closing) return;
+    closing = true;
+    gameOrder.forEach(id => {
+      const c = assign[id], s = subm[id];
+      if (subPhase === 'draw') chains[c].push({ type: 'drawing', by: id, strokes: (s && s.strokes) || [] });
+      else chains[c].push({ type: 'word', by: id, word: ((s && s.text) || '').trim() || '—' });
+    });
+    closing = false;
+    if (round + 1 < N) startRound(round + 1);
+    else startRecap();
+  }
+
+  function startRecap() {
+    state = 'recap'; recapChain = 0; recapShown = 1; recapAccum = 0;
+    connectedIds().forEach(id => ac.message(id, { t: 'recap' }));
+  }
+  function advanceRecap() {
+    if (state !== 'recap') return;
+    recapAccum = 0;
+    const len = chains[recapChain].length;
+    if (recapShown < len) recapShown++;
+    else if (recapChain < N - 1) { recapChain++; recapShown = 1; }
+    else { setBanner('🎉 Fertig! Host kann eine neue Runde starten.', 8000); resetToLobby(); }
+  }
+
+  // --- Events ---
+  ac.onConnect = (id) => {
+    players[id] = { color: COLORS[(id - 1) % COLORS.length] };
+    if (state === 'lobby') sendLobby();
+    else ac.message(id, { t: 'wait' });
+  };
+  ac.onDisconnect = (id) => {
+    const wasPlayer = gameOrder.includes(id);
+    delete players[id];
+    if (state !== 'lobby' && wasPlayer) abortToLobby('Ein Spieler hat die Verbindung verloren — zurück zur Lobby.');
+    else if (state === 'lobby') sendLobby();
+  };
+  ac.onMessage = (id, d) => {
+    if (!d || !d.t) return;
+    if (d.t === 'config' && id === hostId()) {
+      settings.drawTime = clamp(d.drawTime | 0, 10, 180);
+      settings.guessTime = clamp(d.guessTime | 0, 10, 120);
+      if (state === 'lobby') sendLobby();
+    } else if (d.t === 'start' && id === hostId() && state === 'lobby') {
+      if (connectedIds().length >= 2) beginGame();
+    } else if (d.t === 'drawing' && state === 'play' && subPhase === 'draw') {
+      submit(id, { strokes: d.strokes });
+    } else if (d.t === 'guess' && state === 'play' && subPhase === 'guess') {
+      submit(id, { text: d.text });
+    } else if (d.t === 'advance' && state === 'recap') {
+      advanceRecap();
     }
-    requestAnimationFrame(draw);
-  })();
+  };
+
+  // --- Zeichnen von Strichen in eine Box (weißer Hintergrund) ---
+  function drawStrokes(strokes, bx, by, bw, bh) {
+    ctx.save();
+    ctx.fillStyle = '#fff'; ctx.fillRect(bx, by, bw, bh);
+    ctx.beginPath(); ctx.rect(bx, by, bw, bh); ctx.clip();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const s of (strokes || [])) {
+      if (!s.p || !s.p.length) continue;
+      ctx.strokeStyle = s.c; ctx.lineWidth = Math.max(1, s.w * bw);
+      ctx.beginPath();
+      ctx.moveTo(bx + s.p[0][0] * bw, by + s.p[0][1] * bh);
+      for (let i = 1; i < s.p.length; i++) ctx.lineTo(bx + s.p[i][0] * bw, by + s.p[i][1] * bh);
+      if (s.p.length === 1) ctx.lineTo(bx + s.p[0][0] * bw + 0.5, by + s.p[0][1] * bh);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  function fitFont(text, max, start) {
+    let f = start;
+    ctx.font = 'bold ' + f + 'px system-ui,sans-serif';
+    while (ctx.measureText(text).width > max && f > 10) { f -= 2; ctx.font = 'bold ' + f + 'px system-ui,sans-serif'; }
+    return f;
+  }
+
+  // --- Render ---
+  function renderLobby() {
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif';
+    ctx.fillText('Drawing Evolution', cv.width / 2, 70);
+    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif';
+    ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 110);
+
+    const list = connectedIds().sort((a, b) => a - b), h = hostId();
+    ctx.font = 'bold 22px system-ui,sans-serif';
+    list.forEach((id, i) => {
+      const y = 180 + i * 46;
+      ctx.fillStyle = players[id].color;
+      ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.textAlign = 'left'; ctx.fillStyle = '#eee';
+      ctx.fillText('Spieler ' + id + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
+    });
+    ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a';
+    ctx.font = '20px system-ui,sans-serif';
+    ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 60);
+  }
+
+  function renderPlay() {
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    const remaining = Math.max(0, deadline - performance.now());
+    const secs = Math.ceil(remaining / 1000);
+    const frac = clamp(remaining / phaseMs, 0, 1);
+
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff';
+    ctx.font = 'bold 44px system-ui,sans-serif';
+    ctx.fillText(subPhase === 'draw' ? '✏️  ZEICHNEN' : '❓  RATEN', cv.width / 2, 80);
+    ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif';
+    ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
+
+    // Timer-Ring
+    const cx = cv.width / 2, cy = 270, R = 80;
+    ctx.lineWidth = 12; ctx.strokeStyle = '#222';
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff';
+    ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif';
+    ctx.fillText(secs, cx, cy);
+
+    // Wer ist fertig?
+    const chipY = 430;
+    const totalW = gameOrder.length * 120;
+    let x = cv.width / 2 - totalW / 2 + 60;
+    ctx.font = 'bold 16px system-ui,sans-serif';
+    gameOrder.forEach(id => {
+      const done = subm[id] && subm[id].done;
+      ctx.fillStyle = players[id].color; ctx.globalAlpha = done ? 1 : 0.4;
+      ctx.beginPath(); ctx.arc(x, chipY, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#fff'; ctx.fillText(done ? '✓' : '…', x, chipY);
+      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif';
+      ctx.fillText('P' + id, x, chipY + 36); ctx.font = 'bold 16px system-ui,sans-serif';
+      x += 120;
+    });
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif';
+    ctx.fillText(subPhase === 'draw' ? 'Zeichnet euer Wort auf dem Handy!' : 'Ratet, was das Bild zeigt!', cv.width / 2, 510);
+  }
+
+  function renderRecap() {
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui,sans-serif';
+    ctx.fillText('🎬 Evolution ' + (recapChain + 1) + ' / ' + N, cv.width / 2, 56);
+
+    const ch = chains[recapChain], n = ch.length;
+    const gap = 22;
+    const cw = Math.min(150, Math.floor((cv.width - 80 - (n - 1) * gap) / n));
+    const totalW = n * cw + (n - 1) * gap;
+    let x = (cv.width - totalW) / 2;
+    const y = 230, capY = y + cw + 28;
+
+    for (let i = 0; i < n; i++) {
+      const e = ch[i], shown = i < recapShown;
+      if (shown) {
+        if (e.type === 'drawing') {
+          ctx.save(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 10); ctx.stroke(); ctx.restore();
+          drawStrokes(e.strokes, x + 2, y + 2, cw - 4, cw - 4);
+        } else {
+          ctx.fillStyle = '#1a1a2e'; roundRect(x, y, cw, cw, 12); ctx.fill();
+          ctx.strokeStyle = e.by === null ? '#ffd60a' : '#555'; ctx.lineWidth = 2; roundRect(x, y, cw, cw, 12); ctx.stroke();
+          ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          const fs = fitFont(e.word, cw - 16, 26);
+          ctx.font = 'bold ' + fs + 'px system-ui,sans-serif';
+          ctx.fillText(e.word, x + cw / 2, y + cw / 2);
+        }
+        // Bildunterschrift
+        ctx.fillStyle = e.by === null ? '#ffd60a' : (players[e.by] ? players[e.by].color : '#aaa');
+        ctx.font = '14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const cap = e.by === null ? 'Startwort' : ('P' + e.by + (e.type === 'drawing' ? ' zeichnete' : ' riet'));
+        ctx.fillText(cap, x + cw / 2, capY);
+      } else {
+        ctx.fillStyle = '#15151f'; roundRect(x, y, cw, cw, 10); ctx.fill();
+      }
+      if (i < n - 1) {
+        ctx.fillStyle = i < recapShown - 1 ? '#888' : '#333';
+        ctx.font = 'bold 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('→', x + cw + gap / 2, y + cw / 2);
+      }
+      x += cw + gap;
+    }
+    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Läuft automatisch weiter · „Weiter" am Handy springt vor', cv.width / 2, cv.height - 50);
+  }
+
+  function render() {
+    if (state === 'lobby') renderLobby();
+    else if (state === 'play') renderPlay();
+    else if (state === 'recap') renderRecap();
+    if (performance.now() < bannerUntil && banner) {
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, cv.height / 2 - 34, cv.width, 68);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 24px system-ui,sans-serif';
+      ctx.fillText(banner, cv.width / 2, cv.height / 2);
+    }
+  }
+
+  // --- Ticks ---
+  setInterval(() => {
+    const now = performance.now();
+    if (state === 'play' && now >= deadline) finalizeRound();
+    if (state === 'recap') { recapAccum += 120; if (recapAccum >= RECAP_STEP_MS) advanceRecap(); }
+  }, 120);
+
+  (function loop() { render(); requestAnimationFrame(loop); })();
+  sendLobby();
 </script>
 </body>
 </html>
