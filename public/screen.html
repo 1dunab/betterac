@@ -3,20 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drawing Evolution — Screen</title>
+<title>Party Hub — Screen</title>
 <style>
   html,body { margin:0; background:#0a0a14; color:#eee; font-family:system-ui,sans-serif; height:100%; }
   #wrap { display:flex; flex-direction:column; align-items:center; gap:10px; padding:10px; }
   #info { font-size:14px; opacity:.75; }
   canvas { background:#0d0d1a; border-radius:10px; max-width:100%; box-shadow:0 0 50px rgba(120,90,255,.18); }
-  #saveBtn { display:none; border:none; border-radius:12px; padding:12px 20px; font-size:16px; font-weight:700;
-             background:#30d158; color:#06250f; cursor:pointer; }
+  #saveBtn { display:none; border:none; border-radius:12px; padding:12px 20px; font-size:16px; font-weight:700; background:#30d158; color:#06250f; cursor:pointer; }
   #saveBtn:active { filter:brightness(1.1); }
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="info">Drawing Evolution — öffne <b>/controller.html</b> auf den Handys</div>
+  <div id="info">Party Hub — öffne <b>/controller.html</b> auf den Handys</div>
   <canvas id="c" width="960" height="600"></canvas>
   <button id="saveBtn">💾 Evolution als Bild speichern</button>
 </div>
@@ -28,195 +27,34 @@
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
   const saveBtn = document.getElementById('saveBtn');
-
   const COLORS = ['#ff2d55','#0a84ff','#30d158','#ffd60a','#bf5af2','#64d2ff','#ff9f0a','#ac8e68'];
 
-  const WORD_PACKS = {
-    casual: [
-      'Sonne','Mond','Baum','Haus','Auto','Fahrrad','Pizza','Banane','Roboter','Rakete',
-      'Drache','Burg','Regenbogen','Schneemann','Krone','Geist','Vulkan','Insel','Leuchtturm','Brille',
-      'Gitarre','Trommel','Fußball','Eistüte','Kaktus','Pilz','Ampel','Regenschirm','Kerze','Geschenk',
-      'Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt','Heißluftballon','Ufo','Planet',
-      'Komet','Blitz','Schneeflocke','Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut'
-    ],
-    tiere: [
-      'Hund','Katze','Elefant','Giraffe','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange',
-      'Frosch','Pinguin','Eule','Fuchs','Bär','Igel','Eichhörnchen','Wal','Hai','Delfin',
-      'Krake','Qualle','Schildkröte','Pferd','Kuh','Schwein','Schaf','Huhn','Ente','Biene',
-      'Schmetterling','Marienkäfer','Spinne','Fledermaus','Kamel','Känguru','Faultier','Flamingo','Pfau','Eisbär'
-    ],
-    laender: [
-      'Deutschland','Frankreich','Italien','Spanien','Portugal','England','Irland','Niederlande','Belgien','Schweiz',
-      'Österreich','Griechenland','Türkei','Ägypten','Marokko','Nigeria','Kenia','Südafrika','Brasilien','Argentinien',
-      'Mexiko','Kanada','USA','Kuba','Japan','China','Indien','Thailand','Australien','Neuseeland',
-      'Russland','Schweden','Norwegen','Island','Polen','Finnland'
-    ],
-    versaut: [
-      'Tanga','Stringtanga','Kondom','Dildo','Vibrator','Handschellen','Peitsche','Strapse','Reizwäsche','Dessous',
-      'Stripperstange','Striptease','Lapdance','Zungenkuss','Knutschfleck','Morgenlatte','Nackedei','Hintern','Busen','Sexpuppe',
-      'Liebesschaukel','Rotlichtviertel','Sexshop','Pornoheft','Domina','FKK-Strand','Nacktbaden','Höschen','Spanner','Aktmodell'
-    ]
-  };
-  const MODE_LABELS = { casual: 'Casual', tiere: 'Tiere 🐾', laender: 'Länder 🌍', versaut: 'Versaut 🌶️', custom: 'Eigene Wörter ✍️' };
-  const VALID_MODES = ['casual', 'tiere', 'laender', 'versaut', 'custom'];
-
-  const RECAP_STEP_MS = 2600;
-
-  let players = {};        // id -> {color, name, named}
-  let state = 'lobby';     // lobby | collect | play | preRecap | recap
-  let settings = { drawTime: 60, guessTime: 30, mode: 'casual' };
-
-  let gameOrder = [], N = 0;
-  let chains = [];
-  let round = 0, subPhase = 'draw', assign = {}, subm = {};
-  let deadline = 0, phaseMs = 1;
-  let collectSubm = {};
-  let recapChain = 0, recapShown = 1, recapAccum = 0;
+  // ===== Shell-Status =====
+  let players = {};                 // id -> {color, name, named}
+  let shell = { state: 'lobby', selected: 'lightcycles' };
+  let drawSettings = { drawTime: 60, guessTime: 30, mode: 'casual' };
+  let active = null, activeKey = null;
   let banner = '', bannerUntil = 0;
 
-  // --- Helfer ---
+  const GAME_LIST = [
+    { key: 'lightcycles', label: '🏍️ Light Cycles', min: 2 },
+    { key: 'slither',     label: '🐍 Slither',       min: 1 },
+    { key: 'drawing',     label: '🎨 Drawing Evolution', min: 2 }
+  ];
+  const GAMES = {};
+
+  // ===== Shell-Helfer =====
   const connectedIds = () => Object.keys(players).map(Number);
   const namedIds = () => connectedIds().filter(id => players[id].named);
   const nameOf = (id) => (players[id] && players[id].name) ? players[id].name : ('Spieler ' + id);
-  const shortName = (id) => { const nm = nameOf(id); return nm.length > 9 ? nm.slice(0, 8) + '…' : nm; };
+  const shortName = (id) => { const n = nameOf(id); return n.length > 9 ? n.slice(0, 8) + '…' : n; };
   const hostId = () => { const n = namedIds(); if (n.length) return Math.min(...n); const c = connectedIds(); return c.length ? Math.min(...c) : null; };
+  const minFor = (key) => (GAME_LIST.find(g => g.key === key) || {}).min || 1;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
-  const chainFor = (p, r) => ((p - r) % N + N) % N;
-  function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 4000); }
+  function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 5000); }
 
-  // --- Lobby / Reset / Phasen-Mitteilungen ---
-  function lobbyMsg(id, h) {
-    return { t: 'lobby', host: id === h, color: players[id].color, player: id, name: nameOf(id),
-             drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode, playerCount: namedIds().length };
-  }
-  function sendLobby() { const h = hostId(); namedIds().forEach(id => ac.message(id, lobbyMsg(id, h))); }
-  function sendLobbyOne(id) { if (players[id] && players[id].named) ac.message(id, lobbyMsg(id, hostId())); }
-  function sendPreRecap() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'prerecap', host: id === h })); }
-  function sendRecapViews() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'recap', host: id === h })); }
-  function resetToLobby(keepChains) { state = 'lobby'; gameOrder = []; if (!keepChains) chains = []; sendLobby(); }
-  function abortToLobby(msg) { setBanner(msg, 6000); resetToLobby(false); }
-
-  // --- Spielstart ---
-  function beginGame() {
-    gameOrder = namedIds().sort((a, b) => a - b);
-    N = gameOrder.length;
-    if (N < 2) { resetToLobby(false); return; }
-    connectedIds().filter(id => !gameOrder.includes(id)).forEach(id => ac.message(id, { t: 'wait' }));
-    if (settings.mode === 'custom') enterCollect();
-    else {
-      const pack = WORD_PACKS[settings.mode] || WORD_PACKS.casual;
-      const words = shuffle(pack.slice()).slice(0, N);
-      chains = gameOrder.map((id, c) => [{ type: 'word', by: null, word: words[c] }]);
-      state = 'play'; startRound(0);
-    }
-  }
-
-  function enterCollect() { state = 'collect'; collectSubm = {}; gameOrder.forEach(id => ac.message(id, { t: 'prompt' })); }
-  let collectClosing = false;
-  function finalizeCollect() {
-    if (collectClosing) return; collectClosing = true;
-    const fallback = shuffle(WORD_PACKS.casual.slice());
-    chains = gameOrder.map((id, c) => {
-      let w = (collectSubm[id] || '').trim();
-      if (!w) w = fallback[c % fallback.length];
-      return [{ type: 'word', by: id, word: w }];
-    });
-    collectClosing = false;
-    state = 'play'; startRound(0);
-  }
-
-  function startRound(r) {
-    round = r;
-    subPhase = r % 2 === 0 ? 'draw' : 'guess';
-    assign = {};
-    gameOrder.forEach((id, p) => { assign[id] = chainFor(p, r); });
-    subm = {};
-    phaseMs = (subPhase === 'draw' ? settings.drawTime : settings.guessTime) * 1000;
-    deadline = performance.now() + phaseMs;
-    gameOrder.forEach(id => {
-      const last = chains[assign[id]][chains[assign[id]].length - 1];
-      if (subPhase === 'draw') ac.message(id, { t: 'draw', word: last.word, ms: phaseMs });
-      else ac.message(id, { t: 'guess', strokes: last.strokes || [], ms: phaseMs });
-    });
-  }
-
-  function submit(id, payload) {
-    if (!gameOrder.includes(id) || (subm[id] && subm[id].done)) return;
-    subm[id] = Object.assign({ done: true }, payload);
-    ac.message(id, { t: 'wait' });
-    if (gameOrder.every(p => subm[p] && subm[p].done)) finalizeRound();
-  }
-
-  let closing = false;
-  function finalizeRound() {
-    if (closing) return; closing = true;
-    gameOrder.forEach(id => {
-      const c = assign[id], s = subm[id];
-      if (subPhase === 'draw') chains[c].push({ type: 'drawing', by: id, strokes: (s && s.strokes) || [] });
-      else chains[c].push({ type: 'word', by: id, word: ((s && s.text) || '').trim() || '—' });
-    });
-    closing = false;
-    if (round + 1 < N) startRound(round + 1);
-    else { state = 'preRecap'; sendPreRecap(); }
-  }
-
-  function startRecap() { state = 'recap'; recapChain = 0; recapShown = 1; recapAccum = 0; sendRecapViews(); }
-  function advanceRecap() {
-    if (state !== 'recap') return;
-    recapAccum = 0;
-    const len = chains[recapChain].length;
-    if (recapShown < len) recapShown++;
-    else if (recapChain < N - 1) { recapChain++; recapShown = 1; }
-    else { setBanner('🎉 Fertig! Bild speichern oder neue Runde starten.', 8000); resetToLobby(true); }
-  }
-
-  // --- Events ---
-  ac.onConnect = (id) => {
-    players[id] = { color: COLORS[(id - 1) % COLORS.length], name: 'Spieler ' + id, named: false };
-    ac.message(id, { t: 'ask_name' });
-    connectedIds().filter(o => o !== id).forEach(o => sendLobbyOne(o));
-  };
-  ac.onDisconnect = (id) => {
-    const wasPlayer = gameOrder.includes(id);
-    delete players[id];
-    if ((state === 'play' || state === 'collect') && wasPlayer) abortToLobby('Ein Spieler hat die Verbindung verloren — zurück zur Lobby.');
-    else if (state === 'preRecap') sendPreRecap();
-    else if (state === 'recap') sendRecapViews();
-    else if (state === 'lobby') sendLobby();
-  };
-  ac.onMessage = (id, d) => {
-    if (!d || !d.t) return;
-    if (d.t === 'name') {
-      if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; }
-      if (state === 'lobby') sendLobby(); else ac.message(id, { t: 'wait' });
-    } else if (d.t === 'config' && id === hostId()) {
-      settings.drawTime = clamp(d.drawTime | 0, 10, 180);
-      settings.guessTime = clamp(d.guessTime | 0, 10, 120);
-      if (VALID_MODES.includes(d.mode)) settings.mode = d.mode;
-      if (state === 'lobby') sendLobby();
-    } else if (d.t === 'start' && id === hostId() && state === 'lobby') {
-      if (namedIds().length >= 2) beginGame();
-    } else if (d.t === 'word' && state === 'collect') {
-      if (gameOrder.includes(id) && collectSubm[id] === undefined) {
-        collectSubm[id] = (d.text || '').trim();
-        ac.message(id, { t: 'wait' });
-        if (gameOrder.every(p => collectSubm[p] !== undefined)) finalizeCollect();
-      }
-    } else if (d.t === 'drawing' && state === 'play' && subPhase === 'draw') {
-      submit(id, { strokes: d.strokes });
-    } else if (d.t === 'guess' && state === 'play' && subPhase === 'guess') {
-      submit(id, { text: d.text });
-    } else if (d.t === 'startRecap' && id === hostId() && state === 'preRecap') {
-      startRecap();
-    } else if (d.t === 'advance' && state === 'recap') {
-      advanceRecap();
-    } else if (d.t === 'save' && id === hostId()) {
-      downloadEvolution();
-    }
-  };
-
-  // --- generisches Zeichnen ---
+  // generische Zeichen-Helfer (für Drawing-Render + PNG-Export)
   function drawStrokesOn(o, strokes, bx, by, bw, bh) {
     o.save(); o.fillStyle = '#fff'; o.fillRect(bx, by, bw, bh);
     o.beginPath(); o.rect(bx, by, bw, bh); o.clip();
@@ -234,179 +72,393 @@
   function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
   function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } return f; }
 
-  function captionFor(e, i) {
-    const who = e.by === null ? '' : nameOf(e.by);
-    return (i === 0) ? (e.by === null ? 'Startwort' : (who + 's Wort'))
-      : (e.type === 'drawing' ? (who + ' zeichnete') : (who + ' riet'));
+  // ===== Shell-Nachrichten an Controller =====
+  function sendLobby() {
+    const h = hostId();
+    namedIds().forEach(id => ac.message(id, {
+      t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
+      selected: shell.selected, games: GAME_LIST, settings: drawSettings,
+      playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected)
+    }));
+  }
+  function sendHostUpdate() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'host', host: id === h })); }
+
+  // ===== Spielstart / Abbruch =====
+  function startGame(key) {
+    if (!GAMES[key]) return;
+    activeKey = key; active = GAMES[key]();
+    shell.state = 'playing';
+    const h = hostId();
+    namedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'enterGame', game: key, host: id === h }));
+    active.start(namedIds().sort((a, b) => a - b), key === 'drawing' ? drawSettings : null);
+  }
+  function endToLobby(msg) {
+    if (active && active.stop) active.stop();
+    active = null; activeKey = null; shell.state = 'lobby';
+    if (msg) setBanner(msg, 6000);
+    sendLobby();
   }
 
-  // --- Evolution als PNG ---
-  function buildEvolutionCanvas() {
-    const margin = 40, titleH = 90, gap = 20, capH = 30, rowPad = 34, W = 1400;
-    const maxN = Math.max(2, ...chains.map(c => c.length));
-    const cw = Math.min(170, Math.floor((W - 2 * margin - (maxN - 1) * gap) / maxN));
-    const rowH = cw + capH + rowPad;
-    const H = titleH + chains.length * rowH + margin;
-    const oc = document.createElement('canvas'); oc.width = W; oc.height = H;
-    const o = oc.getContext('2d');
-    o.fillStyle = '#fff'; o.fillRect(0, 0, W, H);
-    o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle';
-    o.font = 'bold 42px system-ui,sans-serif'; o.fillText('Drawing Evolution', W / 2, titleH / 2);
-    chains.forEach((ch, ci) => {
-      const n = ch.length, totalW = n * cw + (n - 1) * gap;
-      let x = (W - totalW) / 2; const y = titleH + ci * rowH;
-      for (let i = 0; i < n; i++) {
-        const e = ch[i];
-        if (e.type === 'drawing') {
-          o.strokeStyle = '#ccc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 10); o.stroke();
-          drawStrokesOn(o, e.strokes, x + 2, y + 2, cw - 4, cw - 4);
-        } else {
-          o.fillStyle = i === 0 ? '#fff6d6' : '#eef'; rr(o, x, y, cw, cw, 12); o.fill();
-          o.strokeStyle = i === 0 ? '#e0b400' : '#bbc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 12); o.stroke();
-          o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle';
-          o.font = 'bold ' + fitFont(o, e.word, cw - 16, 26) + 'px system-ui,sans-serif';
-          o.fillText(e.word, x + cw / 2, y + cw / 2);
-        }
-        o.fillStyle = '#555'; o.font = '14px system-ui,sans-serif'; o.textAlign = 'center'; o.textBaseline = 'middle';
-        o.fillText(captionFor(e, i), x + cw / 2, y + cw + capH / 2);
-        if (i < n - 1) { o.fillStyle = '#999'; o.font = 'bold 22px system-ui,sans-serif'; o.fillText('→', x + cw + gap / 2, y + cw / 2); }
-        x += cw + gap;
-      }
-    });
-    return oc;
-  }
-  function downloadEvolution() {
-    if (!chains.length) return;
-    const a = document.createElement('a');
-    a.href = buildEvolutionCanvas().toDataURL('image/png');
-    a.download = 'drawing-evolution.png';
-    document.body.appendChild(a); a.click(); a.remove();
-  }
-  saveBtn.addEventListener('click', downloadEvolution);
+  // ===== Events =====
+  ac.onConnect = (id) => {
+    players[id] = { color: COLORS[(id - 1) % COLORS.length], name: 'Spieler ' + id, named: false };
+    ac.message(id, { t: 'shell', cmd: 'name' });
+    connectedIds().filter(o => o !== id && players[o].named).forEach(o => { if (shell.state === 'lobby') sendLobby(); });
+  };
+  ac.onDisconnect = (id) => {
+    const wasNamed = players[id] && players[id].named;
+    delete players[id];
+    if (active) {
+      if (active.onDisconnect) active.onDisconnect(id);
+      if (active) sendHostUpdate();           // Host könnte gewechselt haben
+    } else if (shell.state === 'lobby' && wasNamed) sendLobby();
+  };
+  ac.onMessage = (id, d) => {
+    if (!d) return;
+    if (d.t === 'shellName') {
+      if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; }
+      if (!active) sendLobby();
+      else if (active.acceptsJoin) { active.onConnect && active.onConnect(id); ac.message(id, { t: 'shell', cmd: 'enterGame', game: activeKey, host: id === hostId() }); }
+      else ac.message(id, { t: 'shell', cmd: 'spectate', host: id === hostId() });
+    } else if (d.t === 'shellSelect' && id === hostId() && !active) {
+      if (GAMES[d.game]) { shell.selected = d.game; sendLobby(); }
+    } else if (d.t === 'shellConfig' && id === hostId() && !active) {
+      drawSettings.drawTime = clamp(d.drawTime | 0, 10, 180);
+      drawSettings.guessTime = clamp(d.guessTime | 0, 10, 120);
+      if (['casual', 'tiere', 'laender', 'versaut', 'custom'].includes(d.mode)) drawSettings.mode = d.mode;
+      sendLobby();
+    } else if (d.t === 'shellStart' && id === hostId() && !active) {
+      if (namedIds().length >= minFor(shell.selected)) startGame(shell.selected);
+    } else if (d.t === 'shellAbort' && id === hostId() && active) {
+      endToLobby('');
+    } else if (active && active.onMessage) {
+      active.onMessage(id, d);
+    }
+  };
 
-  // --- Render ---
-  function chips(yPos) {
-    const totalW = gameOrder.length * 120; let x = cv.width / 2 - totalW / 2 + 60;
-    gameOrder.forEach(id => {
-      const done = (state === 'collect') ? (collectSubm[id] !== undefined) : (subm[id] && subm[id].done);
-      ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.globalAlpha = done ? 1 : 0.4;
-      ctx.beginPath(); ctx.arc(x, yPos, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 16px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(done ? '✓' : '…', x, yPos);
-      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif'; ctx.fillText(shortName(id), x, yPos + 36);
-      x += 120;
-    });
-  }
-
+  // ===== Shell-Lobby-Render =====
   function renderLobby() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('Drawing Evolution', cv.width / 2, 60);
-    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif'; ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 96);
-    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 124);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('🎉 Party Hub', cv.width / 2, 58);
+    const sel = GAME_LIST.find(g => g.key === shell.selected) || GAME_LIST[0];
+    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 26px system-ui,sans-serif'; ctx.fillText('Gewählt: ' + sel.label, cv.width / 2, 104);
+    if (shell.selected === 'drawing') {
+      ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif';
+      const ML = { casual: 'Casual', tiere: 'Tiere', laender: 'Länder', versaut: 'Versaut', custom: 'Eigene Wörter' };
+      ctx.fillText('Zeichnen ' + drawSettings.drawTime + 's · Raten ' + drawSettings.guessTime + 's · Modus: ' + (ML[drawSettings.mode] || drawSettings.mode), cv.width / 2, 134);
+    }
     const list = namedIds().sort((a, b) => a - b), h = hostId();
     const joining = connectedIds().length - list.length;
-    ctx.font = 'bold 22px system-ui,sans-serif';
+    ctx.font = 'bold 20px system-ui,sans-serif';
     list.forEach((id, i) => {
-      const y = 184 + i * 42;
-      ctx.fillStyle = players[id].color; ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText(nameOf(id) + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
+      const col = 2, perCol = Math.ceil(list.length / col);
+      const c = Math.floor(i / perCol), rIdx = i % perCol;
+      const bx = cv.width / 2 - 200 + c * 220, y = 190 + rIdx * 40;
+      ctx.fillStyle = players[id].color; ctx.beginPath(); ctx.arc(bx, y, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText(nameOf(id) + (id === h ? ' ⭐' : ''), bx + 20, y);
+      ctx.textAlign = 'center';
     });
-    if (joining > 0) { ctx.textAlign = 'center'; ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif'; ctx.fillText(joining + ' tippt noch einen Namen…', cv.width / 2, cv.height - 86); }
-    ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
-    ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 56);
+    if (joining > 0) { ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif'; ctx.fillText(joining + ' tippt noch einen Namen…', cv.width / 2, cv.height - 84); }
+    const ok = list.length >= minFor(shell.selected);
+    ctx.fillStyle = ok ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
+    ctx.fillText(ok ? '⭐ Host wählt das Spiel und tippt START' : ('Mind. ' + minFor(shell.selected) + ' Spieler für ' + sel.label + '…'), cv.width / 2, cv.height - 54);
   }
 
-  function renderCollect() {
-    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('💭 Denkt euch ein Wort aus!', cv.width / 2, 120);
-    const done = gameOrder.filter(id => collectSubm[id] !== undefined).length;
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 48px system-ui,sans-serif'; ctx.fillText(done + ' / ' + N + ' eingereicht', cv.width / 2, 240);
-    chips(390);
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Es geht weiter, sobald alle ein Wort haben', cv.width / 2, 480);
-  }
-
-  function renderPlay() {
-    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    const remaining = Math.max(0, deadline - performance.now()), secs = Math.ceil(remaining / 1000), frac = clamp(remaining / phaseMs, 0, 1);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.font = 'bold 44px system-ui,sans-serif';
-    ctx.fillText(subPhase === 'draw' ? '✏️  ZEICHNEN' : '❓  RATEN', cv.width / 2, 80);
-    ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif'; ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
-    const cx = cv.width / 2, cy = 270, R = 80;
-    ctx.lineWidth = 12; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = subPhase === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif'; ctx.fillText(secs, cx, cy);
-    chips(430);
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif';
-    ctx.fillText(subPhase === 'draw' ? 'Zeichnet euer Wort auf dem Handy!' : 'Ratet, was das Bild zeigt!', cv.width / 2, 510);
-  }
-
-  function renderPreRecap() {
-    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#30d158'; ctx.font = 'bold 46px system-ui,sans-serif'; ctx.fillText('✅ Alle Runden geschafft!', cv.width / 2, cv.height / 2 - 30);
-    ctx.fillStyle = '#ddd'; ctx.font = '22px system-ui,sans-serif';
-    ctx.fillText('Host (' + nameOf(hostId() || 1) + ') startet den Rückblick am Handy', cv.width / 2, cv.height / 2 + 28);
-  }
-
-  function renderRecap() {
-    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui,sans-serif'; ctx.fillText('🎬 Evolution ' + (recapChain + 1) + ' / ' + N, cv.width / 2, 56);
-    const ch = chains[recapChain], n = ch.length, gap = 22;
-    const cw = Math.min(150, Math.floor((cv.width - 80 - (n - 1) * gap) / n));
-    const totalW = n * cw + (n - 1) * gap; let x = (cv.width - totalW) / 2; const y = 230, capY = y + cw + 28;
-    for (let i = 0; i < n; i++) {
-      const e = ch[i], shown = i < recapShown;
-      if (shown) {
-        if (e.type === 'drawing') {
-          ctx.save(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 10); ctx.stroke(); ctx.restore();
-          drawStrokesOn(ctx, e.strokes, x + 2, y + 2, cw - 4, cw - 4);
-        } else {
-          ctx.fillStyle = '#1a1a2e'; rr(ctx, x, y, cw, cw, 12); ctx.fill();
-          ctx.strokeStyle = i === 0 ? '#ffd60a' : '#555'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 12); ctx.stroke();
-          ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-          ctx.font = 'bold ' + fitFont(ctx, e.word, cw - 16, 26) + 'px system-ui,sans-serif';
-          ctx.fillText(e.word, x + cw / 2, y + cw / 2);
-        }
-        ctx.fillStyle = e.by === null ? '#ffd60a' : (players[e.by] ? players[e.by].color : '#aaa');
-        ctx.font = '14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(captionFor(e, i), x + cw / 2, capY);
-      } else { ctx.fillStyle = '#15151f'; rr(ctx, x, y, cw, cw, 10); ctx.fill(); }
-      if (i < n - 1) {
-        ctx.fillStyle = i < recapShown - 1 ? '#888' : '#333'; ctx.font = 'bold 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText('→', x + cw + gap / 2, y + cw / 2);
-      }
-      x += cw + gap;
-    }
-    ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText('Läuft automatisch weiter · „Weiter" am Handy springt vor', cv.width / 2, cv.height - 50);
-  }
-
-  function render() {
-    if (state === 'lobby') renderLobby();
-    else if (state === 'collect') renderCollect();
-    else if (state === 'play') renderPlay();
-    else if (state === 'preRecap') renderPreRecap();
-    else if (state === 'recap') renderRecap();
+  // ===== Render-Schleife =====
+  saveBtn.addEventListener('click', () => { if (active && active.save) active.save(); });
+  (function loop() {
+    if (active && active.render) active.render(); else renderLobby();
     if (performance.now() < bannerUntil && banner) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, cv.height / 2 - 34, cv.width, 68);
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 24px system-ui,sans-serif';
       ctx.fillText(banner, cv.width / 2, cv.height / 2);
     }
-    saveBtn.style.display = (chains.length > 0 && state !== 'play' && state !== 'collect') ? 'inline-block' : 'none';
-  }
+    if (active) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '13px system-ui,sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText('Host kann am Handy abbrechen ✕', cv.width - 10, cv.height - 6); }
+    saveBtn.style.display = (active && active.canSave && active.canSave()) ? 'inline-block' : 'none';
+    requestAnimationFrame(loop);
+  })();
 
-  setInterval(() => {
-    const now = performance.now();
-    if (state === 'play' && now >= deadline) finalizeRound();
-    if (state === 'recap') { recapAccum += 120; if (recapAccum >= RECAP_STEP_MS) advanceRecap(); }
-  }, 120);
+  // ============================================================
+  // ===== Modul: LIGHT CYCLES ==================================
+  // ============================================================
+  GAMES.lightcycles = function () {
+    const CELL = 12, COLS = Math.floor(cv.width / CELL), ROWS = Math.floor(cv.height / CELL);
+    let gp = {}, occupied = new Set(), st = 'countdown', bann = '', cd = null, tick = null, starters = 0, wins = {}, running = false;
+    const k = (x, y) => x + ',' + y;
+    const present = () => Object.keys(gp).map(Number);
+    const aliveIds = () => present().filter(id => gp[id].alive);
+    const turn = (dir, way) => way === 'left' ? { x: dir.y, y: -dir.x } : { x: -dir.y, y: dir.x };
+    function clearT() { if (cd) { clearInterval(cd); cd = null; } if (tick) { clearInterval(tick); tick = null; } }
+    function startRound() {
+      clearT(); const ids = present();
+      if (ids.length < 2) { endToLobby('Light Cycles braucht mind. 2 Spieler.'); return; }
+      occupied = new Set();
+      ids.forEach((id, i) => {
+        const p = gp[id], left = i % 2 === 0;
+        p.x = left ? 5 : COLS - 6; p.y = Math.floor(ROWS * (i + 1) / (ids.length + 1));
+        p.dir = left ? { x: 1, y: 0 } : { x: -1, y: 0 }; p.nextDir = { x: p.dir.x, y: p.dir.y };
+        p.alive = true; p.trail = [[p.x, p.y]]; occupied.add(k(p.x, p.y));
+      });
+      starters = ids.length; st = 'countdown'; bann = '3'; let n = 3;
+      cd = setInterval(() => { n--; bann = n > 0 ? String(n) : 'LOS!'; if (n < 0) { clearInterval(cd); cd = null; st = 'playing'; bann = ''; tick = setInterval(step, 85); } }, 700);
+    }
+    function step() {
+      const alive = aliveIds(), intended = {};
+      alive.forEach(id => { const p = gp[id]; p.dir = p.nextDir; intended[id] = [p.x + p.dir.x, p.y + p.dir.y]; });
+      const tc = {}; alive.forEach(id => { const key = k(intended[id][0], intended[id][1]); tc[key] = (tc[key] || 0) + 1; });
+      const dead = new Set();
+      alive.forEach(id => { const [nx, ny] = intended[id], key = k(nx, ny); if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS || occupied.has(key) || tc[key] > 1) dead.add(id); });
+      alive.forEach(id => { if (dead.has(id)) gp[id].alive = false; else { const [nx, ny] = intended[id], p = gp[id]; p.x = nx; p.y = ny; occupied.add(k(nx, ny)); p.trail.push([nx, ny]); } });
+      const surv = aliveIds();
+      if (starters >= 2 && surv.length <= 1) return over(surv[0]);
+      if (surv.length === 0) return over(undefined);
+    }
+    function over(winId) {
+      clearT(); st = 'over';
+      if (winId !== undefined) { wins[winId] = (wins[winId] || 0) + 1; bann = nameOf(winId) + ' gewinnt! 🏆'; } else bann = 'Unentschieden!';
+      setTimeout(() => { if (running) { if (present().length >= 2) startRound(); else endToLobby('Light Cycles braucht mind. 2 Spieler.'); } }, 3000);
+    }
+    return {
+      acceptsJoin: true,
+      start(ids) { running = true; gp = {}; wins = {}; ids.forEach(id => gp[id] = { alive: false }); startRound(); },
+      stop() { running = false; clearT(); },
+      onConnect(id) { gp[id] = { alive: false }; },
+      onDisconnect(id) { delete gp[id]; },
+      onMessage(id, d) { if (d && d.turn && st === 'playing' && gp[id] && gp[id].alive) gp[id].nextDir = turn(gp[id].dir, d.turn); },
+      render() {
+        ctx.fillStyle = '#0a0a12'; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
+        for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x * CELL, 0); ctx.lineTo(x * CELL, cv.height); ctx.stroke(); }
+        for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0, y * CELL); ctx.lineTo(cv.width, y * CELL); ctx.stroke(); }
+        present().forEach(id => {
+          const p = gp[id]; if (!p.trail) return;
+          const col = players[id] ? players[id].color : '#888';
+          ctx.fillStyle = col; p.trail.forEach(([cx, cy]) => ctx.fillRect(cx * CELL, cy * CELL, CELL, CELL));
+          if (p.alive) { ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 14; ctx.fillRect(p.x * CELL, p.y * CELL, CELL, CELL); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.fillRect(p.x * CELL + 3, p.y * CELL + 3, CELL - 6, CELL - 6); }
+        });
+        ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = 'bold 14px system-ui,sans-serif';
+        present().sort((a, b) => (wins[b] || 0) - (wins[a] || 0)).forEach((id, i) => { ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.fillText(shortName(id) + ': ' + (wins[id] || 0), 10, 10 + i * 18); });
+        if (bann) { ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, cv.height / 2 - 36, cv.width, 72); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 38px system-ui,sans-serif'; ctx.fillText(bann, cv.width / 2, cv.height / 2); }
+      }
+    };
+  };
 
-  (function loop() { render(); requestAnimationFrame(loop); })();
-  sendLobby();
+  // ============================================================
+  // ===== Modul: SLITHER =======================================
+  // ============================================================
+  GAMES.slither = function () {
+    const WORLD = { cx: 480, cy: 300, r: 285 }, dt = 1 / 30, SPEED = 135, BOOST = 235, TURN = 3.6;
+    const START = 16, MAXP = 480, FOOD_TARGET = 130, MINB = 12, BCOST = 6;
+    let sw = {}, food = [], sim = null, running = false;
+    const ids = () => Object.keys(sw).map(Number);
+    const d2 = (a, b) => { const dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; };
+    const thick = (w) => 11 + Math.min(w.mass, 300) * 0.06;
+    const shade = (hex, f) => { const n = parseInt(hex.slice(1), 16); return 'rgb(' + Math.round(((n >> 16) & 255) * f) + ',' + Math.round(((n >> 8) & 255) * f) + ',' + Math.round((n & 255) * f) + ')'; };
+    function spawnFood(x, y, v, big) { food.push({ x, y, v: v || 1, r: big ? 5 : 3, c: 'hsl(' + Math.floor(Math.random() * 360) + ',90%,65%)' }); }
+    function topUp() { while (food.length < FOOD_TARGET) { const a = Math.random() * Math.PI * 2, rr2 = Math.random() * WORLD.r * 0.97; spawnFood(WORLD.cx + Math.cos(a) * rr2, WORLD.cy + Math.sin(a) * rr2, 1, false); } if (food.length > 600) food.splice(0, food.length - 600); }
+    function spawn(id) {
+      const w = sw[id], a = Math.random() * Math.PI * 2, rr2 = Math.random() * WORLD.r * 0.6;
+      const sx = WORLD.cx + Math.cos(a) * rr2, sy = WORLD.cy + Math.sin(a) * rr2;
+      w.angle = Math.random() * Math.PI * 2; w.x = sx; w.y = sy; w.pts = [];
+      for (let i = 0; i < START; i++) w.pts.push({ x: sx - Math.cos(w.angle) * i * SPEED * dt, y: sy - Math.sin(w.angle) * i * SPEED * dt });
+      w.mass = 10; w.steer = 0; w.boost = false; w.alive = true; w.dead = false;
+    }
+    function ensure(id) { if (!sw[id]) sw[id] = { mass: 10, steer: 0, boost: false, alive: false, dead: false, pts: [] }; }
+    function kill(id) { const w = sw[id]; if (!w || w.dead) return; w.dead = true; w.alive = false; for (let i = 0; i < w.pts.length; i += 3) spawnFood(w.pts[i].x, w.pts[i].y, 2 + Math.random() * 2, true); w.pts = []; w.respawnAt = performance.now() + 1800; }
+    function simulate() {
+      const now = performance.now();
+      for (const id of ids()) {
+        const w = sw[id];
+        if (w.dead) { if (now >= w.respawnAt) spawn(id); continue; }
+        if (!w.alive) continue;
+        w.angle += w.steer * TURN * dt;
+        const boosting = w.boost && w.mass > MINB, sp = boosting ? BOOST : SPEED;
+        w.x += Math.cos(w.angle) * sp * dt; w.y += Math.sin(w.angle) * sp * dt; w.pts.unshift({ x: w.x, y: w.y });
+        if (boosting) { w.mass = Math.max(MINB, w.mass - BCOST * dt); w._d = (w._d || 0) + 1; if (w._d >= 5) { w._d = 0; const t = w.pts[w.pts.length - 1]; if (t) spawnFood(t.x, t.y, 1, true); } }
+        const rEat = thick(w) / 2 + 6;
+        for (let i = food.length - 1; i >= 0; i--) { const lim = rEat + food[i].r; if (d2(w.pts[0], food[i]) < lim * lim) { w.mass += food[i].v; food.splice(i, 1); } }
+        const target = Math.max(START, Math.min(MAXP, START + Math.floor(w.mass * 1.1)));
+        while (w.pts.length > target) w.pts.pop();
+      }
+      const live = ids().filter(id => sw[id].alive && !sw[id].dead), kills = new Set();
+      for (const id of live) { const w = sw[id], lim = WORLD.r - thick(w) / 2; if (d2(w.pts[0], { x: WORLD.cx, y: WORLD.cy }) > lim * lim) kills.add(id); }
+      for (let a = 0; a < live.length; a++) for (let b = a + 1; b < live.length; b++) { const A = sw[live[a]], B = sw[live[b]], rr2 = thick(A) / 2 + thick(B) / 2; if (d2(A.pts[0], B.pts[0]) < rr2 * rr2) { kills.add(live[a]); kills.add(live[b]); } }
+      for (const idA of live) { const A = sw[idA], hr = thick(A) / 2; for (const idB of live) { if (idA === idB) continue; const B = sw[idB], lim = hr + thick(B) / 2, l2 = lim * lim; for (let i = 6; i < B.pts.length; i += 2) { if (d2(A.pts[0], B.pts[i]) < l2) { kills.add(idA); break; } } } }
+      kills.forEach(kill); topUp();
+      if (ids().length === 0) endToLobby('');
+    }
+    function strokePath(pts) { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y); ctx.stroke(); }
+    return {
+      acceptsJoin: true,
+      start(idList) { running = true; sw = {}; food = []; idList.forEach(id => { ensure(id); spawn(id); }); topUp(); sim = setInterval(simulate, 33); },
+      stop() { running = false; if (sim) { clearInterval(sim); sim = null; } },
+      onConnect(id) { ensure(id); spawn(id); },
+      onDisconnect(id) { const w = sw[id]; if (w && w.pts) for (let i = 0; i < w.pts.length; i += 3) spawnFood(w.pts[i].x, w.pts[i].y, 2, true); delete sw[id]; },
+      onMessage(id, d) { const w = sw[id]; if (!w || !d) return; if (typeof d.steer === 'number') w.steer = Math.max(-1, Math.min(1, d.steer)); if (typeof d.boost === 'boolean') w.boost = d.boost; },
+      render() {
+        ctx.fillStyle = '#05050a'; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.beginPath(); ctx.arc(WORLD.cx, WORLD.cy, WORLD.r, 0, Math.PI * 2); ctx.fillStyle = '#0b0b16'; ctx.fill();
+        ctx.save(); ctx.strokeStyle = 'rgba(90,140,255,0.55)'; ctx.lineWidth = 4; ctx.shadowColor = 'rgba(90,140,255,0.8)'; ctx.shadowBlur = 20; ctx.beginPath(); ctx.arc(WORLD.cx, WORLD.cy, WORLD.r, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+        for (const f of food) { ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill(); }
+        ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+        for (const id of ids()) {
+          const w = sw[id]; if (!w.alive || !w.pts || w.pts.length < 2) continue;
+          const col = players[id] ? players[id].color : '#888', TH = thick(w);
+          ctx.strokeStyle = shade(col, 0.55); ctx.lineWidth = TH + 4; strokePath(w.pts);
+          ctx.strokeStyle = col; ctx.lineWidth = TH; strokePath(w.pts);
+          const hh = w.pts[0], ex = Math.cos(w.angle), ey = Math.sin(w.angle), px = -ey, py = ex;
+          ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 12; ctx.beginPath(); ctx.arc(hh.x, hh.y, TH * 0.62, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+          for (const s of [1, -1]) { const cxx = hh.x + ex * TH * 0.25 + px * s * TH * 0.3, cyy = hh.y + ey * TH * 0.25 + py * s * TH * 0.3; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cxx, cyy, TH * 0.28, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(cxx + ex * TH * 0.12, cyy + ey * TH * 0.12, TH * 0.14, 0, Math.PI * 2); ctx.fill(); }
+        }
+        ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = 'bold 14px system-ui,sans-serif';
+        ids().filter(id => sw[id].alive).sort((a, b) => sw[b].mass - sw[a].mass).slice(0, 6).forEach((id, i) => { ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.fillText(shortName(id) + ': ' + Math.floor(sw[id].mass), 12, 12 + i * 18); });
+      }
+    };
+  };
+
+  // ============================================================
+  // ===== Modul: DRAWING EVOLUTION =============================
+  // ============================================================
+  GAMES.drawing = function () {
+    const WORD_PACKS = {
+      casual: ['Sonne','Mond','Baum','Haus','Auto','Fahrrad','Pizza','Banane','Roboter','Rakete','Drache','Burg','Regenbogen','Schneemann','Krone','Geist','Vulkan','Insel','Leuchtturm','Brille','Gitarre','Trommel','Fußball','Eistüte','Kaktus','Pilz','Ampel','Regenschirm','Kerze','Geschenk','Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt','Heißluftballon','Ufo','Planet','Komet','Blitz','Schneeflocke','Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut'],
+      tiere: ['Hund','Katze','Elefant','Giraffe','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange','Frosch','Pinguin','Eule','Fuchs','Bär','Igel','Eichhörnchen','Wal','Hai','Delfin','Krake','Qualle','Schildkröte','Pferd','Kuh','Schwein','Schaf','Huhn','Ente','Biene','Schmetterling','Marienkäfer','Spinne','Fledermaus','Kamel','Känguru','Faultier','Flamingo','Pfau','Eisbär'],
+      laender: ['Deutschland','Frankreich','Italien','Spanien','Portugal','England','Irland','Niederlande','Belgien','Schweiz','Österreich','Griechenland','Türkei','Ägypten','Marokko','Nigeria','Kenia','Südafrika','Brasilien','Argentinien','Mexiko','Kanada','USA','Kuba','Japan','China','Indien','Thailand','Australien','Neuseeland','Russland','Schweden','Norwegen','Island','Polen','Finnland'],
+      versaut: ['Tanga','Stringtanga','Kondom','Dildo','Vibrator','Handschellen','Peitsche','Strapse','Reizwäsche','Dessous','Stripperstange','Striptease','Lapdance','Zungenkuss','Knutschfleck','Morgenlatte','Nackedei','Hintern','Busen','Sexpuppe','Liebesschaukel','Rotlichtviertel','Sexshop','Pornoheft','Domina','FKK-Strand','Nacktbaden','Höschen','Spanner','Aktmodell']
+    };
+    const RECAP_STEP_MS = 2600;
+    let cfg = { drawTime: 60, guessTime: 30, mode: 'casual' };
+    let order = [], N = 0, chains = [], round = 0, sub = 'draw', assign = {}, subm = {}, deadline = 0, phaseMs = 1;
+    let collectSubm = {}, rChain = 0, rShown = 1, rAcc = 0, dstate = 'collect', tick = null, closing = false;
+    const chainFor = (p, r) => ((p - r) % N + N) % N;
+    function clearT() { if (tick) { clearInterval(tick); tick = null; } }
+    function capFor(e, i) { const who = e.by === null ? '' : nameOf(e.by); return (i === 0) ? (e.by === null ? 'Startwort' : (who + 's Wort')) : (e.type === 'drawing' ? (who + ' zeichnete') : (who + ' riet')); }
+
+    function startRound(r) {
+      round = r; sub = r % 2 === 0 ? 'draw' : 'guess'; assign = {}; subm = {};
+      order.forEach((id, p) => assign[id] = chainFor(p, r));
+      phaseMs = (sub === 'draw' ? cfg.drawTime : cfg.guessTime) * 1000; deadline = performance.now() + phaseMs;
+      order.forEach(id => { const last = chains[assign[id]][chains[assign[id]].length - 1]; if (sub === 'draw') ac.message(id, { t: 'draw', word: last.word, ms: phaseMs }); else ac.message(id, { t: 'guess', strokes: last.strokes || [], ms: phaseMs }); });
+    }
+    function doSubmit(id, payload) { if (!order.includes(id) || (subm[id] && subm[id].done)) return; subm[id] = Object.assign({ done: true }, payload); ac.message(id, { t: 'wait' }); if (order.every(p => subm[p] && subm[p].done)) finalize(); }
+    function finalize() {
+      if (closing) return; closing = true;
+      order.forEach(id => { const c = assign[id], s = subm[id]; if (sub === 'draw') chains[c].push({ type: 'drawing', by: id, strokes: (s && s.strokes) || [] }); else chains[c].push({ type: 'word', by: id, word: ((s && s.text) || '').trim() || '—' }); });
+      closing = false;
+      if (round + 1 < N) startRound(round + 1); else { dstate = 'preRecap'; clearT(); sendPre(); }
+    }
+    function sendPre() { const h = hostId(); order.forEach(id => { if (players[id]) ac.message(id, { t: 'prerecap', host: id === h }); }); }
+    function sendRecapV() { const h = hostId(); order.forEach(id => { if (players[id]) ac.message(id, { t: 'recap', host: id === h }); }); }
+    function advance() { rAcc = 0; const len = chains[rChain].length; if (rShown < len) rShown++; else if (rChain < N - 1) { rChain++; rShown = 1; } else { dstate = 'done'; } }
+
+    function buildCanvas() {
+      const margin = 40, titleH = 90, gap = 20, capH = 30, rowPad = 34, W = 1400;
+      const maxN = Math.max(2, ...chains.map(c => c.length));
+      const cw = Math.min(170, Math.floor((W - 2 * margin - (maxN - 1) * gap) / maxN));
+      const rowH = cw + capH + rowPad, H = titleH + chains.length * rowH + margin;
+      const oc = document.createElement('canvas'); oc.width = W; oc.height = H; const o = oc.getContext('2d');
+      o.fillStyle = '#fff'; o.fillRect(0, 0, W, H); o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle'; o.font = 'bold 42px system-ui,sans-serif'; o.fillText('Drawing Evolution', W / 2, titleH / 2);
+      chains.forEach((ch, ci) => {
+        const n = ch.length, totalW = n * cw + (n - 1) * gap; let x = (W - totalW) / 2; const y = titleH + ci * rowH;
+        for (let i = 0; i < n; i++) {
+          const e = ch[i];
+          if (e.type === 'drawing') { o.strokeStyle = '#ccc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 10); o.stroke(); drawStrokesOn(o, e.strokes, x + 2, y + 2, cw - 4, cw - 4); }
+          else { o.fillStyle = i === 0 ? '#fff6d6' : '#eef'; rr(o, x, y, cw, cw, 12); o.fill(); o.strokeStyle = i === 0 ? '#e0b400' : '#bbc'; o.lineWidth = 2; rr(o, x, y, cw, cw, 12); o.stroke(); o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle'; o.font = 'bold ' + fitFont(o, e.word, cw - 16, 26) + 'px system-ui,sans-serif'; o.fillText(e.word, x + cw / 2, y + cw / 2); }
+          o.fillStyle = '#555'; o.font = '14px system-ui,sans-serif'; o.textAlign = 'center'; o.textBaseline = 'middle'; o.fillText(capFor(e, i), x + cw / 2, y + cw + capH / 2);
+          if (i < n - 1) { o.fillStyle = '#999'; o.font = 'bold 22px system-ui,sans-serif'; o.fillText('→', x + cw + gap / 2, y + cw / 2); }
+          x += cw + gap;
+        }
+      });
+      return oc;
+    }
+
+    function chips(yPos, doneFn) {
+      const totalW = order.length * 120; let x = cv.width / 2 - totalW / 2 + 60;
+      order.forEach(id => {
+        const done = doneFn(id);
+        ctx.fillStyle = players[id] ? players[id].color : '#888'; ctx.globalAlpha = done ? 1 : 0.4; ctx.beginPath(); ctx.arc(x, yPos, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 16px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(done ? '✓' : '…', x, yPos);
+        ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif'; ctx.fillText(shortName(id), x, yPos + 36); x += 120;
+      });
+    }
+
+    return {
+      acceptsJoin: false,
+      start(idList, settings) {
+        if (settings) cfg = settings;
+        order = idList.slice(); N = order.length; dstate = 'play';
+        if (cfg.mode === 'custom') { dstate = 'collect'; collectSubm = {}; order.forEach(id => ac.message(id, { t: 'prompt' })); }
+        else { const pack = WORD_PACKS[cfg.mode] || WORD_PACKS.casual; const words = shuffle(pack.slice()).slice(0, N); chains = order.map((id, c) => [{ type: 'word', by: null, word: words[c] }]); startRound(0); }
+        tick = setInterval(() => { const now = performance.now(); if (dstate === 'play' && now >= deadline) finalize(); if (dstate === 'recap') { rAcc += 120; if (rAcc >= RECAP_STEP_MS) advance(); } }, 120);
+      },
+      stop() { clearT(); },
+      onConnect(id) { /* Spät-Beitritt: nur Zuschauer */ },
+      onDisconnect(id) {
+        if (!order.includes(id)) return;
+        if (dstate === 'collect' || dstate === 'play') endToLobby('Ein Spieler ist raus — zurück zur Lobby.');
+        else if (dstate === 'preRecap') sendPre();
+        else if (dstate === 'recap') sendRecapV();
+      },
+      onMessage(id, d) {
+        if (!d || !d.t) return;
+        if (d.t === 'word' && dstate === 'collect') {
+          if (order.includes(id) && collectSubm[id] === undefined) { collectSubm[id] = (d.text || '').trim(); ac.message(id, { t: 'wait' }); if (order.every(p => collectSubm[p] !== undefined)) finalizeCollect(); }
+        } else if (d.t === 'drawing' && dstate === 'play' && sub === 'draw') doSubmit(id, { strokes: d.strokes });
+        else if (d.t === 'guess' && dstate === 'play' && sub === 'guess') doSubmit(id, { text: d.text });
+        else if (d.t === 'startRecap' && id === hostId() && dstate === 'preRecap') { dstate = 'recap'; rChain = 0; rShown = 1; rAcc = 0; sendRecapV(); }
+        else if (d.t === 'advance' && dstate === 'recap') advance();
+        else if (d.t === 'save' && id === hostId()) this.save();
+      },
+      canSave() { return chains.length > 0 && (dstate === 'preRecap' || dstate === 'recap' || dstate === 'done'); },
+      save() { if (!chains.length) return; const a = document.createElement('a'); a.href = buildCanvas().toDataURL('image/png'); a.download = 'drawing-evolution.png'; document.body.appendChild(a); a.click(); a.remove(); },
+      render() {
+        ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        if (dstate === 'collect') {
+          ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('💭 Denkt euch ein Wort aus!', cv.width / 2, 120);
+          const done = order.filter(id => collectSubm[id] !== undefined).length;
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 48px system-ui,sans-serif'; ctx.fillText(done + ' / ' + N + ' eingereicht', cv.width / 2, 240);
+          chips(390, id => collectSubm[id] !== undefined);
+          ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Es geht weiter, sobald alle ein Wort haben', cv.width / 2, 480);
+        } else if (dstate === 'play') {
+          const rem = Math.max(0, deadline - performance.now()), secs = Math.ceil(rem / 1000), frac = clamp(rem / phaseMs, 0, 1);
+          ctx.fillStyle = sub === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.font = 'bold 44px system-ui,sans-serif'; ctx.fillText(sub === 'draw' ? '✏️  ZEICHNEN' : '❓  RATEN', cv.width / 2, 80);
+          ctx.fillStyle = '#888'; ctx.font = '20px system-ui,sans-serif'; ctx.fillText('Runde ' + (round + 1) + ' / ' + N, cv.width / 2, 124);
+          const cx = cv.width / 2, cy = 270, R = 80; ctx.lineWidth = 12; ctx.strokeStyle = '#222'; ctx.beginPath(); ctx.arc(cx, cy, R, 0, Math.PI * 2); ctx.stroke();
+          ctx.strokeStyle = sub === 'draw' ? '#ffd60a' : '#64d2ff'; ctx.beginPath(); ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2); ctx.stroke();
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 52px system-ui,sans-serif'; ctx.fillText(secs, cx, cy);
+          chips(430, id => subm[id] && subm[id].done);
+        } else if (dstate === 'preRecap') {
+          ctx.fillStyle = '#30d158'; ctx.font = 'bold 46px system-ui,sans-serif'; ctx.fillText('✅ Alle Runden geschafft!', cv.width / 2, cv.height / 2 - 30);
+          ctx.fillStyle = '#ddd'; ctx.font = '22px system-ui,sans-serif'; ctx.fillText('Host (' + nameOf(hostId() || order[0]) + ') startet den Rückblick', cv.width / 2, cv.height / 2 + 28);
+        } else if (dstate === 'recap' || dstate === 'done') {
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 34px system-ui,sans-serif'; ctx.fillText(dstate === 'done' ? '🎉 Evolution komplett!' : ('🎬 Evolution ' + (rChain + 1) + ' / ' + N), cv.width / 2, 50);
+          const chn = chains[dstate === 'done' ? N - 1 : rChain], shownN = dstate === 'done' ? chn.length : rShown, n = chn.length, gap = 22;
+          const cw = Math.min(150, Math.floor((cv.width - 80 - (n - 1) * gap) / n)), totalW = n * cw + (n - 1) * gap;
+          let x = (cv.width - totalW) / 2; const y = 220, capY = y + cw + 28;
+          for (let i = 0; i < n; i++) {
+            const e = chn[i], shown = i < shownN;
+            if (shown) {
+              if (e.type === 'drawing') { ctx.save(); ctx.strokeStyle = '#444'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 10); ctx.stroke(); ctx.restore(); drawStrokesOn(ctx, e.strokes, x + 2, y + 2, cw - 4, cw - 4); }
+              else { ctx.fillStyle = '#1a1a2e'; rr(ctx, x, y, cw, cw, 12); ctx.fill(); ctx.strokeStyle = i === 0 ? '#ffd60a' : '#555'; ctx.lineWidth = 2; rr(ctx, x, y, cw, cw, 12); ctx.stroke(); ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold ' + fitFont(ctx, e.word, cw - 16, 26) + 'px system-ui,sans-serif'; ctx.fillText(e.word, x + cw / 2, y + cw / 2); }
+              ctx.fillStyle = e.by === null ? '#ffd60a' : (players[e.by] ? players[e.by].color : '#aaa'); ctx.font = '14px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(capFor(e, i), x + cw / 2, capY);
+            } else { ctx.fillStyle = '#15151f'; rr(ctx, x, y, cw, cw, 10); ctx.fill(); }
+            if (i < n - 1) { ctx.fillStyle = i < shownN - 1 ? '#888' : '#333'; ctx.font = 'bold 22px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('→', x + cw + gap / 2, y + cw / 2); }
+            x += cw + gap;
+          }
+          ctx.fillStyle = '#777'; ctx.font = '16px system-ui,sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText(dstate === 'done' ? 'Speichern unten · Host bricht ab für neue Runde' : 'Läuft automatisch · „Weiter" am Handy springt vor', cv.width / 2, cv.height - 40);
+        }
+      }
+    };
+    function finalizeCollect() {
+      if (closing) return; closing = true;
+      const fb = shuffle(WORD_PACKS.casual.slice());
+      chains = order.map((id, c) => { let w = (collectSubm[id] || '').trim(); if (!w) w = fb[c % fb.length]; return [{ type: 'word', by: id, word: w }]; });
+      closing = false; dstate = 'play'; startRound(0);
+    }
+  };
 </script>
 </body>
 </html>
