@@ -32,6 +32,15 @@
 </head>
 <body>
 
+<!-- NAME EINGEBEN -->
+<div id="v-name" class="view">
+  <div class="center">
+    <div class="big">Wie heißt du? 🙋</div>
+    <input id="nameInput" type="text" placeholder="Dein Name…" autocomplete="off" maxlength="14">
+    <button id="joinBtn" class="btn go" style="width:100%; max-width:340px">Der Lobby beitreten</button>
+  </div>
+</div>
+
 <!-- LOBBY -->
 <div id="v-lobby" class="view">
   <div class="center">
@@ -98,7 +107,7 @@
 <!-- WARTEN -->
 <div id="v-wait" class="view"><div class="center"><div class="big">Eingereicht ✓</div><div class="muted">Warte auf die anderen…</div></div></div>
 
-<!-- VOR DEM RECAP: Host startet -->
+<!-- VOR DEM RECAP -->
 <div id="v-prerecap" class="view">
   <div class="center">
     <div class="big">✅ Alle Runden geschafft!</div>
@@ -123,9 +132,14 @@
 <script>
   const ac = new AirConsole();
   const $ = (id) => document.getElementById(id);
-  const views = ['lobby', 'prompt', 'draw', 'guess', 'wait', 'prerecap', 'recap'];
+  const views = ['name', 'lobby', 'prompt', 'draw', 'guess', 'wait', 'prerecap', 'recap'];
   function show(v) { views.forEach(n => $('v-' + n).classList.toggle('active', n === v)); }
   let myHost = false;
+
+  // ---------- Name / Beitritt ----------
+  function joinLobby() { ac.message(AirConsole.SCREEN, { t: 'name', name: $('nameInput').value.trim() }); }
+  $('joinBtn').addEventListener('click', joinLobby);
+  $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
 
   // ---------- Host-Einstellungen ----------
   let cfg = { draw: 60, guess: 30, mode: 'casual' };
@@ -239,11 +253,13 @@
   $('guessInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitGuess(); });
 
   // ---------- Nachrichten vom Screen ----------
-  ac.onReady = () => { $('lobbyId').textContent = 'Verbunden – warte…'; };
+  ac.onReady = () => { /* Name-Ansicht ist schon aktiv */ };
   ac.onMessage = (from, d) => {
     if (!d || !d.t) return;
-    if (d.t === 'lobby') {
-      $('lobbyId').textContent = 'Du bist Spieler ' + d.player;
+    if (d.t === 'ask_name') {
+      show('name'); setTimeout(() => $('nameInput').focus(), 50);
+    } else if (d.t === 'lobby') {
+      $('lobbyId').textContent = 'Hallo, ' + (d.name || ('Spieler ' + d.player)) + '!';
       document.body.style.background = shade(d.color);
       cfg.draw = d.drawTime; cfg.guess = d.guessTime; cfg.mode = d.mode || cfg.mode;
       $('drawVal').textContent = cfg.draw + 's'; $('guessVal').textContent = cfg.guess + 's';
@@ -288,7 +304,7 @@
   }
 
   clearPad();
-  show('lobby');
+  show('name');
 </script>
 </body>
 </html>

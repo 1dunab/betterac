@@ -62,7 +62,7 @@
 
   const RECAP_STEP_MS = 2600;
 
-  let players = {};        // id -> {color}
+  let players = {};        // id -> {color, name, named}
   let state = 'lobby';     // lobby | collect | play | preRecap | recap
   let settings = { drawTime: 60, guessTime: 30, mode: 'casual' };
 
@@ -76,20 +76,22 @@
 
   // --- Helfer ---
   const connectedIds = () => Object.keys(players).map(Number);
-  const hostId = () => { const c = connectedIds(); return c.length ? Math.min(...c) : null; };
+  const namedIds = () => connectedIds().filter(id => players[id].named);
+  const nameOf = (id) => (players[id] && players[id].name) ? players[id].name : ('Spieler ' + id);
+  const shortName = (id) => { const nm = nameOf(id); return nm.length > 9 ? nm.slice(0, 8) + '…' : nm; };
+  const hostId = () => { const n = namedIds(); if (n.length) return Math.min(...n); const c = connectedIds(); return c.length ? Math.min(...c) : null; };
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
   const chainFor = (p, r) => ((p - r) % N + N) % N;
   function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 4000); }
 
   // --- Lobby / Reset / Phasen-Mitteilungen ---
-  function sendLobby() {
-    const h = hostId();
-    connectedIds().forEach(id => ac.message(id, {
-      t: 'lobby', host: id === h, color: players[id].color, player: id,
-      drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode, playerCount: connectedIds().length
-    }));
+  function lobbyMsg(id, h) {
+    return { t: 'lobby', host: id === h, color: players[id].color, player: id, name: nameOf(id),
+             drawTime: settings.drawTime, guessTime: settings.guessTime, mode: settings.mode, playerCount: namedIds().length };
   }
+  function sendLobby() { const h = hostId(); namedIds().forEach(id => ac.message(id, lobbyMsg(id, h))); }
+  function sendLobbyOne(id) { if (players[id] && players[id].named) ac.message(id, lobbyMsg(id, hostId())); }
   function sendPreRecap() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'prerecap', host: id === h })); }
   function sendRecapViews() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'recap', host: id === h })); }
   function resetToLobby(keepChains) { state = 'lobby'; gameOrder = []; if (!keepChains) chains = []; sendLobby(); }
@@ -97,8 +99,9 @@
 
   // --- Spielstart ---
   function beginGame() {
-    gameOrder = connectedIds().sort((a, b) => a - b);
+    gameOrder = namedIds().sort((a, b) => a - b);
     N = gameOrder.length;
+    if (N < 2) { resetToLobby(false); return; }
     connectedIds().filter(id => !gameOrder.includes(id)).forEach(id => ac.message(id, { t: 'wait' }));
     if (settings.mode === 'custom') enterCollect();
     else {
@@ -109,7 +112,6 @@
     }
   }
 
-  // Sammelphase: endet, sobald ALLE ein Wort abgegeben haben (kein Timer)
   function enterCollect() { state = 'collect'; collectSubm = {}; gameOrder.forEach(id => ac.message(id, { t: 'prompt' })); }
   let collectClosing = false;
   function finalizeCollect() {
@@ -156,7 +158,7 @@
     });
     closing = false;
     if (round + 1 < N) startRound(round + 1);
-    else { state = 'preRecap'; sendPreRecap(); }   // NICHT automatisch in den Recap — Host startet ihn
+    else { state = 'preRecap'; sendPreRecap(); }
   }
 
   function startRecap() { state = 'recap'; recapChain = 0; recapShown = 1; recapAccum = 0; sendRecapViews(); }
@@ -171,9 +173,9 @@
 
   // --- Events ---
   ac.onConnect = (id) => {
-    players[id] = { color: COLORS[(id - 1) % COLORS.length] };
-    if (state === 'lobby') sendLobby();
-    else ac.message(id, { t: 'wait' });
+    players[id] = { color: COLORS[(id - 1) % COLORS.length], name: 'Spieler ' + id, named: false };
+    ac.message(id, { t: 'ask_name' });
+    connectedIds().filter(o => o !== id).forEach(o => sendLobbyOne(o));
   };
   ac.onDisconnect = (id) => {
     const wasPlayer = gameOrder.includes(id);
@@ -185,13 +187,16 @@
   };
   ac.onMessage = (id, d) => {
     if (!d || !d.t) return;
-    if (d.t === 'config' && id === hostId()) {
+    if (d.t === 'name') {
+      if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; }
+      if (state === 'lobby') sendLobby(); else ac.message(id, { t: 'wait' });
+    } else if (d.t === 'config' && id === hostId()) {
       settings.drawTime = clamp(d.drawTime | 0, 10, 180);
       settings.guessTime = clamp(d.guessTime | 0, 10, 120);
       if (VALID_MODES.includes(d.mode)) settings.mode = d.mode;
       if (state === 'lobby') sendLobby();
     } else if (d.t === 'start' && id === hostId() && state === 'lobby') {
-      if (connectedIds().length >= 2) beginGame();
+      if (namedIds().length >= 2) beginGame();
     } else if (d.t === 'word' && state === 'collect') {
       if (gameOrder.includes(id) && collectSubm[id] === undefined) {
         collectSubm[id] = (d.text || '').trim();
@@ -211,7 +216,7 @@
     }
   };
 
-  // --- generisches Zeichnen (für Live-Render UND Bild-Export) ---
+  // --- generisches Zeichnen ---
   function drawStrokesOn(o, strokes, bx, by, bw, bh) {
     o.save(); o.fillStyle = '#fff'; o.fillRect(bx, by, bw, bh);
     o.beginPath(); o.rect(bx, by, bw, bh); o.clip();
@@ -230,11 +235,12 @@
   function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } return f; }
 
   function captionFor(e, i) {
-    return (i === 0) ? (e.by === null ? 'Startwort' : ('P' + e.by + 's Wort'))
-      : (e.type === 'drawing' ? ('P' + e.by + ' zeichnete') : ('P' + e.by + ' riet'));
+    const who = e.by === null ? '' : nameOf(e.by);
+    return (i === 0) ? (e.by === null ? 'Startwort' : (who + 's Wort'))
+      : (e.type === 'drawing' ? (who + ' zeichnete') : (who + ' riet'));
   }
 
-  // --- Evolution als PNG exportieren ---
+  // --- Evolution als PNG ---
   function buildEvolutionCanvas() {
     const margin = 40, titleH = 90, gap = 20, capH = 30, rowPad = 34, W = 1400;
     const maxN = Math.max(2, ...chains.map(c => c.length));
@@ -246,7 +252,6 @@
     o.fillStyle = '#fff'; o.fillRect(0, 0, W, H);
     o.fillStyle = '#111'; o.textAlign = 'center'; o.textBaseline = 'middle';
     o.font = 'bold 42px system-ui,sans-serif'; o.fillText('Drawing Evolution', W / 2, titleH / 2);
-
     chains.forEach((ch, ci) => {
       const n = ch.length, totalW = n * cw + (n - 1) * gap;
       let x = (W - totalW) / 2; const y = titleH + ci * rowH;
@@ -288,7 +293,7 @@
       ctx.beginPath(); ctx.arc(x, yPos, 22, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
       ctx.fillStyle = '#fff'; ctx.font = 'bold 16px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(done ? '✓' : '…', x, yPos);
-      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif'; ctx.fillText('P' + id, x, yPos + 36);
+      ctx.fillStyle = '#bbb'; ctx.font = '13px system-ui,sans-serif'; ctx.fillText(shortName(id), x, yPos + 36);
       x += 120;
     });
   }
@@ -296,16 +301,18 @@
   function renderLobby() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('Drawing Evolution', cv.width / 2, 64);
-    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif'; ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 100);
-    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 128);
-    const list = connectedIds().sort((a, b) => a - b), h = hostId();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('Drawing Evolution', cv.width / 2, 60);
+    ctx.fillStyle = '#aaa'; ctx.font = '18px system-ui,sans-serif'; ctx.fillText('Modus: ' + (MODE_LABELS[settings.mode] || settings.mode), cv.width / 2, 96);
+    ctx.fillStyle = '#888'; ctx.font = '16px system-ui,sans-serif'; ctx.fillText('Zeichenzeit ' + settings.drawTime + 's · Ratezeit ' + settings.guessTime + 's', cv.width / 2, 124);
+    const list = namedIds().sort((a, b) => a - b), h = hostId();
+    const joining = connectedIds().length - list.length;
     ctx.font = 'bold 22px system-ui,sans-serif';
     list.forEach((id, i) => {
-      const y = 190 + i * 44;
+      const y = 184 + i * 42;
       ctx.fillStyle = players[id].color; ctx.beginPath(); ctx.arc(cv.width / 2 - 150, y, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText('Spieler ' + id + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
+      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText(nameOf(id) + (id === h ? '  (Host)' : ''), cv.width / 2 - 125, y);
     });
+    if (joining > 0) { ctx.textAlign = 'center'; ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif'; ctx.fillText(joining + ' tippt noch einen Namen…', cv.width / 2, cv.height - 86); }
     ctx.textAlign = 'center'; ctx.fillStyle = list.length >= 2 ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
     ctx.fillText(list.length >= 2 ? 'Host tippt am Handy auf START' : 'Warte auf mind. 2 Spieler…', cv.width / 2, cv.height - 56);
   }
@@ -341,7 +348,7 @@
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = '#30d158'; ctx.font = 'bold 46px system-ui,sans-serif'; ctx.fillText('✅ Alle Runden geschafft!', cv.width / 2, cv.height / 2 - 30);
     ctx.fillStyle = '#ddd'; ctx.font = '22px system-ui,sans-serif';
-    ctx.fillText('Host (Spieler ' + (hostId() || 1) + ') startet den Rückblick am Handy', cv.width / 2, cv.height / 2 + 28);
+    ctx.fillText('Host (' + nameOf(hostId() || 1) + ') startet den Rückblick am Handy', cv.width / 2, cv.height / 2 + 28);
   }
 
   function renderRecap() {
