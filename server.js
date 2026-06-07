@@ -27,7 +27,7 @@ const wss = new WebSocketServer({ server });
 const clients = new Map();   // device_id -> ws
 let nextControllerId = 1;    // Screen ist immer 0, Controller ab 1
 
-const send = (ws, obj) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(obj));
+const send = (ws, obj) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
 function broadcast(obj, exceptId) {
   for (const [id, ws] of clients) if (id !== exceptId) send(ws, obj);
 }
