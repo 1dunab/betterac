@@ -478,10 +478,12 @@
   // ===== Modul: GEO-PIN =======================================
   // ============================================================
   GAMES.geoguess = function () {
-    const B = window.__GEO_BBOX__, PACKS = window.__GEO_PACKS__, BORDERS = window.__WORLD_BORDERS__;
+    const PACKS = window.__GEO_PACKS__ || {};
     const HALF = { world: 1500, europe: 400, germany: 120 };
     let order = [], scores = {}, scope = 'world', cat = 'cities', rounds = 5, roundTime = 25;
     let targets = [], idx = 0, phase = 'guess', pins = {}, deadline = 0, revealAt = 0, tick = null, running = false;
+    let mapView = window.GeoMap ? GeoMap.initialView() : { zoom: 1, panX: 0, panY: 0 };
+    let mapCache = null, mapCacheKey = '';
 
     function haversine(a, b) {
       const R = 6371, k = Math.PI / 180;
@@ -490,23 +492,18 @@
       return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
     }
     const scoreFor = (d) => Math.round(5000 * Math.exp(-d / HALF[scope]));
-    function mapRect() {
-      const bb = B[scope], pad = 16, availW = cv.width - 2 * pad, availH = cv.height - 96 - pad;
-      const midLat = (bb.y0 + bb.y1) / 2 * Math.PI / 180, wDeg = (bb.x1 - bb.x0) * Math.cos(midLat), hDeg = (bb.y1 - bb.y0);
-      let w = availW, h = w * hDeg / wDeg; if (h > availH) { h = availH; w = h * wDeg / hDeg; }
-      return { x: (cv.width - w) / 2, y: 88 + (availH - h) / 2, w, h, bb };
-    }
-    const project = (lng, lat, R) => [R.x + (lng - R.bb.x0) / (R.bb.x1 - R.bb.x0) * R.w, R.y + (R.bb.y1 - lat) / (R.bb.y1 - R.bb.y0) * R.h];
+    function mapRect() { return GeoMap.rect(cv, scope, mapView); }
+    const project = (lng, lat, R) => GeoMap.project(lng, lat, R);
     function drawMap(R) {
-      ctx.fillStyle = '#0e1726'; ctx.fillRect(R.x, R.y, R.w, R.h);
-      ctx.save(); ctx.beginPath(); ctx.rect(R.x, R.y, R.w, R.h); ctx.clip();
-      ctx.fillStyle = '#26344a'; ctx.strokeStyle = '#3a4a63'; ctx.lineWidth = 1;
-      for (const ring of BORDERS) {
-        ctx.beginPath(); let prev = null;
-        for (let i = 0; i < ring.length; i++) { const lng = ring[i][0], lat = ring[i][1], p = project(lng, lat, R); if (prev === null || Math.abs(lng - prev) > 180) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]); prev = lng; }
-        ctx.fill(); ctx.stroke();
+      const key = scope + ':' + cv.width + 'x' + cv.height + ':' + mapView.zoom + ':' + mapView.panX + ':' + mapView.panY;
+      if (!mapCache || mapCacheKey !== key) {
+        mapCache = document.createElement('canvas');
+        mapCache.width = cv.width; mapCache.height = cv.height;
+        GeoMap.drawBase(mapCache.getContext('2d'), mapCache, scope, mapView);
+        mapCacheKey = key;
       }
-      ctx.restore(); ctx.strokeStyle = '#4a5a73'; ctx.lineWidth = 2; ctx.strokeRect(R.x, R.y, R.w, R.h);
+      ctx.drawImage(mapCache, 0, 0);
+      ctx.strokeStyle = '#4a5a73'; ctx.lineWidth = 2; ctx.strokeRect(R.x, R.y, R.w, R.h);
     }
 
     function startRound() {
@@ -533,14 +530,17 @@
       start(idList, settings) {
         running = true; const s = settings || {};
         scope = s.scope || 'world'; cat = s.category || 'cities'; rounds = s.rounds || 5; roundTime = s.roundTime || 25;
+        mapView = GeoMap.initialView(); mapCache = null; mapCacheKey = '';
         order = idList.slice(); scores = {}; order.forEach(id => scores[id] = 0);
-        const pool = (PACKS[scope] && PACKS[scope][cat]) ? PACKS[scope][cat].slice() : [];
+        const pack = PACKS[scope] || PACKS.world || {};
+        const pool = (pack[cat] || pack.cities || []).slice();
+        if (!pool.length) { endToLobby('Geo-Pin hat keine Kartendaten gefunden.'); return; }
         targets = shuffle(pool).slice(0, Math.min(rounds, pool.length)); idx = 0;
         startRound();
         tick = setInterval(() => { const now = performance.now(); if (phase === 'guess' && now >= deadline) reveal(); else if (phase === 'reveal' && now >= revealAt) next(); }, 200);
       },
       stop() { if (tick) { clearInterval(tick); tick = null; } running = false; },
-      onConnect(id) { if (!order.includes(id)) order.push(id); if (scores[id] === undefined) scores[id] = 0; if (phase === 'guess' && players[id]) { const t = targets[idx]; ac.message(id, { t: 'geoStart', scope, name: t.n, ms: Math.max(3000, deadline - performance.now()) }); } },
+      onConnect(id) { if (!order.includes(id)) order.push(id); if (scores[id] === undefined) scores[id] = 0; if (phase === 'guess' && players[id] && targets[idx]) { const t = targets[idx]; ac.message(id, { t: 'geoStart', scope, name: t.n, ms: Math.max(3000, deadline - performance.now()) }); } },
       onDisconnect(id) { delete pins[id]; order = order.filter(o => o !== id); if (order.length === 0) endToLobby(''); },
       onMessage(id, d) {
         if (!d || !d.t) return;
@@ -558,6 +558,12 @@
           return;
         }
         const R = mapRect(); drawMap(R); const t = targets[idx];
+        if (!t) {
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 28px system-ui,sans-serif';
+          ctx.fillText('Geo-Pin lädt...', cv.width / 2, 48);
+          return;
+        }
         ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
         ctx.fillStyle = phase === 'guess' ? '#ffd60a' : '#30d158'; ctx.font = 'bold 30px system-ui,sans-serif';
         ctx.fillText(phase === 'guess' ? ('📍 Wo liegt: ' + t.n + ' ?') : ('✅ ' + t.n), 20, 32);
