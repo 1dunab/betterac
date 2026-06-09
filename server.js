@@ -4,6 +4,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const os = require('os');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, 'public');
@@ -66,8 +67,22 @@ wss.on('connection', (ws) => {
   });
 });
 
+function lanIPs() {
+  const out = [], ifs = os.networkInterfaces();
+  for (const name of Object.keys(ifs)) for (const ni of ifs[name]) if (ni.family === 'IPv4' && !ni.internal) out.push(ni.address);
+  return out;
+}
 server.listen(PORT, () => {
-  console.log(`AirConsole-Local laeuft.`);
-  console.log(`  Screen:     http://<deine-LAN-IP>:${PORT}/screen.html`);
-  console.log(`  Controller: http://<deine-LAN-IP>:${PORT}/controller.html`);
+  const ips = lanIPs();
+  console.log(`AirConsole-Local laeuft auf Port ${PORT}.`);
+  if (!ips.length) {
+    console.log(`  Screen:     http://localhost:${PORT}/screen.html`);
+    console.log(`  Controller: http://localhost:${PORT}/controller.html`);
+  } else {
+    ips.forEach(ip => {
+      console.log(`  Screen:     http://${ip}:${PORT}/screen.html`);
+      console.log(`  Controller: http://${ip}:${PORT}/controller.html`);
+    });
+    if (ips.length > 1) console.log('  (mehrere Adressen — nimm die aus deinem WLAN-Adapter)');
+  }
 });

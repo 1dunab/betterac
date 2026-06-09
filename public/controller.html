@@ -29,6 +29,7 @@
   .modebtn, .gamebtn { padding:8px 12px; border-radius:10px; border:none; background:#3a3a48; color:#fff; font-weight:700; font-size:14px; }
   .modebtn.sel { background:#bf5af2; }
   .gamebtn.sel { background:#0a84ff; }
+  #geoMap { background:#0e1726; margin:0 10px; border-radius:10px; flex:1; min-height:320px; }
   /* Spiel-Controller-Buttons */
   #pad2 { flex:1; display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:16px; }
   #pad2 button { font-size:46px; border:none; border-radius:20px; background:rgba(0,0,0,.30); color:#fff; }
@@ -71,6 +72,19 @@
         </div>
         <div class="step"><span style="flex:1">Zeichenzeit</span><button data-d="-1" data-k="draw">−</button><span id="drawVal" class="big">60s</span><button data-d="1" data-k="draw">+</button></div>
         <div class="step" style="margin-top:12px"><span style="flex:1">Ratezeit</span><button data-d="-1" data-k="guess">−</button><span id="guessVal" class="big">30s</span><button data-d="1" data-k="guess">+</button></div>
+      </div>
+      <div id="geoSettings" style="display:none; margin-top:16px;">
+        <div class="modes" style="margin-bottom:14px">
+          <button class="modebtn" data-g="scope" data-v="world">Welt</button>
+          <button class="modebtn" data-g="scope" data-v="europe">Europa</button>
+          <button class="modebtn" data-g="scope" data-v="germany">Deutschland</button>
+        </div>
+        <div class="modes" style="margin-bottom:14px">
+          <button class="modebtn" data-g="category" data-v="cities">Städte</button>
+          <button class="modebtn" data-g="category" data-v="landmarks">Orte</button>
+        </div>
+        <div class="step"><span style="flex:1">Runden</span><button data-gd="-1" data-gk="rounds">−</button><span id="geoRoundsVal" class="big">5</span><button data-gd="1" data-gk="rounds">+</button></div>
+        <div class="step" style="margin-top:12px"><span style="flex:1">Zeit</span><button data-gd="-1" data-gk="roundTime">−</button><span id="geoTimeVal" class="big">25s</span><button data-gd="1" data-gk="roundTime">+</button></div>
       </div>
       <button id="startBtn" class="btn go" style="margin-top:22px; width:100%">START</button>
       <div id="needPlayers" class="muted" style="margin-top:10px"></div>
@@ -142,12 +156,23 @@
   <button id="saveEvoBtn" class="btn" style="font-size:18px; display:none">💾 Evolution speichern</button>
 </div></div>
 
+<!-- GEO-PIN -->
+<div id="v-geo" class="view">
+  <div class="bar"><span class="word">📍 <span id="geoTarget">Geo-Pin</span></span><span id="geoTimer" class="timer">–</span></div>
+  <canvas id="geoMap" width="600" height="700"></canvas>
+  <div class="tools" style="justify-content:center">
+    <button id="geoSubmit" class="btn go">Pin setzen</button>
+  </div>
+  <div id="geoStatus" class="muted" style="text-align:center; padding:0 16px 14px">Tippe auf die Karte.</div>
+</div>
+
 <script>window.__AC_ROLE__ = 'controller';</script>
 <script src="airconsole-local.js"></script>
+<script src="mapdata.js"></script>
 <script>
   const ac = new AirConsole();
   const $ = (id) => document.getElementById(id);
-  const VIEWS = ['name','shelllobby','spectate','lc','sl','d-prompt','d-draw','d-guess','d-wait','d-prerecap','d-recap'];
+  const VIEWS = ['name','shelllobby','spectate','lc','sl','d-prompt','d-draw','d-guess','d-wait','d-prerecap','d-recap','geo'];
   function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
   function shade(hex) { const n = parseInt(hex.slice(1), 16); return 'rgb(' + Math.round(((n >> 16) & 255) * 0.4) + ',' + Math.round(((n >> 8) & 255) * 0.4) + ',' + Math.round((n & 255) * 0.4) + ')'; }
 
@@ -161,9 +186,15 @@
   $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
 
   // ---------- Shell-Lobby (Host) ----------
-  let dcfg = { draw: 60, guess: 30, mode: 'casual' }, selected = 'lightcycles';
+  let dcfg = { draw: 60, guess: 30, mode: 'casual' }, gcfg = { scope: 'world', category: 'cities', rounds: 5, roundTime: 25 }, selected = 'lightcycles';
   function sendSelect(g) { ac.message(AirConsole.SCREEN, { t: 'shellSelect', game: g }); }
   function sendCfg() { ac.message(AirConsole.SCREEN, { t: 'shellConfig', drawTime: dcfg.draw, guessTime: dcfg.guess, mode: dcfg.mode }); }
+  function sendGeoCfg() { ac.message(AirConsole.SCREEN, { t: 'shellGeoConfig', scope: gcfg.scope, category: gcfg.category, rounds: gcfg.rounds, roundTime: gcfg.roundTime }); }
+  function syncGeoSettings() {
+    $('geoRoundsVal').textContent = gcfg.rounds;
+    $('geoTimeVal').textContent = gcfg.roundTime + 's';
+    document.querySelectorAll('#geoSettings button[data-g]').forEach(o => o.classList.toggle('sel', o.getAttribute('data-v') === gcfg[o.getAttribute('data-g')]));
+  }
   function buildPicker() {
     const wrap = $('gamePicker'); wrap.innerHTML = '';
     gamesMeta.forEach(g => { const b = document.createElement('button'); b.className = 'gamebtn' + (g.key === selected ? ' sel' : ''); b.textContent = g.label; b.addEventListener('click', () => sendSelect(g.key)); wrap.appendChild(b); });
@@ -173,6 +204,15 @@
     const k = b.getAttribute('data-k'), d = parseInt(b.getAttribute('data-d'), 10) * 5;
     if (k === 'draw') dcfg.draw = Math.max(10, Math.min(180, dcfg.draw + d)); else dcfg.guess = Math.max(10, Math.min(120, dcfg.guess + d));
     $('drawVal').textContent = dcfg.draw + 's'; $('guessVal').textContent = dcfg.guess + 's'; sendCfg();
+  }));
+  document.querySelectorAll('#geoSettings button[data-g]').forEach(b => b.addEventListener('click', () => {
+    gcfg[b.getAttribute('data-g')] = b.getAttribute('data-v'); syncGeoSettings(); sendGeoCfg();
+  }));
+  document.querySelectorAll('#geoSettings button[data-gd]').forEach(b => b.addEventListener('click', () => {
+    const k = b.getAttribute('data-gk'), d = parseInt(b.getAttribute('data-gd'), 10);
+    if (k === 'rounds') gcfg.rounds = Math.max(3, Math.min(12, gcfg.rounds + d));
+    else gcfg.roundTime = Math.max(10, Math.min(60, gcfg.roundTime + d * 5));
+    syncGeoSettings(); sendGeoCfg();
   }));
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
 
@@ -257,7 +297,95 @@
     }
   };
 
-  const MODULES = { lightcycles: LCc, slither: SLc, drawing: Dc };
+  // ============ Controller-Modul: GEO-PIN ============
+  const geoCanvas = $('geoMap'), geoCtx = geoCanvas.getContext('2d');
+  let geoScope = 'world', geoPin = null, geoSent = false, geoActive = false, geoView = GeoMap.initialView();
+  let geoDrag = null, geoPinch = null;
+  const geoPoint = (e) => {
+    const r = geoCanvas.getBoundingClientRect(), t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX - r.left) / r.width * geoCanvas.width, y: (t.clientY - r.top) / r.height * geoCanvas.height };
+  };
+  const touchPoint = (touch) => {
+    const r = geoCanvas.getBoundingClientRect();
+    return { x: (touch.clientX - r.left) / r.width * geoCanvas.width, y: (touch.clientY - r.top) / r.height * geoCanvas.height };
+  };
+  const touchDist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  function geoRect() { return GeoMap.rect(geoCanvas, geoScope, geoView); }
+  function geoProject(lng, lat, R) { return GeoMap.project(lng, lat, R); }
+  function geoUnproject(x, y, R) { return GeoMap.unproject(x, y, R); }
+  function renderGeoMap(actual) {
+    const R = GeoMap.drawBase(geoCtx, geoCanvas, geoScope, geoView);
+    geoCtx.strokeStyle = '#60708c'; geoCtx.lineWidth = 2; geoCtx.strokeRect(R.x, R.y, R.w, R.h);
+    if (geoPin) { const p = geoProject(geoPin.lng, geoPin.lat, R); geoCtx.fillStyle = '#ffd60a'; geoCtx.beginPath(); geoCtx.arc(p[0], p[1], 10, 0, Math.PI * 2); geoCtx.fill(); }
+    if (actual) { const p = geoProject(actual.lng, actual.lat, R); geoCtx.strokeStyle = '#ff453a'; geoCtx.fillStyle = '#fff'; geoCtx.lineWidth = 3; geoCtx.beginPath(); geoCtx.arc(p[0], p[1], 10, 0, Math.PI * 2); geoCtx.fill(); geoCtx.stroke(); }
+  }
+  function submitGeoPin() {
+    if (geoSent) return;
+    geoSent = true; stopTimer();
+    if (geoPin) ac.message(AirConsole.SCREEN, { t: 'pin', lat: geoPin.lat, lng: geoPin.lng });
+    $('geoSubmit').disabled = true; $('geoSubmit').style.opacity = 0.5; $('geoStatus').textContent = 'Warte auf die Auswertung...';
+  }
+  function setGeoPinAt(p) {
+    if (!geoActive || geoSent) return;
+    const R = geoRect();
+    if (p.x < R.x || p.y < R.y || p.x > R.x + R.w || p.y > R.y + R.h) return;
+    geoPin = geoUnproject(p.x, p.y, R); $('geoStatus').textContent = 'Pin gesetzt. Du kannst ihn bis Ablauf noch verschieben.'; renderGeoMap();
+  }
+  function geoStartDrag(p) { geoDrag = { sx: p.x, sy: p.y, x: p.x, y: p.y, panX: geoView.panX, panY: geoView.panY, moved: false }; }
+  function geoMoveDrag(p) {
+    if (!geoDrag || !geoActive || geoSent) return;
+    const dx = p.x - geoDrag.x, dy = p.y - geoDrag.y;
+    geoDrag.moved = geoDrag.moved || Math.hypot(p.x - geoDrag.sx, p.y - geoDrag.sy) > 9;
+    geoView.panX += dx; geoView.panY += dy; geoDrag.x = p.x; geoDrag.y = p.y;
+    GeoMap.clampView(geoView); renderGeoMap();
+  }
+  geoCanvas.addEventListener('mousedown', e => { if (!geoActive || geoSent) return; e.preventDefault(); geoStartDrag(geoPoint(e)); });
+  window.addEventListener('mousemove', e => { if (geoDrag) { e.preventDefault(); geoMoveDrag(geoPoint(e)); } });
+  window.addEventListener('mouseup', e => { if (!geoDrag) return; const d = geoDrag; geoDrag = null; if (!d.moved) setGeoPinAt(geoPoint(e)); });
+  geoCanvas.addEventListener('touchstart', e => {
+    if (!geoActive || geoSent) return; e.preventDefault();
+    if (e.touches.length >= 2) {
+      const a = touchPoint(e.touches[0]), b = touchPoint(e.touches[1]);
+      geoPinch = { dist: touchDist(a, b), zoom: geoView.zoom, panX: geoView.panX, panY: geoView.panY, mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+      geoDrag = null;
+    } else geoStartDrag(geoPoint(e));
+  });
+  geoCanvas.addEventListener('touchmove', e => {
+    if (!geoActive || geoSent) return; e.preventDefault();
+    if (e.touches.length >= 2 && geoPinch) {
+      const a = touchPoint(e.touches[0]), b = touchPoint(e.touches[1]), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const nextZoom = geoPinch.zoom * (touchDist(a, b) / Math.max(1, geoPinch.dist));
+      geoView.zoom = nextZoom;
+      geoView.panX = geoPinch.panX + (mid.x - geoPinch.mid.x);
+      geoView.panY = geoPinch.panY + (mid.y - geoPinch.mid.y);
+      GeoMap.clampView(geoView); renderGeoMap();
+    } else if (e.touches.length === 1) geoMoveDrag(geoPoint(e));
+  });
+  geoCanvas.addEventListener('touchend', e => {
+    if (geoPinch && e.touches.length < 2) geoPinch = null;
+    if (!geoDrag) return;
+    const d = geoDrag; geoDrag = null;
+    if (!d.moved && e.changedTouches && e.changedTouches[0]) setGeoPinAt(touchPoint(e.changedTouches[0]));
+  });
+  $('geoSubmit').addEventListener('click', submitGeoPin);
+  const GEOc = {
+    activate() { geoActive = false; geoPin = null; geoSent = false; geoView = GeoMap.initialView(); showView('geo'); renderGeoMap(); },
+    onMessage(d) {
+      if (d.t === 'geoStart') {
+        geoScope = d.scope || 'world'; geoPin = null; geoSent = false; geoActive = true; geoView = GeoMap.initialView();
+        $('geoTarget').textContent = d.name; $('geoSubmit').disabled = false; $('geoSubmit').style.opacity = 1; $('geoStatus').textContent = 'Tippe zum Setzen, ziehe zum Verschieben, zoome mit zwei Fingern.';
+        showView('geo'); renderGeoMap(); startTimer(d.ms, $('geoTimer'), submitGeoPin);
+      } else if (d.t === 'geoReveal') {
+        geoActive = false; stopTimer(); renderGeoMap({ lat: d.lat, lng: d.lng });
+        $('geoTimer').textContent = '-';
+        $('geoStatus').textContent = d.dist === null ? 'Kein Pin gesetzt. Gesamt: ' + d.total + ' Punkte' : d.dist + ' km daneben, +' + d.points + ' Punkte. Gesamt: ' + d.total;
+      } else if (d.t === 'geoDone') {
+        geoActive = false; stopTimer(); $('geoTarget').textContent = 'Endstand'; $('geoStatus').textContent = 'Schaut auf den großen Bildschirm.'; renderGeoMap();
+      }
+    }
+  };
+
+  const MODULES = { lightcycles: LCc, slither: SLc, drawing: Dc, geoguess: GEOc };
 
   // ============ Nachrichten ============
   ac.onReady = () => { /* Name-Ansicht aktiv */ };
@@ -271,9 +399,12 @@
         document.body.style.background = shade(d.color || '#0a84ff');
         gamesMeta = d.games || []; selected = d.selected; buildPicker();
         dcfg.draw = d.settings.drawTime; dcfg.guess = d.settings.guessTime; dcfg.mode = d.settings.mode;
+        if (d.geo) gcfg = { scope: d.geo.scope, category: d.geo.category, rounds: d.geo.rounds, roundTime: d.geo.roundTime };
         $('drawVal').textContent = dcfg.draw + 's'; $('guessVal').textContent = dcfg.guess + 's';
         document.querySelectorAll('#drawSettings .modebtn').forEach(o => o.classList.toggle('sel', o.getAttribute('data-mode') === dcfg.mode));
+        syncGeoSettings();
         $('drawSettings').style.display = (d.selected === 'drawing') ? 'block' : 'none';
+        $('geoSettings').style.display = (d.selected === 'geoguess') ? 'block' : 'none';
         $('hostLobby').style.display = d.host ? 'block' : 'none';
         $('guestLobby').style.display = d.host ? 'none' : 'block';
         if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }
