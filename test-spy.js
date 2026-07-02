@@ -1,69 +1,10 @@
-const { JSDOM } = require('jsdom');
-const fs = require('fs');
-const path = require('path');
-const PUB = path.join(__dirname, 'public');
+const { makeDom, makeBus, visible } = require('./test-helpers');
 
-function noopCtx() {
-  return new Proxy({}, { get: (t, k) => {
-    if (k === 'measureText') return () => ({ width: 10 });
-    return typeof k === 'string' ? function () {} : undefined;
-  }, set: () => true });
-}
-
-function makeDom(file, role, bus, label) {
-  let html = fs.readFileSync(path.join(PUB, file), 'utf8');
-  // <script src> inlinen, damit runScripts:'dangerously' ohne Netz funktioniert
-  html = html.replace(/<script src="([^"]+)"><\/script>/g, (m, p) =>
-    '<script>' + fs.readFileSync(path.join(PUB, p), 'utf8').replace(/<\/script>/g, '<\\/script>') + '</script>');
-  const dom = new JSDOM(html, {
-    runScripts: 'dangerously', url: 'http://localhost:3000/' + file, pretendToBeVisual: true,
-    beforeParse(w) {
-      w.HTMLCanvasElement.prototype.getContext = noopCtx;
-      w.WebSocket = function () {
-        const ws = { readyState: 1, OPEN: 1, send: (raw) => bus.fromClient(label, raw) };
-        setTimeout(() => ws.onopen && ws.onopen(), 0);
-        bus.register(label, { deliver: (obj) => ws.onmessage && ws.onmessage({ data: JSON.stringify(obj) }) });
-        return ws;
-      };
-      w.onerror = (msg) => { console.error(label + ' Laufzeitfehler: ' + msg); process.exitCode = 1; };
-    }
-  });
-  return dom;
-}
-
-// Mini-Server-Nachbau (gleiches Protokoll wie server.js)
-const clients = new Map(); let nextId = 1;
-const bus = {
-  handlers: {},
-  register(label, h) { this.handlers[label] = h; },
-  fromClient(label, raw) {
-    const msg = JSON.parse(raw);
-    if (msg.type === 'register') {
-      const id = msg.role === 'screen' ? 0 : nextId++;
-      clients.set(id, label);
-      this.handlers[label].deliver({ type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()] });
-      for (const [oid, ol] of clients) if (oid !== id) this.handlers[ol].deliver({ type: 'connect', device_id: id });
-      this.handlers[label]._id = id;
-      return;
-    }
-    if (msg.type === 'message') {
-      const from = [...clients.entries()].find(([, l]) => l === label)[0];
-      if (msg.to === undefined || msg.to === null) {
-        for (const [oid, ol] of clients) if (ol !== label) this.handlers[ol].deliver({ type: 'message', from, data: msg.data });
-      } else {
-        const l = clients.get(msg.to);
-        if (l) this.handlers[l].deliver({ type: 'message', from, data: msg.data });
-      }
-    }
-  }
-};
-
+const bus = makeBus();
 const screen = makeDom('screen.html', 'screen', bus, 'screen');
 const c1 = makeDom('controller.html', 'controller', bus, 'c1');
 const c2 = makeDom('controller.html', 'controller', bus, 'c2');
 const c3 = makeDom('controller.html', 'controller', bus, 'c3');
-
-const visible = (dom) => [...dom.window.document.querySelectorAll('.view.on')].map(v => v.id).join(',');
 
 setTimeout(() => {
   // 1) Namen setzen
