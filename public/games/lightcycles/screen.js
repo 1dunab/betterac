@@ -1,6 +1,6 @@
 // ===== Modul: LIGHT CYCLES ==================================
   // ============================================================
-  registerGame({ key: 'lightcycles', label: '🏍️ Light Cycles', min: 2, screen: function () {
+  registerGame({ key: 'lightcycles', screen: function () {
     const CELL = 12, COLS = Math.floor(cv.width / CELL), ROWS = Math.floor(cv.height / CELL);
     let gp = {}, occupied = new Set(), st = 'countdown', bann = '', cd = null, tick = null, starters = 0, wins = {}, running = false;
     const k = (x, y) => x + ',' + y;

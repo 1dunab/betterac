@@ -76,5 +76,5 @@
       }
     }
   };
-  registerGame({ key: 'spy', label: '🕵️ Spion', min: 3, controller: Sc });
+  registerGame({ key: 'spy', controller: Sc });
 })();

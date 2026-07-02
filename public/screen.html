@@ -33,12 +33,12 @@
   // ===== Shell-Status =====
   let players = {};                 // id -> {color, name, named}
   let shell = { state: 'lobby', selected: 'lightcycles' };
-  let drawSettings = { drawTime: 60, guessTime: 30, mode: 'casual' };
-  let geoSettings = { scope: 'world', category: 'cities', rounds: 5, roundTime: 25 };
+  const gameCfg = {};               // key -> aktuelle Settings-Werte (Schema in GAME_META)
   let active = null, activeKey = null;
   let banner = '', bannerUntil = 0;
 
   const GAME_LIST = window.GAME_LIST;
+  const GAME_META = window.GAME_META;
   const GAMES = window.GAMES;
 
   // ===== Shell-Helfer =====
@@ -51,6 +51,25 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
   function setBanner(t, ms) { banner = t; bannerUntil = performance.now() + (ms || 5000); }
+
+  // Settings: Schema kommt aus meta.js, hier nur Werte halten/clampen
+  function cfgFor(key) {
+    if (!gameCfg[key]) {
+      const c = {}, s = (GAME_META[key] || {}).settings || {};
+      for (const f in s) c[f] = s[f].default;
+      gameCfg[key] = c;
+    }
+    return gameCfg[key];
+  }
+  function applyCfg(key, incoming) {
+    const s = (GAME_META[key] || {}).settings || {}, c = cfgFor(key);
+    for (const f in s) {
+      if (!incoming || !(f in incoming)) continue;
+      const def = s[f];
+      if (def.type === 'number') c[f] = clamp(incoming[f] | 0, def.min, def.max);
+      else if ((def.options || []).some(o => o.v === incoming[f])) c[f] = incoming[f];
+    }
+  }
 
   // generische Zeichen-Helfer (für Drawing-Render + PNG-Export)
   function drawStrokesOn(o, strokes, bx, by, bw, bh) {
@@ -75,7 +94,7 @@
     const h = hostId();
     namedIds().forEach(id => ac.message(id, {
       t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
-      selected: shell.selected, games: GAME_LIST, settings: drawSettings, geo: geoSettings,
+      selected: shell.selected, games: GAME_LIST, cfg: cfgFor(shell.selected),
       playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected)
     }));
   }
@@ -88,7 +107,7 @@
     shell.state = 'playing';
     const h = hostId();
     namedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'enterGame', game: key, host: id === h }));
-    active.start(namedIds().sort((a, b) => a - b), key === 'drawing' ? drawSettings : key === 'geoguess' ? geoSettings : null);
+    active.start(namedIds().sort((a, b) => a - b), cfgFor(key));
   }
   function endToLobby(msg) {
     if (active && active.stop) active.stop();
@@ -124,16 +143,7 @@
     } else if (d.t === 'shellSelect' && id === hostId() && !active) {
       if (GAMES[d.game]) { shell.selected = d.game; sendLobby(); }
     } else if (d.t === 'shellConfig' && id === hostId() && !active) {
-      drawSettings.drawTime = clamp(d.drawTime | 0, 10, 180);
-      drawSettings.guessTime = clamp(d.guessTime | 0, 10, 120);
-      if (['casual', 'tiere', 'laender', 'versaut', 'custom'].includes(d.mode)) drawSettings.mode = d.mode;
-      sendLobby();
-    } else if (d.t === 'shellGeoConfig' && id === hostId() && !active) {
-      if (['world', 'europe', 'germany'].includes(d.scope)) geoSettings.scope = d.scope;
-      if (['cities', 'landmarks'].includes(d.category)) geoSettings.category = d.category;
-      geoSettings.rounds = clamp(d.rounds | 0, 3, 12);
-      geoSettings.roundTime = clamp(d.roundTime | 0, 10, 60);
-      sendLobby();
+      if (d.game === shell.selected) { applyCfg(d.game, d.cfg); sendLobby(); }
     } else if (d.t === 'shellStart' && id === hostId() && !active) {
       if (namedIds().length >= minFor(shell.selected)) startGame(shell.selected);
     } else if (d.t === 'shellAbort' && id === hostId() && active) {
@@ -150,15 +160,15 @@
     ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('🎉 Party Hub', cv.width / 2, 58);
     const sel = GAME_LIST.find(g => g.key === shell.selected) || GAME_LIST[0];
     ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 26px system-ui,sans-serif'; ctx.fillText('Gewählt: ' + sel.label, cv.width / 2, 104);
-    if (shell.selected === 'drawing') {
+    const schema = (GAME_META[shell.selected] || {}).settings || {};
+    const parts = Object.keys(schema).map(f => {
+      const def = schema[f], v = cfgFor(shell.selected)[f];
+      if (def.type === 'choice') { const o = (def.options || []).find(o => o.v === v); return def.label + ': ' + (o ? o.label : v); }
+      return def.label + ' ' + v + (def.unit || '');
+    });
+    if (parts.length) {
       ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif';
-      const ML = { casual: 'Casual', tiere: 'Tiere', laender: 'Länder', versaut: 'Versaut', custom: 'Eigene Wörter' };
-      ctx.fillText('Zeichnen ' + drawSettings.drawTime + 's · Raten ' + drawSettings.guessTime + 's · Modus: ' + (ML[drawSettings.mode] || drawSettings.mode), cv.width / 2, 134);
-    }
-    if (shell.selected === 'geoguess') {
-      ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif';
-      const SC = { world: 'Welt', europe: 'Europa', germany: 'Deutschland' }, CA = { cities: 'Städte', landmarks: 'Sehenswürdigkeiten' };
-      ctx.fillText('Gebiet: ' + SC[geoSettings.scope] + ' · ' + CA[geoSettings.category] + ' · ' + geoSettings.rounds + ' Runden · ' + geoSettings.roundTime + 's', cv.width / 2, 134);
+      ctx.fillText(parts.join(' · '), cv.width / 2, 134);
     }
     const list = namedIds().sort((a, b) => a - b), h = hostId();
     const joining = connectedIds().length - list.length;
@@ -180,11 +190,16 @@
 
   // ============================================================
   </script>
+<script src="games/lightcycles/meta.js"></script>
 <script src="games/lightcycles/screen.js"></script>
+<script src="games/slither/meta.js"></script>
 <script src="games/slither/screen.js"></script>
+<script src="games/drawing/meta.js"></script>
 <script src="games/drawing/screen.js"></script>
+<script src="games/geoguess/meta.js"></script>
 <script src="games/geoguess/mapdata.js"></script>
 <script src="games/geoguess/screen.js"></script>
+<script src="games/spy/meta.js"></script>
 <script src="games/spy/screen.js"></script>
 <script>
   // ===== Render-Schleife =====

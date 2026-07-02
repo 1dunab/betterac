@@ -27,5 +27,5 @@
   }
   slBind('sl-left', 'left'); slBind('sl-right', 'right'); slBind('sl-boost', 'boost');
   const SLc = { activate() { slState.left = slState.right = slState.boost = false; showView('sl'); }, onMessage() {} };
-  registerGame({ key: 'slither', label: '🐍 Slither', min: 1, controller: SLc });
+  registerGame({ key: 'slither', controller: SLc });
 })();

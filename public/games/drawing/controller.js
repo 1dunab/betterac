@@ -97,5 +97,5 @@
     }
   };
   clearPad();
-  registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, controller: Dc });
+  registerGame({ key: 'drawing', controller: Dc });
 })();

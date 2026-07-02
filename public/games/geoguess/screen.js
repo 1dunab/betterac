@@ -1,6 +1,6 @@
 // ===== Modul: GEO-PIN =======================================
   // ============================================================
-  registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, screen: function () {
+  registerGame({ key: 'geoguess', screen: function () {
     const PACKS = window.__GEO_PACKS__ || {};
     const HALF = { world: 1500, europe: 400, germany: 120 };
     let order = [], scores = {}, scope = 'world', cat = 'cities', rounds = 5, roundTime = 25;

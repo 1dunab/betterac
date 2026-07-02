@@ -53,30 +53,7 @@
     <div id="hostLobby" style="display:none; width:100%; max-width:360px;">
       <div class="muted" style="margin-bottom:6px">Spiel wählen:</div>
       <div class="games" id="gamePicker"></div>
-      <div id="drawSettings" style="display:none; margin-top:16px;">
-        <div class="modes" style="margin-bottom:14px">
-          <button class="modebtn" data-mode="casual">Casual</button>
-          <button class="modebtn" data-mode="tiere">Tiere</button>
-          <button class="modebtn" data-mode="laender">Länder</button>
-          <button class="modebtn" data-mode="versaut">Versaut</button>
-          <button class="modebtn" data-mode="custom">Eigene</button>
-        </div>
-        <div class="step"><span style="flex:1">Zeichenzeit</span><button data-d="-1" data-k="draw">−</button><span id="drawVal" class="big">60s</span><button data-d="1" data-k="draw">+</button></div>
-        <div class="step" style="margin-top:12px"><span style="flex:1">Ratezeit</span><button data-d="-1" data-k="guess">−</button><span id="guessVal" class="big">30s</span><button data-d="1" data-k="guess">+</button></div>
-      </div>
-      <div id="geoSettings" style="display:none; margin-top:16px;">
-        <div class="modes" style="margin-bottom:14px">
-          <button class="modebtn" data-g="scope" data-v="world">Welt</button>
-          <button class="modebtn" data-g="scope" data-v="europe">Europa</button>
-          <button class="modebtn" data-g="scope" data-v="germany">Deutschland</button>
-        </div>
-        <div class="modes" style="margin-bottom:14px">
-          <button class="modebtn" data-g="category" data-v="cities">Städte</button>
-          <button class="modebtn" data-g="category" data-v="landmarks">Orte</button>
-        </div>
-        <div class="step"><span style="flex:1">Runden</span><button data-gd="-1" data-gk="rounds">−</button><span id="geoRoundsVal" class="big">5</span><button data-gd="1" data-gk="rounds">+</button></div>
-        <div class="step" style="margin-top:12px"><span style="flex:1">Zeit</span><button data-gd="-1" data-gk="roundTime">−</button><span id="geoTimeVal" class="big">25s</span><button data-gd="1" data-gk="roundTime">+</button></div>
-      </div>
+      <div id="gameSettings" style="margin-top:16px"></div>
       <button id="startBtn" class="btn go" style="margin-top:22px; width:100%">START</button>
       <div id="needPlayers" class="muted" style="margin-top:10px"></div>
     </div>
@@ -109,34 +86,39 @@
   $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
 
   // ---------- Shell-Lobby (Host) ----------
-  let dcfg = { draw: 60, guess: 30, mode: 'casual' }, gcfg = { scope: 'world', category: 'cities', rounds: 5, roundTime: 25 }, selected = 'lightcycles';
+  let curCfg = {}, selected = 'lightcycles';
   function sendSelect(g) { ac.message(AirConsole.SCREEN, { t: 'shellSelect', game: g }); }
-  function sendCfg() { ac.message(AirConsole.SCREEN, { t: 'shellConfig', drawTime: dcfg.draw, guessTime: dcfg.guess, mode: dcfg.mode }); }
-  function sendGeoCfg() { ac.message(AirConsole.SCREEN, { t: 'shellGeoConfig', scope: gcfg.scope, category: gcfg.category, rounds: gcfg.rounds, roundTime: gcfg.roundTime }); }
-  function syncGeoSettings() {
-    $('geoRoundsVal').textContent = gcfg.rounds;
-    $('geoTimeVal').textContent = gcfg.roundTime + 's';
-    document.querySelectorAll('#geoSettings button[data-g]').forEach(o => o.classList.toggle('sel', o.getAttribute('data-v') === gcfg[o.getAttribute('data-g')]));
-  }
+  function sendCfg() { ac.message(AirConsole.SCREEN, { t: 'shellConfig', game: selected, cfg: curCfg }); }
   function buildPicker() {
     const wrap = $('gamePicker'); wrap.innerHTML = '';
     gamesMeta.forEach(g => { const b = document.createElement('button'); b.className = 'gamebtn' + (g.key === selected ? ' sel' : ''); b.textContent = g.label; b.addEventListener('click', () => sendSelect(g.key)); wrap.appendChild(b); });
   }
-  document.querySelectorAll('#drawSettings .modebtn').forEach(b => b.addEventListener('click', () => { dcfg.mode = b.getAttribute('data-mode'); document.querySelectorAll('#drawSettings .modebtn').forEach(o => o.classList.toggle('sel', o === b)); sendCfg(); }));
-  document.querySelectorAll('#drawSettings button[data-d]').forEach(b => b.addEventListener('click', () => {
-    const k = b.getAttribute('data-k'), d = parseInt(b.getAttribute('data-d'), 10) * 5;
-    if (k === 'draw') dcfg.draw = Math.max(10, Math.min(180, dcfg.draw + d)); else dcfg.guess = Math.max(10, Math.min(120, dcfg.guess + d));
-    $('drawVal').textContent = dcfg.draw + 's'; $('guessVal').textContent = dcfg.guess + 's'; sendCfg();
-  }));
-  document.querySelectorAll('#geoSettings button[data-g]').forEach(b => b.addEventListener('click', () => {
-    gcfg[b.getAttribute('data-g')] = b.getAttribute('data-v'); syncGeoSettings(); sendGeoCfg();
-  }));
-  document.querySelectorAll('#geoSettings button[data-gd]').forEach(b => b.addEventListener('click', () => {
-    const k = b.getAttribute('data-gk'), d = parseInt(b.getAttribute('data-gd'), 10);
-    if (k === 'rounds') gcfg.rounds = Math.max(3, Math.min(12, gcfg.rounds + d));
-    else gcfg.roundTime = Math.max(10, Math.min(60, gcfg.roundTime + d * 5));
-    syncGeoSettings(); sendGeoCfg();
-  }));
+  // Settings-UI generisch aus dem Schema des gewählten Spiels (meta.js)
+  function renderSettings() {
+    const wrap = $('gameSettings'); wrap.innerHTML = '';
+    const schema = (window.GAME_META[selected] || {}).settings || {};
+    for (const f in schema) {
+      const def = schema[f];
+      if (def.type === 'choice') {
+        const row = document.createElement('div'); row.className = 'modes'; row.style.marginBottom = '14px';
+        (def.options || []).forEach(o => {
+          const b = document.createElement('button'); b.className = 'modebtn' + (curCfg[f] === o.v ? ' sel' : ''); b.textContent = o.label;
+          b.addEventListener('click', () => { curCfg[f] = o.v; renderSettings(); sendCfg(); });
+          row.appendChild(b);
+        });
+        wrap.appendChild(row);
+      } else if (def.type === 'number') {
+        const row = document.createElement('div'); row.className = 'step'; row.style.marginBottom = '12px';
+        const lab = document.createElement('span'); lab.style.flex = '1'; lab.textContent = def.label;
+        const minus = document.createElement('button'); minus.textContent = '−';
+        const val = document.createElement('span'); val.className = 'big'; val.textContent = curCfg[f] + (def.unit || '');
+        const plus = document.createElement('button'); plus.textContent = '+';
+        const bump = (dir) => { curCfg[f] = Math.max(def.min, Math.min(def.max, (curCfg[f] | 0) + dir * def.step)); val.textContent = curCfg[f] + (def.unit || ''); sendCfg(); };
+        minus.addEventListener('click', () => bump(-1)); plus.addEventListener('click', () => bump(1));
+        row.append(lab, minus, val, plus); wrap.appendChild(row);
+      }
+    }
+  }
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
 
   // ---------- Countdown (Drawing) ----------
@@ -149,11 +131,16 @@
   function stopTimer() { clearInterval(timerInt); onZero = null; }
 
   </script>
+<script src="games/lightcycles/meta.js"></script>
 <script src="games/lightcycles/controller.js"></script>
+<script src="games/slither/meta.js"></script>
 <script src="games/slither/controller.js"></script>
+<script src="games/drawing/meta.js"></script>
 <script src="games/drawing/controller.js"></script>
+<script src="games/geoguess/meta.js"></script>
 <script src="games/geoguess/mapdata.js"></script>
 <script src="games/geoguess/controller.js"></script>
+<script src="games/spy/meta.js"></script>
 <script src="games/spy/controller.js"></script>
 <script>
   const MODULES = window.CONTROLLERS;
@@ -169,13 +156,8 @@
         $('helloName').textContent = 'Hallo, ' + (d.name || 'Spieler') + '!';
         document.body.style.background = shade(d.color || '#0a84ff');
         gamesMeta = d.games || []; selected = d.selected; buildPicker();
-        dcfg.draw = d.settings.drawTime; dcfg.guess = d.settings.guessTime; dcfg.mode = d.settings.mode;
-        if (d.geo) gcfg = { scope: d.geo.scope, category: d.geo.category, rounds: d.geo.rounds, roundTime: d.geo.roundTime };
-        $('drawVal').textContent = dcfg.draw + 's'; $('guessVal').textContent = dcfg.guess + 's';
-        document.querySelectorAll('#drawSettings .modebtn').forEach(o => o.classList.toggle('sel', o.getAttribute('data-mode') === dcfg.mode));
-        syncGeoSettings();
-        $('drawSettings').style.display = (d.selected === 'drawing') ? 'block' : 'none';
-        $('geoSettings').style.display = (d.selected === 'geoguess') ? 'block' : 'none';
+        curCfg = d.cfg || {};
+        if (d.host) renderSettings();
         $('hostLobby').style.display = d.host ? 'block' : 'none';
         $('guestLobby').style.display = d.host ? 'none' : 'block';
         if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }

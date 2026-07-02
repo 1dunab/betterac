@@ -23,5 +23,5 @@
     const fire = (e) => { e.preventDefault(); ac.message(AirConsole.SCREEN, { turn: btn.getAttribute('data-turn') }); };
     btn.addEventListener('touchstart', fire); btn.addEventListener('mousedown', fire);
   });
-  registerGame({ key: 'lightcycles', label: '🏍️ Light Cycles', min: 2, controller: LCc });
+  registerGame({ key: 'lightcycles', controller: LCc });
 })();

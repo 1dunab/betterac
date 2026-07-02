@@ -4,31 +4,33 @@ Each minigame lives in its own folder and registers itself with the tiny runtime
 
 A game usually has:
 
+- `meta.js`: single source for key, label, min players and the settings schema — loaded by **both** pages.
 - `screen.js`: big-screen logic, rendering, scoring, messages to controllers.
 - `controller.js`: phone UI bindings and messages back to the screen.
 - optional local assets/data next to those files.
 
-Register the same key on both sides:
+`registerGame` merges by key, so each file only contributes its part:
 
 ```js
-registerGame({
-  key: 'mygame',
-  label: 'My Game',
-  min: 2,
-  screen: function () {
-    return { start(ids, settings) {}, stop() {}, onMessage(id, data) {}, render() {} };
-  }
-});
+// meta.js — shared metadata + declarative settings
+registerGame({ key: 'mygame', label: 'My Game', min: 2, settings: {
+  rounds: { label: 'Runden', type: 'number', default: 5, min: 3, max: 12, step: 1 },
+  mode:   { label: 'Modus', type: 'choice', default: 'easy', options: [
+            { v: 'easy', label: 'Leicht' }, { v: 'hard', label: 'Schwer' }] }
+} });
 
-registerGame({
-  key: 'mygame',
-  label: 'My Game',
-  min: 2,
-  controller: { activate() {}, onMessage(data) {} }
-});
+// screen.js
+registerGame({ key: 'mygame', screen: function () {
+  return { start(ids, cfg) {}, stop() {}, onMessage(id, data) {}, render() {} };
+} });
+
+// controller.js
+registerGame({ key: 'mygame', controller: { activate() {}, onMessage(data) {} } });
 ```
 
-Then include both files in `screen.html` and `controller.html`.
+The shell renders the settings UI in the host lobby from the schema, clamps incoming values against it, and passes the current values as `cfg` into `screen.start(ids, cfg)` — games never touch the shell for settings.
+
+Then include `meta.js` + the page's file in `screen.html` and `controller.html` (meta.js first).
 
 ## Controller views
 

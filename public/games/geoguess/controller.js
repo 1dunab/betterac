@@ -103,5 +103,5 @@
     }
   };
 
-  registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, controller: GEOc });
+  registerGame({ key: 'geoguess', controller: GEOc });
 })();

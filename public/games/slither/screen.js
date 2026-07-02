@@ -1,6 +1,6 @@
 // ===== Modul: SLITHER =======================================
   // ============================================================
-  registerGame({ key: 'slither', label: '🐍 Slither', min: 1, screen: function () {
+  registerGame({ key: 'slither', screen: function () {
     const WORLD = { cx: 480, cy: 300, r: 285 }, dt = 1 / 30, SPEED = 135, BOOST = 235, TURN = 3.6;
     const START = 16, MAXP = 480, FOOD_TARGET = 130, MINB = 12, BCOST = 6;
     let sw = {}, food = [], sim = null, running = false;

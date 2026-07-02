@@ -3,7 +3,7 @@
   // Reihum sagt jeder ein Wort dazu — wer ist der Spion?
   // Handys werden nur zum Ansehen der Rolle gebraucht.
   // ============================================================
-  registerGame({ key: 'spy', label: '🕵️ Spion', min: 3, screen: function () {
+  registerGame({ key: 'spy', screen: function () {
     const WORDS = {
       'Orte': ['Strand','Krankenhaus','Schule','Flughafen','Kino','Schwimmbad','Bibliothek','Casino','Zoo','Bauernhof','U-Boot','Raumstation','Gefängnis','Supermarkt','Friedhof','Baustelle'],
       'Essen & Trinken': ['Pizza','Sushi','Döner','Spaghetti','Kaffee','Pfannkuchen','Currywurst','Käsefondue','Eis','Popcorn','Gulasch','Smoothie','Brezel','Raclette'],

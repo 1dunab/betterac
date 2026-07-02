@@ -1,6 +1,6 @@
 // ===== Modul: DRAWING EVOLUTION =============================
   // ============================================================
-  registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, screen: function () {
+  registerGame({ key: 'drawing', screen: function () {
     const WORD_PACKS = {
       casual: ['Sonne','Mond','Baum','Haus','Auto','Fahrrad','Pizza','Banane','Roboter','Rakete','Drache','Burg','Regenbogen','Schneemann','Krone','Geist','Vulkan','Insel','Leuchtturm','Brille','Gitarre','Trommel','Fußball','Eistüte','Kaktus','Pilz','Ampel','Regenschirm','Kerze','Geschenk','Ballon','Anker','Kompass','Schatzkarte','Brücke','Windmühle','Zelt','Heißluftballon','Ufo','Planet','Komet','Blitz','Schneeflocke','Einhorn','Meerjungfrau','Hexe','Zauberer','Ritter','Pirat','Astronaut'],
       tiere: ['Hund','Katze','Elefant','Giraffe','Löwe','Tiger','Affe','Zebra','Krokodil','Schlange','Frosch','Pinguin','Eule','Fuchs','Bär','Igel','Eichhörnchen','Wal','Hai','Delfin','Krake','Qualle','Schildkröte','Pferd','Kuh','Schwein','Schaf','Huhn','Ente','Biene','Schmetterling','Marienkäfer','Spinne','Fledermaus','Kamel','Känguru','Faultier','Flamingo','Pfau','Eisbär'],
