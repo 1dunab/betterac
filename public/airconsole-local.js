@@ -23,8 +23,22 @@
     var self = this;
     var ws = new WebSocket(proto + '://' + location.host);
     this._ws = ws;
-    ws.onopen = function () { ws.send(JSON.stringify({ type: 'register', role: self._role })); };
+    ws.onopen = function () {
+      var resume = null;
+      if (self._role !== 'screen') {
+        try { resume = parseInt(sessionStorage.getItem('ac_device_id'), 10) || null; } catch (e) {}
+      }
+      ws.send(JSON.stringify({ type: 'register', role: self._role, resume: resume }));
+    };
     ws.onmessage = function (evt) { self._handle(JSON.parse(evt.data)); };
+    ws.onerror = function () { ws.close(); };
+    // Reconnect mit Backoff: Handy-Sperre/WLAN-Aussetzer killt den Socket,
+    // die alte device_id wird beim Neu-Registrieren wiederverwendet.
+    ws.onclose = function () {
+      if (self._stopped || self._ws !== ws) return;
+      self._retry = Math.min((self._retry || 400) * 2, 5000);
+      setTimeout(function () { if (!self._stopped) self._connect(); }, self._retry);
+    };
   };
 
   AirConsole.prototype._handle = function (msg) {
@@ -32,6 +46,10 @@
       case 'welcome':
         this.device_id = msg.device_id;
         this._devices = msg.devices || [];
+        this._retry = 0;
+        if (this._role !== 'screen') {
+          try { sessionStorage.setItem('ac_device_id', String(msg.device_id)); } catch (e) {}
+        }
         this.onReady(msg.code);
         break;
       case 'connect':
@@ -49,11 +67,16 @@
   };
 
   // --- Oeffentliche API (wie beim echten AirConsole) ---
+  AirConsole.prototype._send = function (obj) {
+    // Waehrend eines Reconnects gehen Nachrichten verloren statt zu werfen —
+    // fuer Partyspiele ok, der naechste Broadcast bringt den Zustand zurueck.
+    if (this._ws && this._ws.readyState === 1) this._ws.send(JSON.stringify(obj));
+  };
   AirConsole.prototype.message = function (to, data) {
-    this._ws.send(JSON.stringify({ type: 'message', to: to, data: data }));
+    this._send({ type: 'message', to: to, data: data });
   };
   AirConsole.prototype.broadcast = function (data) {
-    this._ws.send(JSON.stringify({ type: 'message', to: null, data: data }));
+    this._send({ type: 'message', to: null, data: data });
   };
   AirConsole.prototype.getDeviceId = function () { return this.device_id; };
   AirConsole.prototype.getControllerDeviceIds = function () {

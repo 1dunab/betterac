@@ -41,11 +41,22 @@ wss.on('connection', (ws) => {
     try { msg = JSON.parse(raw); } catch { return; }
 
     if (msg.type === 'register') {
-      const id = msg.role === 'screen' ? 0 : nextControllerId++;
+      let id, silent = false;
+      if (msg.role === 'screen') {
+        id = 0;
+      } else if (Number.isInteger(msg.resume) && msg.resume > 0 && msg.resume < nextControllerId) {
+        // Reconnect: alte ID wiederverwenden. Haengt der alte Socket noch in der Map,
+        // uebernimmt der neue still (kein connect/disconnect-Geflacker fuer den Screen).
+        id = msg.resume;
+        const old = clients.get(id);
+        if (old && old !== ws) { old.deviceId = undefined; old.terminate(); silent = true; }
+      } else {
+        id = nextControllerId++;
+      }
       ws.deviceId = id;
       clients.set(id, ws);
       send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()] });
-      broadcast({ type: 'connect', device_id: id }, id); // andere informieren
+      if (!silent) broadcast({ type: 'connect', device_id: id }, id); // andere informieren
       return;
     }
 
@@ -60,12 +71,29 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (ws.deviceId !== undefined) {
+    // Nur aufraeumen, wenn die ID noch zu diesem Socket gehoert — der verspaetete
+    // close eines uebernommenen Sockets darf den Nachfolger nicht loeschen.
+    if (ws.deviceId !== undefined && clients.get(ws.deviceId) === ws) {
       clients.delete(ws.deviceId);
       broadcast({ type: 'disconnect', device_id: ws.deviceId });
     }
   });
 });
+
+// Heartbeat: tote Verbindungen (Handy-Sperre, WLAN weg) fliegen aus der Map,
+// damit der Screen den Disconnect mitbekommt.
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+});
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!ws.isAlive) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 10000);
+wss.on('close', () => clearInterval(heartbeat));
 
 function lanIPs() {
   const out = [], ifs = os.networkInterfaces();
