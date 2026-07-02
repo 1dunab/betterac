@@ -98,6 +98,9 @@
   }
 
   // ===== Events =====
+  ac.onKicked = () => {
+    document.getElementById('info').textContent = '⚠️ Ein anderer Screen hat übernommen — dieses Fenster ist inaktiv.';
+  };
   ac.onConnect = (id) => {
     players[id] = { color: COLORS[(id - 1) % COLORS.length], name: 'Spieler ' + id, named: false };
     ac.message(id, { t: 'shell', cmd: 'name' });

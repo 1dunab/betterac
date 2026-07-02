@@ -43,7 +43,10 @@ wss.on('connection', (ws) => {
     if (msg.type === 'register') {
       let id, silent = false;
       if (msg.role === 'screen') {
+        // Es gibt nur einen Screen: ein neuer kickt den alten (z.B. TV-Reload).
         id = 0;
+        const old = clients.get(0);
+        if (old && old !== ws) { send(old, { type: 'kicked' }); old.deviceId = undefined; old.terminate(); }
       } else if (Number.isInteger(msg.resume) && msg.resume > 0 && msg.resume < nextControllerId) {
         // Reconnect: alte ID wiederverwenden. Haengt der alte Socket noch in der Map,
         // uebernimmt der neue still (kein connect/disconnect-Geflacker fuer den Screen).

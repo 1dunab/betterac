@@ -13,6 +13,7 @@
     this.onConnect = function () {};
     this.onDisconnect = function () {};
     this.onMessage = function () {};
+    this.onKicked = function () {};
     this._connect();
   }
 
@@ -43,7 +44,8 @@
 
   AirConsole.prototype._handle = function (msg) {
     switch (msg.type) {
-      case 'welcome':
+      case 'welcome': {
+        var known = this._devices;
         this.device_id = msg.device_id;
         this._devices = msg.devices || [];
         this._retry = 0;
@@ -51,7 +53,14 @@
           try { sessionStorage.setItem('ac_device_id', String(msg.device_id)); } catch (e) {}
         }
         this.onReady(msg.code);
+        // Bereits verbundene Geraete nachmelden (z.B. Controller, die vor
+        // einem uebernehmenden Screen da waren) — nur die vorher unbekannten.
+        for (var i = 0; i < this._devices.length; i++) {
+          var d = this._devices[i];
+          if (d !== this.device_id && known.indexOf(d) === -1) this.onConnect(d);
+        }
         break;
+      }
       case 'connect':
         if (this._devices.indexOf(msg.device_id) === -1) this._devices.push(msg.device_id);
         this.onConnect(msg.device_id);
@@ -62,6 +71,10 @@
         break;
       case 'message':
         this.onMessage(msg.from, msg.data);
+        break;
+      case 'kicked':
+        this._stopped = true; // kein Reconnect — ein anderer Client hat uebernommen
+        this.onKicked();
         break;
     }
   };
