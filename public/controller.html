@@ -29,15 +29,6 @@
   .modebtn, .gamebtn { padding:8px 12px; border-radius:10px; border:none; background:#3a3a48; color:#fff; font-weight:700; font-size:14px; }
   .modebtn.sel { background:#bf5af2; }
   .gamebtn.sel { background:#0a84ff; }
-  #geoMap { background:#0e1726; margin:0 10px; border-radius:10px; flex:1; min-height:320px; }
-  /* Spiel-Controller-Buttons */
-  #pad2 { flex:1; display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:16px; }
-  #pad2 button { font-size:46px; border:none; border-radius:20px; background:rgba(0,0,0,.30); color:#fff; }
-  #pad2 button:active { background:rgba(255,255,255,.30); }
-  #pad3 { flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:0.8fr 2fr; gap:12px; padding:16px; }
-  #pad3 button { border:none; border-radius:20px; background:rgba(0,0,0,.30); color:#fff; font-weight:700; }
-  #pad3 button:active, #pad3 button.on { background:rgba(255,255,255,.30); }
-  #sl-boost { grid-column:1/span 2; font-size:24px; } #sl-left, #sl-right { font-size:46px; }
   #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
               padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
 </style>
@@ -96,75 +87,7 @@
 <!-- SPECTATE -->
 <div id="v-spectate" class="view"><div class="center"><div class="big">Ein Spiel läuft 🎮</div><div class="muted">Du bist in der nächsten Runde dabei.</div></div></div>
 
-<!-- LIGHT CYCLES -->
-<div id="v-lc" class="view">
-  <div class="bar"><span class="word">🏍️ Light Cycles</span></div>
-  <div id="pad2"><button data-turn="left">↺</button><button data-turn="right">↻</button></div>
-  <div class="muted" style="text-align:center; padding:0 16px 14px">Links / rechts abbiegen — weiche aus!</div>
-</div>
-
-<!-- SLITHER -->
-<div id="v-sl" class="view">
-  <div class="bar"><span class="word">🐍 Slither</span></div>
-  <div id="pad3"><button id="sl-boost">🚀 BOOST</button><button id="sl-left">↺</button><button id="sl-right">↻</button></div>
-  <div class="muted" style="text-align:center; padding:0 16px 14px">Lenken halten · Boost kostet Masse</div>
-</div>
-
-<!-- DRAWING: PROMPT -->
-<div id="v-d-prompt" class="view">
-  <div class="bar"><span class="word">Denk dir ein Wort aus 💭</span></div>
-  <div class="center">
-    <div class="muted">Startet eine Kette und wandert durch alle.</div>
-    <input id="promptInput" type="text" placeholder="z.B. Einhorn…" autocomplete="off">
-    <button id="submitPrompt" class="btn go" style="width:100%; max-width:340px">Abschicken</button>
-    <div class="muted">Weiter, sobald alle abgegeben haben.</div>
-  </div>
-</div>
-<!-- DRAWING: ZEICHNEN -->
-<div id="v-d-draw" class="view">
-  <div class="bar"><span class="word">Zeichne: <span id="drawWord">…</span></span><span id="drawTimer" class="timer">–</span></div>
-  <canvas id="pad" width="600" height="700"></canvas>
-  <div class="tools">
-    <span class="sw sel" data-col="#111111" style="background:#111"></span>
-    <span class="sw" data-col="#ff2d55" style="background:#ff2d55"></span>
-    <span class="sw" data-col="#0a84ff" style="background:#0a84ff"></span>
-    <span class="sw" data-col="#30d158" style="background:#30d158"></span>
-    <span class="sw" data-col="#ffd60a" style="background:#ffd60a"></span>
-    <button id="eraser" class="btn">Radierer</button>
-    <button id="undo" class="btn">↶</button>
-    <button id="clear" class="btn">Leeren</button>
-    <button id="submitDraw" class="btn go">Fertig</button>
-  </div>
-</div>
-<!-- DRAWING: RATEN -->
-<div id="v-d-guess" class="view">
-  <div class="bar"><span class="word">Was ist das?</span><span id="guessTimer" class="timer">–</span></div>
-  <canvas id="guessCanvas" width="600" height="520"></canvas>
-  <div class="tools" style="flex-direction:column; align-items:stretch">
-    <input id="guessInput" type="text" placeholder="Dein Tipp…" autocomplete="off" style="max-width:none">
-    <button id="submitGuess" class="btn go" style="margin-top:8px">Abschicken</button>
-  </div>
-</div>
-<!-- DRAWING: WAIT / PRERECAP / RECAP -->
-<div id="v-d-wait" class="view"><div class="center"><div class="big">Eingereicht ✓</div><div class="muted">Warte auf die anderen…</div></div></div>
-<div id="v-d-prerecap" class="view"><div class="center"><div class="big">✅ Alle Runden geschafft!</div>
-  <div id="recapHostBox" style="display:none; width:100%; max-width:340px;"><button id="startRecapBtn" class="btn go" style="width:100%; font-size:20px">🎬 Recap starten</button></div>
-  <div id="recapGuestBox" class="muted" style="display:none">Warte auf den Host, der den Rückblick startet…</div>
-</div></div>
-<div id="v-d-recap" class="view"><div class="center"><div class="big">🎬 Schaut auf den großen Bildschirm!</div>
-  <button id="advanceBtn" class="btn" style="font-size:20px">Weiter ▶</button>
-  <button id="saveEvoBtn" class="btn" style="font-size:18px; display:none">💾 Evolution speichern</button>
-</div></div>
-
-<!-- GEO-PIN -->
-<div id="v-geo" class="view">
-  <div class="bar"><span class="word">📍 <span id="geoTarget">Geo-Pin</span></span><span id="geoTimer" class="timer">–</span></div>
-  <canvas id="geoMap" width="600" height="700"></canvas>
-  <div class="tools" style="justify-content:center">
-    <button id="geoSubmit" class="btn go">Pin setzen</button>
-  </div>
-  <div id="geoStatus" class="muted" style="text-align:center; padding:0 16px 14px">Tippe auf die Karte.</div>
-</div>
+<!-- Spiel-Views injizieren die Module selbst (siehe games/README.md) -->
 
 <script>window.__AC_ROLE__ = 'controller';</script>
 <script src="airconsole-local.js"></script>
@@ -172,7 +95,7 @@
 <script>
   const ac = new AirConsole();
   const $ = (id) => document.getElementById(id);
-  const VIEWS = ['name','shelllobby','spectate','lc','sl','d-prompt','d-draw','d-guess','d-wait','d-prerecap','d-recap','geo'];
+  const VIEWS = ['name','shelllobby','spectate'];
   function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
   function shade(hex) { const n = parseInt(hex.slice(1), 16); return 'rgb(' + Math.round(((n >> 16) & 255) * 0.4) + ',' + Math.round(((n >> 8) & 255) * 0.4) + ',' + Math.round((n & 255) * 0.4) + ')'; }
 

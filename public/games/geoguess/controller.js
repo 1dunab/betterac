@@ -1,4 +1,21 @@
 // ============ Controller-Modul: GEO-PIN ============
+// Injiziert seine Views selbst — controller.html muss nur das Skript einbinden.
+(function () {
+  document.body.insertAdjacentHTML('beforeend', `
+<style>
+  #geoMap { background:#0e1726; margin:0 10px; border-radius:10px; flex:1; min-height:320px; }
+</style>
+<!-- GEO-PIN -->
+<div id="v-geo" class="view">
+  <div class="bar"><span class="word">📍 <span id="geoTarget">Geo-Pin</span></span><span id="geoTimer" class="timer">–</span></div>
+  <canvas id="geoMap" width="600" height="700"></canvas>
+  <div class="tools" style="justify-content:center">
+    <button id="geoSubmit" class="btn go">Pin setzen</button>
+  </div>
+  <div id="geoStatus" class="muted" style="text-align:center; padding:0 16px 14px">Tippe auf die Karte.</div>
+</div>`);
+  VIEWS.push('geo');
+
   const geoCanvas = $('geoMap'), geoCtx = geoCanvas.getContext('2d');
   let geoScope = 'world', geoPin = null, geoSent = false, geoActive = false, geoView = GeoMap.initialView();
   let geoDrag = null, geoPinch = null;
@@ -86,4 +103,5 @@
     }
   };
 
-registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, controller: GEOc });
+  registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, controller: GEOc });
+})();

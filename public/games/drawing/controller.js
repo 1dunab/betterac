@@ -1,4 +1,54 @@
 // ============ Controller-Modul: DRAWING ============
+// Injiziert seine Views selbst — controller.html muss nur das Skript einbinden.
+(function () {
+  document.body.insertAdjacentHTML('beforeend', `
+<!-- DRAWING: PROMPT -->
+<div id="v-d-prompt" class="view">
+  <div class="bar"><span class="word">Denk dir ein Wort aus 💭</span></div>
+  <div class="center">
+    <div class="muted">Startet eine Kette und wandert durch alle.</div>
+    <input id="promptInput" type="text" placeholder="z.B. Einhorn…" autocomplete="off">
+    <button id="submitPrompt" class="btn go" style="width:100%; max-width:340px">Abschicken</button>
+    <div class="muted">Weiter, sobald alle abgegeben haben.</div>
+  </div>
+</div>
+<!-- DRAWING: ZEICHNEN -->
+<div id="v-d-draw" class="view">
+  <div class="bar"><span class="word">Zeichne: <span id="drawWord">…</span></span><span id="drawTimer" class="timer">–</span></div>
+  <canvas id="pad" width="600" height="700"></canvas>
+  <div class="tools">
+    <span class="sw sel" data-col="#111111" style="background:#111"></span>
+    <span class="sw" data-col="#ff2d55" style="background:#ff2d55"></span>
+    <span class="sw" data-col="#0a84ff" style="background:#0a84ff"></span>
+    <span class="sw" data-col="#30d158" style="background:#30d158"></span>
+    <span class="sw" data-col="#ffd60a" style="background:#ffd60a"></span>
+    <button id="eraser" class="btn">Radierer</button>
+    <button id="undo" class="btn">↶</button>
+    <button id="clear" class="btn">Leeren</button>
+    <button id="submitDraw" class="btn go">Fertig</button>
+  </div>
+</div>
+<!-- DRAWING: RATEN -->
+<div id="v-d-guess" class="view">
+  <div class="bar"><span class="word">Was ist das?</span><span id="guessTimer" class="timer">–</span></div>
+  <canvas id="guessCanvas" width="600" height="520"></canvas>
+  <div class="tools" style="flex-direction:column; align-items:stretch">
+    <input id="guessInput" type="text" placeholder="Dein Tipp…" autocomplete="off" style="max-width:none">
+    <button id="submitGuess" class="btn go" style="margin-top:8px">Abschicken</button>
+  </div>
+</div>
+<!-- DRAWING: WAIT / PRERECAP / RECAP -->
+<div id="v-d-wait" class="view"><div class="center"><div class="big">Eingereicht ✓</div><div class="muted">Warte auf die anderen…</div></div></div>
+<div id="v-d-prerecap" class="view"><div class="center"><div class="big">✅ Alle Runden geschafft!</div>
+  <div id="recapHostBox" style="display:none; width:100%; max-width:340px;"><button id="startRecapBtn" class="btn go" style="width:100%; font-size:20px">🎬 Recap starten</button></div>
+  <div id="recapGuestBox" class="muted" style="display:none">Warte auf den Host, der den Rückblick startet…</div>
+</div></div>
+<div id="v-d-recap" class="view"><div class="center"><div class="big">🎬 Schaut auf den großen Bildschirm!</div>
+  <button id="advanceBtn" class="btn" style="font-size:20px">Weiter ▶</button>
+  <button id="saveEvoBtn" class="btn" style="font-size:18px; display:none">💾 Evolution speichern</button>
+</div></div>`);
+  VIEWS.push('d-prompt', 'd-draw', 'd-guess', 'd-wait', 'd-prerecap', 'd-recap');
+
   const pad = $('pad'), pctx = pad.getContext('2d');
   let strokes = [], cur = null, drawing = false, color = '#111111', sizeFrac = 0.012, erasing = false, submitted = false;
   const clampN = (v) => Math.max(0, Math.min(1, v)), r3 = (v) => Math.round(v * 1000) / 1000;
@@ -46,5 +96,6 @@
       else if (d.t === 'recap') { stopTimer(); myHost = d.host; updateAbort(); $('saveEvoBtn').style.display = d.host ? 'inline-block' : 'none'; showView('d-recap'); }
     }
   };
-clearPad();
-registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, controller: Dc });
+  clearPad();
+  registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, controller: Dc });
+})();
