@@ -69,6 +69,7 @@
       if (!incoming || !(f in incoming)) continue;
       const def = s[f];
       if (def.type === 'number') c[f] = clamp(incoming[f] | 0, def.min, def.max);
+      else if (def.type === 'text') c[f] = String(incoming[f] == null ? '' : incoming[f]).slice(0, def.max || 100);
       else if ((def.options || []).some(o => o.v === incoming[f])) c[f] = incoming[f];
     }
   }
@@ -166,8 +167,9 @@
     const parts = Object.keys(schema).map(f => {
       const def = schema[f], v = cfgFor(shell.selected)[f];
       if (def.type === 'choice') { const o = (def.options || []).find(o => o.v === v); return def.label + ': ' + (o ? o.label : v); }
+      if (def.type === 'text') { const s = String(v || ''); return s ? (s.length > 40 ? s.slice(0, 39) + '…' : s) : null; }
       return def.label + ' ' + v + (def.unit || '');
-    });
+    }).filter(Boolean);
     if (parts.length) {
       ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif';
       ctx.fillText(parts.join(' · '), cv.width / 2, 134);

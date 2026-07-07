@@ -116,6 +116,14 @@
         const bump = (dir) => { curCfg[f] = Math.max(def.min, Math.min(def.max, (curCfg[f] | 0) + dir * def.step)); val.textContent = curCfg[f] + (def.unit || ''); sendCfg(); };
         minus.addEventListener('click', () => bump(-1)); plus.addEventListener('click', () => bump(1));
         row.append(lab, minus, val, plus); wrap.appendChild(row);
+      } else if (def.type === 'text') {
+        const row = document.createElement('div'); row.style.marginBottom = '12px';
+        const lab = document.createElement('div'); lab.className = 'muted'; lab.style.marginBottom = '6px'; lab.textContent = def.label + ':';
+        const inp = document.createElement('input');
+        inp.type = 'text'; inp.autocomplete = 'off'; inp.style.maxWidth = 'none'; inp.style.fontSize = '16px';
+        inp.maxLength = def.max || 100; inp.value = curCfg[f] || ''; inp.placeholder = def.default || '';
+        inp.addEventListener('change', () => { curCfg[f] = inp.value; sendCfg(); });
+        row.append(lab, inp); wrap.appendChild(row);
       }
     }
   }

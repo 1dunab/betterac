@@ -3,10 +3,11 @@
   // gültige Antwort 10 Punkte, doppelte 5, ungültige/leere 0.
   // ============================================================
   registerGame({ key: 'categories', screen: function () {
-    const CATS = ['Stadt', 'Land', 'Fluss', 'Tier', 'Beruf'];
+    const DEFAULT_CATS = ['Stadt', 'Land', 'Fluss', 'Tier', 'Beruf'];
     const LETTERS = 'ABCDEFGHIJKLMNOPRSTUVWZ'.split(''); // ohne Q/X/Y
 
     let ids = [], totals = {}, roundNo = 0, cfg = { rounds: 3, roundTime: 60 };
+    let CATS = DEFAULT_CATS;
     let phase = 'write'; // write | score | final
     let letter = '', unused = [], answers = new Map(), submitted = new Set();
     let deadline = 0, tickInt = null, table = null, roundGained = {};
@@ -61,6 +62,9 @@
       start(playerIds, settings) {
         ids = playerIds.slice().sort((a, b) => a - b);
         cfg = { rounds: (settings && settings.rounds) || 3, roundTime: (settings && settings.roundTime) || 60 };
+        // Eigene Kategorien aus dem Lobby-Setting (Komma-getrennt), sonst Standard
+        const custom = String((settings && settings.cats) || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 6);
+        CATS = custom.length >= 2 ? custom : DEFAULT_CATS;
         totals = {}; roundNo = 0; unused = LETTERS.slice();
         nextRound();
       },

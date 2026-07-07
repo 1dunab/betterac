@@ -36,17 +36,26 @@ const waitInfo = (d) => d.window.document.getElementById('slfWaitInfo').textCont
   await sleep(30);
   [...c1.window.document.querySelectorAll('#gameSettings .step')].find(r => r.textContent.includes('Runden')).querySelectorAll('button')[0].click();
   await sleep(30);
+  // Eigene Kategorien setzen
+  const catsInp = [...c1.window.document.querySelectorAll('#gameSettings input[type=text]')][0];
+  if (!catsInp) fail('Kein Kategorien-Textfeld in den Settings');
+  catsInp.value = 'Pokemon, Promi, Marke';
+  catsInp.dispatchEvent(new c1.window.Event('change', { bubbles: true }));
+  await sleep(50);
   c1.window.document.getElementById('startBtn').click();
   await sleep(80);
 
   console.log('Views nach Start:', all.map(visible).join(' | '), '(erwartet 3x v-slf-write)');
   if (!all.every(d => visible(d) === 'v-slf-write')) fail('Nicht alle im Schreib-View');
+  const gotCats = [...c2.window.document.querySelectorAll('#slfInputs input')].map(i => i.getAttribute('data-cat'));
+  console.log('Kategorien:', gotCats.join(','), '(erwartet Pokemon,Promi,Marke)');
+  if (gotCats.join(',') !== 'Pokemon,Promi,Marke') fail('Eigene Kategorien nicht übernommen');
   const L = c1.window.document.getElementById('slfLetter').textContent;
   console.log('Buchstabe:', L);
 
-  // Antworten: Stadt doppelt (5/5), Land nur Anna gültig (10), Fluss Ben ungültig (0)
-  fill(c1, 'Stadt', L + 'astadt'); fill(c1, 'Land', L + 'aland');
-  fill(c2, 'Stadt', (L + 'astadt').toLowerCase()); fill(c2, 'Fluss', '9zzz');
+  // Antworten: Pokemon doppelt (5/5), Promi nur Anna gültig (10), Marke Ben ungültig (0)
+  fill(c1, 'Pokemon', L + 'amon'); fill(c1, 'Promi', L + 'apromi');
+  fill(c2, 'Pokemon', (L + 'amon').toLowerCase()); fill(c2, 'Marke', '9zzz');
   for (const d of all) { d.window.document.getElementById('slfDone').click(); await sleep(30); }
   await sleep(80);
 

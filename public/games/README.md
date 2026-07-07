@@ -16,7 +16,8 @@ A game usually has:
 registerGame({ key: 'mygame', label: 'My Game', min: 2, settings: {
   rounds: { label: 'Runden', type: 'number', default: 5, min: 3, max: 12, step: 1 },
   mode:   { label: 'Modus', type: 'choice', default: 'easy', options: [
-            { v: 'easy', label: 'Leicht' }, { v: 'hard', label: 'Schwer' }] }
+            { v: 'easy', label: 'Leicht' }, { v: 'hard', label: 'Schwer' }] },
+  words:  { label: 'Eigene Wörter', type: 'text', default: '', max: 90 }
 } });
 
 // screen.js
