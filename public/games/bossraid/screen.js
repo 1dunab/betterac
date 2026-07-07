@@ -19,6 +19,10 @@ registerGame({ key: 'bossraid', screen: function () {
   let ebullets = [], pshots = [], sparks = [], zones = [], announce = null;
   let shake = { mag: 0, until: 0 };
   let stars = [];
+  let flash = { color: '#fff', until: 0, dur: 1 };
+  let bossHitAt = 0;
+
+  function setFlash(color, ms) { flash = { color, until: performance.now() + ms, dur: ms }; }
 
   // ---------- Glow-Sprites (gecacht, schnell via drawImage + 'lighter') ----------
   const glowCache = {};
@@ -640,6 +644,7 @@ registerGame({ key: 'bossraid', screen: function () {
     phaseAt = now;
     ebullets = [];
     setShake(16, 1400);
+    setFlash('#ffffff', 700);
     const h = hostId();
     order.forEach(id => ac.message(id, { t: 'brEnd', win: true, host: id === h }));
   }
@@ -672,6 +677,7 @@ registerGame({ key: 'bossraid', screen: function () {
       phaseStartHp = boss.hp;
       ebullets = [];
       setShake(11, 600);
+      setFlash(ph === 3 ? '#ff3040' : '#ffffff', 450);
       say('😡 PHASE ' + ph + '!', ph === 3 ? '#ff5d5d' : '#ffd60a', 2000, 54);
     }
 
@@ -685,6 +691,10 @@ registerGame({ key: 'bossraid', screen: function () {
       f.vy += (f.my * PLAYER_SPEED - f.vy) * k;
       f.x = clamp(f.x + f.vx * dt, 16, W - 16);
       f.y = clamp(f.y + f.vy * dt, 90, H - 20);
+      // Triebwerks-Trail
+      if (Math.hypot(f.vx, f.vy) > 70 && Math.random() < 0.55 && sparks.length < 380) {
+        sparks.push({ x: f.x - f.vx * 0.05, y: f.y - f.vy * 0.05, vx: -f.vx * 0.12, vy: -f.vy * 0.12, born: now, life: 260, color: players[id] ? players[id].color : '#fff', size: 2.2 });
+      }
       if (now - f.lastShot > SHOT_MS) {
         f.lastShot = now;
         const ts = boss.targets();
@@ -733,6 +743,7 @@ registerGame({ key: 'bossraid', screen: function () {
       for (const t of boss.targets()) {
         if (Math.hypot(s.x - t.x, s.y - t.y) < t.r + 4) {
           boss.damage(t.ref, SHOT_DMG, now);
+          bossHitAt = now;
           spark(s.x, s.y, s.color, 3, 120, 2, 300);
           return false;
         }
@@ -765,6 +776,21 @@ registerGame({ key: 'bossraid', screen: function () {
   }
 
   // ---------- Rendering ----------
+  let vignette = null;
+  function drawVignette() {
+    if (!vignette) {
+      vignette = document.createElement('canvas');
+      vignette.width = W; vignette.height = H;
+      const g = vignette.getContext('2d');
+      const grad = g.createRadialGradient(W / 2, H / 2, H * 0.45, W / 2, H / 2, H * 0.95);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.55)');
+      g.fillStyle = grad;
+      g.fillRect(0, 0, W, H);
+    }
+    ctx.drawImage(vignette, 0, 0);
+  }
+
   function drawBackground(now) {
     ctx.fillStyle = '#06030f';
     ctx.fillRect(0, 0, W, H);
@@ -1001,11 +1027,25 @@ registerGame({ key: 'bossraid', screen: function () {
         drawPick(now);
       } else {
         boss.draw(now);
+        // Hit-Flash: Boss blitzt bei Treffern
+        if (now - bossHitAt < 90 && boss.core) {
+          ctx.globalCompositeOperation = 'lighter';
+          drawGlow(boss.core.x, boss.core.y, boss.core.r * 0.9, '#ffffff', 0.35 * (1 - (now - bossHitAt) / 90));
+          ctx.globalCompositeOperation = 'source-over';
+        }
         drawZones(now);
         drawFighters(now);
         drawBullets();
         drawSparks(now);
+        drawVignette();
         drawHudTop(now);
+      }
+      // Screen-Flash (Phasenwechsel, Sieg)
+      if (now < flash.until) {
+        ctx.globalAlpha = 0.55 * (flash.until - now) / flash.dur;
+        ctx.fillStyle = flash.color;
+        ctx.fillRect(0, 0, W, H);
+        ctx.globalAlpha = 1;
       }
       ctx.restore();
     },
