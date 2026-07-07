@@ -49,14 +49,40 @@
   window.__bootRacer = function () {
     try {
       const q = new URLSearchParams(location.search);
+      const simMs = parseInt(q.get('sim') || '0', 10);
       const game = window.GAMES.racer();
       window.__game = game;
+
+      // Simulierte Zeit: Physik läuft synchron vor dem load-Event,
+      // damit der Headless-Screenshot mitten im Rennen landet.
+      let fake = 1000;
+      if (simMs > 0) performance.now = () => fake;
+
       game.start([1, 2, 3, 4], { track: q.get('track') || 'desert', targetPoints: 5 });
       if (document.title.startsWith('LOBBY:')) { devFail('start() -> ' + document.title); return; }
-      const simMs = parseInt(q.get('sim') || '0', 10);
-      window.__simUntil = performance.now() + simMs;
-      for (let i = 0; i < 5; i++) game.render();
-      (function loop() { game.render(); requestAnimationFrame(loop); })();
+
+      function bots() {
+        const dbg = game._debug();
+        const N = dbg.samples.length;
+        for (const id of [1, 2, 3, 4]) {
+          const r = dbg.racers[id];
+          if (!r || !r.alive) continue;
+          const tgt = dbg.samples[(r.idx + 16 + id * 2) % N].p;
+          let diff = Math.atan2(tgt.z - r.z, tgt.x - r.x) - r.heading;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          game.onMessage(id, { t: 'raceSteer', s: Math.max(-1, Math.min(1, diff * 3)) });
+        }
+        if (Math.random() < 0.005) game.onMessage(1, { t: 'raceNitro' });
+      }
+
+      if (simMs > 0) {
+        for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
+        (function loop() { fake += 16.7; bots(); game.render(); requestAnimationFrame(loop); })();
+      } else {
+        for (let i = 0; i < 5; i++) game.render();
+        (function loop() { bots(); game.render(); requestAnimationFrame(loop); })();
+      }
       document.title = 'RACER-RUNNING';
     } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
   };

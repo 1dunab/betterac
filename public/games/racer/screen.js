@@ -88,7 +88,12 @@ registerGame({ key: 'racer', screen: function () {
   let THREE, scene, camera, biome, samples = [], segLen = 1, trackLen = 1;
   let racers = {}, order = [], points = {}, targetPoints = 5;
   let phase = 'idle'; // countdown | race | heatOver | final
-  let lastT = 0, camPos = null, camAim = null, ghostIdx = 0;
+  let lastT = 0, camPos = null, camAim = null, phaseAt = 0, lastRankSent = 0;
+
+  // Fahrphysik (Arcade)
+  const MAX_SPEED = 26, ACCEL = 22, TURN = 2.5, GRIP = 7;
+  const OFFROAD_FACTOR = 0.42, CAR_R = 1.5;
+  const NITRO_MS = 2200, NITRO_CD = 6500, NITRO_BOOST = 1.5;
 
   // ---------- Strecke bauen ----------
   function sampleTrack(ctrl) {
@@ -270,29 +275,242 @@ registerGame({ key: 'racer', screen: function () {
     camPos = null; camAim = null;
   }
 
-  // ---------- Kamera (folgt vorerst einem Ghost auf der Ideallinie) ----------
+  // ---------- Autos ----------
+  function carMesh(color) {
+    const g = new THREE.Group();
+    const paint = new THREE.MeshLambertMaterial({ color });
+    const dark = new THREE.MeshLambertMaterial({ color: '#1c1f26' });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.1, 0.75, 1.55), paint);
+    body.position.y = 0.75; g.add(body);
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.45, 1.15), paint);
+    nose.position.set(1.95, 0.62, 0); g.add(nose);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.6, 1.15), new THREE.MeshLambertMaterial({ color: '#cfe8ff' }));
+    cab.position.set(-0.2, 1.35, 0); g.add(cab);
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.16, 1.8), paint);
+    wing.position.set(-1.7, 1.35, 0); g.add(wing);
+    const wingPost = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.5, 0.16), dark);
+    wingPost.position.set(-1.62, 1.05, 0); g.add(wingPost);
+    [[1.05, 0.95], [1.05, -0.95], [-1.15, 0.95], [-1.15, -0.95]].forEach(([wx, wz]) => {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10), dark);
+      wheel.rotation.x = Math.PI / 2;
+      wheel.position.set(wx, 0.42, wz);
+      g.add(wheel);
+    });
+    return g;
+  }
+
+  function blobShadow() {
+    const m = new THREE.Mesh(new THREE.CircleGeometry(2.0, 14),
+      new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.28 }));
+    m.rotation.x = -Math.PI / 2;
+    return m;
+  }
+
+  function spawnRacers() {
+    racers = {};
+    const N = samples.length;
+    order.forEach((id, i) => {
+      const row = Math.floor(i / 2), side = (i % 2 === 0) ? 1 : -1;
+      const si = ((N - 4) - row * Math.ceil(3.4 / segLen)) % N;
+      const s = samples[si];
+      const pos = s.p.clone().addScaledVector(s.n, side * 2.2);
+      const heading = Math.atan2(s.t.z, s.t.x);
+      const mesh = carMesh(players[id] ? players[id].color : '#999');
+      const shadow = blobShadow();
+      scene.add(mesh); scene.add(shadow);
+      racers[id] = {
+        x: pos.x, z: pos.z, heading, speed: 0, vx: 0, vz: 0, steer: 0,
+        idx: si, lap: 0, progress: si - N, alive: true,
+        nitroUntil: 0, nitroReadyAt: 0, nitroReadySent: true, boostUntil: 0, oilUntil: 0,
+        mesh, shadow
+      };
+      syncMesh(racers[id]);
+    });
+  }
+
+  function syncMesh(r) {
+    r.mesh.position.set(r.x, 0, r.z);
+    r.mesh.rotation.y = -r.heading;
+    r.mesh.rotation.z = -r.steer * 0.09;
+    r.mesh.visible = r.alive;
+    r.shadow.position.set(r.x, 0.04, r.z);
+    r.shadow.visible = r.alive;
+  }
+
+  function nearestIdx(r) {
+    // lokale Suche um den letzten bekannten Index
+    const N = samples.length;
+    let best = r.idx, bestD = Infinity;
+    for (let o = -30; o <= 45; o++) {
+      const i = ((r.idx + o) % N + N) % N;
+      const dx = samples[i].p.x - r.x, dz = samples[i].p.z - r.z;
+      const d = dx * dx + dz * dz;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function updateRacer(id, r, dt, now) {
+    if (!r.alive) return;
+    // Zielgeschwindigkeit: Auto-Gas + Modifikatoren
+    const prevIdx = r.idx;
+    r.idx = nearestIdx(r);
+    const s = samples[r.idx];
+    const distC = Math.hypot(r.x - s.p.x, r.z - s.p.z);
+    const offroad = distC > ROAD_W / 2 + 0.9;
+    let target = MAX_SPEED;
+    if (offroad) target *= OFFROAD_FACTOR;
+    if (now < r.nitroUntil || now < r.boostUntil) target *= NITRO_BOOST;
+    r.speed += clamp(target - r.speed, -ACCEL * 1.4 * dt, ACCEL * dt);
+
+    // Lenken + Grip (Öl = kaum Grip)
+    const slippery = now < r.oilUntil;
+    r.heading += r.steer * TURN * dt * clamp(r.speed / MAX_SPEED, 0.25, 1) * (slippery ? 1.6 : 1);
+    const grip = slippery ? 1.1 : GRIP;
+    const fx = Math.cos(r.heading) * r.speed, fz = Math.sin(r.heading) * r.speed;
+    const k = Math.min(1, grip * dt);
+    r.vx += (fx - r.vx) * k; r.vz += (fz - r.vz) * k;
+    r.x += r.vx * dt; r.z += r.vz * dt;
+
+    // Fortschritt / Runden
+    const N = samples.length;
+    if (prevIdx > N - 60 && r.idx < 60) r.lap++;
+    else if (prevIdx < 60 && r.idx > N - 60) r.lap--;
+    r.progress = r.lap * N + r.idx;
+
+    // Nitro-Cooldown-Meldung
+    if (!r.nitroReadySent && now >= r.nitroReadyAt) {
+      r.nitroReadySent = true;
+      ac.message(id, { t: 'raceYou', nitro: true });
+    }
+  }
+
+  function collideCars() {
+    const ids = order.filter(id => racers[id] && racers[id].alive);
+    for (let a = 0; a < ids.length; a++) for (let b = a + 1; b < ids.length; b++) {
+      const A = racers[ids[a]], B = racers[ids[b]];
+      const dx = B.x - A.x, dz = B.z - A.z, d = Math.hypot(dx, dz) || 0.01;
+      if (d < CAR_R * 2) {
+        const nx = dx / d, nz = dz / d, push = (CAR_R * 2 - d) / 2;
+        A.x -= nx * push; A.z -= nz * push; B.x += nx * push; B.z += nz * push;
+        const av = A.vx * nx + A.vz * nz, bv = B.vx * nx + B.vz * nz, kick = (bv - av) * 0.7;
+        A.vx += kick * nx; A.vz += kick * nz; B.vx -= kick * nx; B.vz -= kick * nz;
+      }
+    }
+  }
+
+  const aliveIds = () => order.filter(id => racers[id] && racers[id].alive);
+  function standings() {
+    return order.filter(id => racers[id]).slice()
+      .sort((a, b) => (racers[b].alive - racers[a].alive) || (racers[b].progress - racers[a].progress));
+  }
+  const leaderId = () => standings().find(id => racers[id].alive);
+
+  function sendRanks(now) {
+    if (now - lastRankSent < 600) return;
+    lastRankSent = now;
+    const st = standings();
+    st.forEach((id, i) => { if (racers[id].alive) ac.message(id, { t: 'raceYou', rank: i + 1 }); });
+  }
+
+  // ---------- Kamera folgt dem Führenden ----------
   function updateCamera(dt) {
-    ghostIdx = (ghostIdx + dt * 34 / segLen) % samples.length;
-    const s = samples[Math.floor(ghostIdx)];
-    const target = s.p.clone();
-    const behind = target.clone().addScaledVector(s.t, -30);
-    behind.y = 17;
-    const aheadS = samples[Math.floor((ghostIdx + 24 / segLen) % samples.length)];
-    const aim = aheadS.p.clone(); aim.y = 2;
+    const lead = leaderId();
+    const r = lead ? racers[lead] : null;
+    let behind, aim;
+    if (r) {
+      const s = samples[r.idx];
+      behind = new THREE.Vector3(r.x, 0, r.z).addScaledVector(s.t, -25);
+      behind.y = 14;
+      const aheadS = samples[(r.idx + Math.round(20 / segLen)) % samples.length];
+      aim = new THREE.Vector3().copy(aheadS.p); aim.y = 1.5;
+    } else {
+      const s = samples[0];
+      behind = s.p.clone().addScaledVector(s.t, -28); behind.y = 15;
+      aim = s.p.clone(); aim.y = 2;
+    }
     if (!camPos) { camPos = behind.clone(); camAim = aim.clone(); }
-    camPos.lerp(behind, Math.min(1, dt * 2.2));
-    camAim.lerp(aim, Math.min(1, dt * 3));
+    camPos.lerp(behind, Math.min(1, dt * 2.6));
+    camAim.lerp(aim, Math.min(1, dt * 3.2));
     camera.position.copy(camPos);
     camera.lookAt(camAim);
   }
 
-  function drawHud() {
+  // ---------- Simulation ----------
+  function simulate(dt, now) {
+    if (phase === 'countdown') {
+      if (now >= phaseAt) {
+        phase = 'race';
+        order.forEach(id => ac.message(id, { t: 'raceState', phase: 'race' }));
+      }
+      return;
+    }
+    if (phase !== 'race') return;
+    order.forEach(id => { const r = racers[id]; if (r) updateRacer(id, r, dt, now); });
+    collideCars();
+    order.forEach(id => { const r = racers[id]; if (r) syncMesh(r); });
+    sendRanks(now);
+  }
+
+  // ---------- HUD (2D-Overlay über dem 3D-Canvas) ----------
+  function projectTo2d(x, y, z) {
+    const v = new THREE.Vector3(x, y, z).project(camera);
+    if (v.z > 1) return null;
+    return [(v.x + 1) / 2 * W3, (1 - (v.y + 1) / 2) * H3];
+  }
+
+  function drawHud(now) {
     hctx.clearRect(0, 0, W3, H3);
-    hctx.textAlign = 'left'; hctx.textBaseline = 'middle';
-    hctx.fillStyle = '#fff'; hctx.font = 'bold 26px system-ui,sans-serif';
+    hctx.textBaseline = 'middle';
+
+    // Namen über den Autos
+    hctx.font = 'bold 14px system-ui,sans-serif'; hctx.textAlign = 'center';
+    order.forEach(id => {
+      const r = racers[id];
+      if (!r || !r.alive) return;
+      const p = projectTo2d(r.x, 2.6, r.z);
+      if (!p) return;
+      hctx.fillStyle = 'rgba(0,0,0,.45)';
+      const name = shortName(id), w = hctx.measureText(name).width + 12;
+      hctx.fillRect(p[0] - w / 2, p[1] - 11, w, 20);
+      hctx.fillStyle = players[id] ? players[id].color : '#fff';
+      hctx.fillText(name, p[0], p[1]);
+    });
+
+    // Titel + Punktestand
+    hctx.textAlign = 'left';
+    hctx.fillStyle = '#fff'; hctx.font = 'bold 24px system-ui,sans-serif';
     hctx.shadowColor = 'rgba(0,0,0,.55)'; hctx.shadowBlur = 6;
-    hctx.fillText('🏎️ Micro Racer — ' + biome.label, 18, 30);
+    hctx.fillText('🏎️ ' + biome.label, 18, 28);
     hctx.shadowBlur = 0;
+    hctx.textAlign = 'right'; hctx.font = 'bold 15px system-ui,sans-serif';
+    const st = standings();
+    st.forEach((id, i) => {
+      const r = racers[id];
+      hctx.fillStyle = 'rgba(0,0,0,.4)';
+      hctx.fillRect(W3 - 190, 14 + i * 26, 176, 22);
+      hctx.fillStyle = players[id] ? players[id].color : '#888';
+      hctx.beginPath(); hctx.arc(W3 - 176, 25 + i * 26, 6, 0, Math.PI * 2); hctx.fill();
+      hctx.fillStyle = r.alive ? '#fff' : 'rgba(255,255,255,.45)';
+      hctx.fillText((r.alive ? '' : '💥 ') + shortName(id) + ' · ' + (points[id] || 0) + 'P', W3 - 22, 25 + i * 26);
+    });
+
+    // Countdown
+    if (phase === 'countdown') {
+      const left = Math.ceil((phaseAt - now) / 1000);
+      hctx.textAlign = 'center'; hctx.fillStyle = '#fff';
+      hctx.font = 'bold 110px system-ui,sans-serif';
+      hctx.shadowColor = 'rgba(0,0,0,.6)'; hctx.shadowBlur = 14;
+      hctx.fillText(left > 0 ? String(left) : 'GO!', W3 / 2, H3 / 2 - 30);
+      hctx.shadowBlur = 0;
+    } else if (phase === 'race' && now - phaseAt < 1100) {
+      hctx.textAlign = 'center'; hctx.fillStyle = '#30d158';
+      hctx.font = 'bold 110px system-ui,sans-serif';
+      hctx.shadowColor = 'rgba(0,0,0,.6)'; hctx.shadowBlur = 14;
+      hctx.fillText('GO!', W3 / 2, H3 / 2 - 30);
+      hctx.shadowBlur = 0;
+    }
+
     hctx.textAlign = 'right'; hctx.font = '14px system-ui,sans-serif'; hctx.fillStyle = 'rgba(255,255,255,.75)';
     hctx.fillText('Host kann am Handy abbrechen ✕', W3 - 14, H3 - 14);
   }
@@ -312,28 +530,45 @@ registerGame({ key: 'racer', screen: function () {
       } else {
         buildScene(key, TRACKS[key]);
       }
+      spawnRacers();
       phase = 'countdown';
+      phaseAt = performance.now() + 3200;
       lastT = performance.now();
-      ghostIdx = 0;
       show3d(true);
       order.forEach(id => ac.message(id, { t: 'raceState', phase: 'countdown' }));
     },
-    stop() { show3d(false); scene = null; },
+    stop() { show3d(false); scene = null; racers = {}; },
     onDisconnect(id) {
+      const r = racers[id];
+      if (r) { scene && scene.remove(r.mesh, r.shadow); }
       order = order.filter(o => o !== id);
       delete racers[id]; delete points[id];
       if (order.length < 2) endToLobby('Micro Racer braucht mind. 2 Spieler.');
     },
     onMessage(id, d) {
-      // Fahr-Inputs kommen im nächsten Schritt
+      const r = racers[id];
+      if (!d || !r || !r.alive) return;
+      if (d.t === 'raceSteer') {
+        r.steer = clamp(+d.s || 0, -1, 1);
+      } else if (d.t === 'raceNitro' && phase === 'race') {
+        const now = performance.now();
+        if (now >= r.nitroReadyAt) {
+          r.nitroUntil = now + NITRO_MS;
+          r.nitroReadyAt = now + NITRO_CD;
+          r.nitroReadySent = false;
+          ac.message(id, { t: 'raceYou', nitro: false });
+        }
+      }
     },
     render() {
       if (!scene) return;
       const now = performance.now(), dt = Math.min(0.05, (now - lastT) / 1000);
       lastT = now;
+      simulate(dt, now);
       updateCamera(dt);
       renderer.render(scene, camera);
-      drawHud();
-    }
+      drawHud(now);
+    },
+    _debug() { return { racers, samples, phase, standings: standings() }; }
   };
 }});
