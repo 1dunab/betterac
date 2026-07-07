@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Boss Dev</title>
+<style>
+  html,body { margin:0; background:#0a0a14; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/game-registry.js"></script>
+<script>
+  // Shell-Stubs für isoliertes Testen des Boss-Raid-Moduls
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = {
+    1: { color: '#ff2d55', name: 'Anna', named: true },
+    2: { color: '#0a84ff', name: 'Ben', named: true },
+    3: { color: '#30d158', name: 'Cleo', named: true },
+    4: { color: '#ffd60a', name: 'Dino', named: true }
+  };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  const ac = { message() {}, broadcast() {} };
+
+  function devFail(msg) {
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
+    String(msg).match(/.{1,70}/g).forEach((line, i) => ctx.fillText(line, 20, 60 + i * 30));
+    console.error(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+</script>
+<script src="games/bossraid/meta.js"></script>
+<script src="games/bossraid/screen.js"></script>
+<script>
+  try {
+    const q = new URLSearchParams(location.search);
+    const simMs = parseInt(q.get('sim') || '0', 10);
+    let fake = 1000;
+    if (simMs > 0) performance.now = () => fake;
+
+    const game = window.GAMES.bossraid();
+    window.__game = game;
+    game.start([1, 2, 3, 4], { boss: q.get('boss') || 'kraken', difficulty: q.get('diff') || 'normal' });
+    // Klassen sofort wählen
+    game.onMessage(1, { t: 'brClass', cls: 'tank' });
+    game.onMessage(2, { t: 'brClass', cls: 'healer' });
+    game.onMessage(3, { t: 'brClass', cls: 'dd' });
+    if (q.get('pick') !== '1') game.onMessage(4, { t: 'brClass', cls: 'dd' });
+
+    function bots() {
+      const dbg = game._debug();
+      for (const id of [1, 2, 3, 4]) {
+        const f = dbg.fighters[id];
+        if (!f || f.hp <= 0) continue;
+        // Bots weichen der nächsten Kugel aus, sonst leichtes Kreisen
+        let mx = Math.sin(fake / 900 + id * 2) * 0.7, my = Math.cos(fake / 1100 + id) * 0.5;
+        let danger = null, dd = 1e9;
+        for (const b of dbg.ebullets) {
+          const d = (b.x - f.x) ** 2 + (b.y - f.y) ** 2;
+          if (d < dd) { dd = d; danger = b; }
+        }
+        if (danger && dd < 90 * 90) {
+          const a = Math.atan2(f.y - danger.y, f.x - danger.x);
+          mx = Math.cos(a); my = Math.sin(a);
+        }
+        game.onMessage(id, { t: 'brMove', x: mx, y: my });
+        if (Math.random() < 0.004) game.onMessage(id, { t: 'brSkill' });
+      }
+    }
+
+    if (simMs > 0) {
+      for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
+      (function loop() { fake += 16.7; bots(); game.render(); requestAnimationFrame(loop); })();
+    } else {
+      for (let i = 0; i < 5; i++) game.render();
+      (function loop() { bots(); game.render(); requestAnimationFrame(loop); })();
+    }
+    document.title = 'BOSS-RUNNING';
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>
