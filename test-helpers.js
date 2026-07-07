@@ -6,9 +6,12 @@ const path = require('path');
 const PUB = path.join(__dirname, 'public');
 
 function noopCtx() {
+  // Methoden geben ein Objekt zurueck, das weitere Aufrufe schluckt
+  // (z.B. createLinearGradient(...).addColorStop(...)).
+  const sub = new Proxy({}, { get: () => function () {}, set: () => true });
   return new Proxy({}, { get: (t, k) => {
     if (k === 'measureText') return () => ({ width: 10 });
-    return typeof k === 'string' ? function () {} : undefined;
+    return typeof k === 'string' ? function () { return sub; } : undefined;
   }, set: () => true });
 }
 
