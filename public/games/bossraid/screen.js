@@ -206,7 +206,324 @@ registerGame({ key: 'bossraid', screen: function () {
     return b;
   }
 
-  const BOSSES = { kraken: makeKraken };
+  // ---------- Boss: MECHA-KERN ----------
+  function makeMecha(nPlayers) {
+    const core = { x: W / 2, y: 180, r: 42 };
+    const maxHp = Math.round(380 * Math.max(1, nPlayers) * (hard ? 1.4 : 1));
+    const NODES = 4, nodes = [];
+    for (let i = 0; i < NODES; i++) {
+      nodes.push({ ang: i / NODES * Math.PI * 2, alive: true, hp: Math.round(maxHp * 0.11), lastShot: nowMs() + 1500 + i * 500, x: 0, y: 0 });
+    }
+    const b = {
+      kind: 'mecha', name: 'MECHA-KERN X-7', color: '#39d8ff', color2: '#ff9f0a',
+      hp: maxHp, maxHp, core, nodes, beams: [],
+      lastRing: 0, lastWall: 0, lastBeam: 0, rot: 0,
+      armored() { return nodes.filter(n => n.alive).length >= 2; },
+      phaseNo() { return b.hp > b.maxHp * 2 / 3 ? 1 : b.hp > b.maxHp / 3 ? 2 : 3; },
+      update(dt, now) {
+        const ph = b.phaseNo();
+        core.x = W / 2 + Math.sin(now / 2900) * 90;
+        b.rot += dt * (0.5 + ph * 0.22);
+        // Orbit-Nodes (Geschütze)
+        nodes.forEach((n, i) => {
+          n.ang += dt * 0.55;
+          n.x = core.x + Math.cos(n.ang) * 96;
+          n.y = core.y + Math.sin(n.ang) * 78;
+          if (!n.alive) return;
+          const gap = ph === 1 ? 2600 : ph === 2 ? 1900 : 1400;
+          if (now > n.lastShot + gap) {
+            n.lastShot = now;
+            const tgt = nearestFighter(n.x, n.y);
+            if (tgt) {
+              const a = Math.atan2(tgt.y - n.y, tgt.x - n.x);
+              fireE(n.x, n.y, Math.cos(a) * 175 * speedMul(), Math.sin(a) * 175 * speedMul(), 6, b.color2);
+            }
+          }
+        });
+        // Ring-Bursts (Quadrat-Muster: 4 Arme rotierend)
+        const ringGap = ph === 1 ? 1900 : ph === 2 ? 1400 : 1000;
+        if (now > b.lastRing + ringGap) {
+          b.lastRing = now;
+          const arms = ph === 3 ? 6 : 4;
+          for (let i = 0; i < arms; i++) {
+            const a = b.rot + i / arms * Math.PI * 2;
+            for (let k = 0; k < 3; k++) {
+              const sp = (95 + k * 34) * speedMul();
+              fireE(core.x, core.y, Math.cos(a) * sp, Math.sin(a) * sp, 6, b.color);
+            }
+          }
+        }
+        // Bullet-Wand mit Lücke (ab P2)
+        if (ph >= 2 && now > b.lastWall + (ph === 3 ? 4200 : 5600)) {
+          b.lastWall = now;
+          const gapAt = 80 + Math.random() * (W - 160);
+          for (let x = 20; x < W; x += 34) {
+            if (Math.abs(x - gapAt) < 62) continue;
+            fireE(x, 60, 0, 95 * speedMul(), 6, '#ff5db1');
+          }
+          say('⬇️ WAND!', '#ff5db1', 900, 30);
+        }
+        // Rotierender Laser (Telegraph → aktiv)
+        const beamGap = ph === 1 ? 7000 : ph === 2 ? 5200 : 4200;
+        if (now > b.lastBeam + beamGap) {
+          b.lastBeam = now;
+          const tgt = nearestFighter(core.x, core.y);
+          const a0 = tgt ? Math.atan2(tgt.y - core.y, tgt.x - core.x) : Math.PI / 2;
+          b.beams.push({ ang: a0, spin: (Math.random() < 0.5 ? 1 : -1) * (0.35 + ph * 0.1), activeAt: now + 900, until: now + 900 + 2600 });
+        }
+        b.beams = b.beams.filter(beam => now < beam.until);
+        b.beams.forEach(beam => {
+          if (now > beam.activeAt) {
+            beam.ang += beam.spin * dt;
+            // Trefferprüfung: Abstand Spieler → Strahl-Halbgerade
+            order.forEach(id => {
+              const f = fighters[id];
+              if (!f || f.hp <= 0) return;
+              const dx = f.x - core.x, dy = f.y - core.y;
+              const along = dx * Math.cos(beam.ang) + dy * Math.sin(beam.ang);
+              if (along < core.r) return;
+              const perp = Math.abs(-dx * Math.sin(beam.ang) + dy * Math.cos(beam.ang));
+              if (perp < 13) hurtFighter(id, f, now);
+            });
+          }
+        });
+      },
+      targets() {
+        const out = [{ x: core.x, y: core.y, r: core.r, ref: 'core' }];
+        nodes.forEach((n, i) => { if (n.alive) out.push({ x: n.x, y: n.y, r: 14, ref: i }); });
+        return out;
+      },
+      damage(ref, dmg, now) {
+        if (ref === 'core') {
+          b.hp = Math.max(0, b.hp - (b.armored() ? dmg * 0.35 : dmg));
+        } else {
+          const n = nodes[ref];
+          if (!n || !n.alive) return;
+          n.hp -= dmg;
+          b.hp = Math.max(0, b.hp - dmg * 0.5);
+          if (n.hp <= 0) {
+            n.alive = false;
+            spark(n.x, n.y, b.color2, 24, 240, 4, 700);
+            setShake(9, 400);
+            say(b.armored() ? '🤖 Geschütz zerstört!' : '💥 KERN VERWUNDBAR!', b.color2, 1600, 34);
+          }
+        }
+      },
+      draw(now) {
+        const ph = b.phaseNo();
+        // Deko-Ringe
+        ctx.globalCompositeOperation = 'lighter';
+        [66, 96].forEach((r, i) => {
+          ctx.strokeStyle = 'rgba(57,216,255,' + (0.25 - i * 0.08) + ')';
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([26, 18]);
+          ctx.lineDashOffset = (i ? -1 : 1) * now / 24;
+          ctx.beginPath(); ctx.ellipse(core.x, core.y, r, r * 0.82, 0, 0, Math.PI * 2); ctx.stroke();
+        });
+        ctx.setLineDash([]);
+        ctx.globalCompositeOperation = 'source-over';
+        // Laser
+        b.beams.forEach(beam => {
+          const ex = core.x + Math.cos(beam.ang) * 1200, ey = core.y + Math.sin(beam.ang) * 1200;
+          if (now < beam.activeAt) {
+            ctx.strokeStyle = 'rgba(255,90,90,' + (0.3 + Math.sin(now / 70) * 0.2) + ')';
+            ctx.lineWidth = 2.5; ctx.setLineDash([10, 10]);
+            ctx.beginPath(); ctx.moveTo(core.x, core.y); ctx.lineTo(ex, ey); ctx.stroke();
+            ctx.setLineDash([]);
+          } else {
+            ctx.globalCompositeOperation = 'lighter';
+            ctx.strokeStyle = 'rgba(255,80,80,0.45)'; ctx.lineWidth = 24; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(core.x, core.y); ctx.lineTo(ex, ey); ctx.stroke();
+            ctx.strokeStyle = '#ffe1e1'; ctx.lineWidth = 7;
+            ctx.beginPath(); ctx.moveTo(core.x, core.y); ctx.lineTo(ex, ey); ctx.stroke();
+            ctx.globalCompositeOperation = 'source-over';
+          }
+        });
+        // Nodes
+        nodes.forEach(n => {
+          if (!n.alive) return;
+          ctx.globalCompositeOperation = 'lighter';
+          drawGlow(n.x, n.y, 12, b.color2, 0.7);
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(now / 400);
+          ctx.fillStyle = '#2b1a05'; ctx.strokeStyle = b.color2; ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; i ? ctx.lineTo(Math.cos(a) * 11, Math.sin(a) * 11) : ctx.moveTo(11, 0); }
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+          ctx.restore();
+        });
+        // Kern (rotierendes Sechseck)
+        const pulse = 1 + Math.sin(now / (ph === 3 ? 120 : 280)) * 0.05;
+        ctx.globalCompositeOperation = 'lighter';
+        drawGlow(core.x, core.y, core.r * 1.5 * pulse, b.color, 0.6);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.save(); ctx.translate(core.x, core.y); ctx.rotate(b.rot * 0.5);
+        const grad = ctx.createRadialGradient(0, 0, 4, 0, 0, core.r * pulse);
+        grad.addColorStop(0, '#eaffff'); grad.addColorStop(0.5, b.color); grad.addColorStop(1, '#0a2a3d');
+        ctx.fillStyle = grad; ctx.strokeStyle = '#bdf3ff'; ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; i ? ctx.lineTo(Math.cos(a) * core.r * pulse, Math.sin(a) * core.r * pulse) : ctx.moveTo(core.r * pulse, 0); }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+        if (b.armored()) {
+          ctx.strokeStyle = 'rgba(255,159,10,' + (0.35 + Math.sin(now / 200) * 0.15) + ')';
+          ctx.lineWidth = 4; ctx.setLineDash([12, 9]);
+          ctx.beginPath(); ctx.arc(core.x, core.y, core.r + 13, now / 900, now / 900 + Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    };
+    return b;
+  }
+
+  // ---------- Boss: NEON-DRACHE ----------
+  function makeDragon(nPlayers) {
+    const maxHp = Math.round(380 * Math.max(1, nPlayers) * (hard ? 1.4 : 1));
+    const SEGS = 15, SPACING = 24;
+    const b = {
+      kind: 'dragon', name: 'NEON-DRACHE', color: '#7bffbf', color2: '#ff5db1',
+      hp: maxHp, maxHp,
+      core: { x: W / 2, y: 170, r: 22 }, // Kopf (für Laser-Ziel & HUD)
+      heading: 0, speed: 130, tgt: { x: W / 2, y: 300 }, tgtAt: 0,
+      trail: [], segs: [], flames: [],
+      lastVolley: 0, lastCone: 0, lastFlame: 0,
+      armored() { return false; },
+      phaseNo() { return b.hp > b.maxHp * 2 / 3 ? 1 : b.hp > b.maxHp / 3 ? 2 : 3; },
+      update(dt, now) {
+        const ph = b.phaseNo();
+        b.speed = (125 + ph * 32) * (hard ? 1.15 : 1);
+        // Wanderziel
+        if (now > b.tgtAt) {
+          b.tgtAt = now + 1700 + Math.random() * 1300;
+          b.tgt = { x: 70 + Math.random() * (W - 140), y: 80 + Math.random() * (H * 0.62) };
+        }
+        const want = Math.atan2(b.tgt.y - b.core.y, b.tgt.x - b.core.x);
+        let diff = want - b.heading;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        b.heading += clamp(diff, -1.6 * dt, 1.6 * dt);
+        b.core.x = clamp(b.core.x + Math.cos(b.heading) * b.speed * dt, 30, W - 30);
+        b.core.y = clamp(b.core.y + Math.sin(b.heading) * b.speed * dt, 50, H - 60);
+        // Trail + Segmente (Follow the Leader)
+        if (dt > 0) b.trail.unshift({ x: b.core.x, y: b.core.y });
+        if (b.trail.length > 400) b.trail.length = 400;
+        b.segs = [];
+        let dist = SPACING, ti = 0;
+        for (let s = 0; s < SEGS && ti < b.trail.length - 1; s++) {
+          while (ti < b.trail.length - 1) {
+            const a = b.trail[ti], c = b.trail[ti + 1];
+            const d = Math.hypot(a.x - c.x, a.y - c.y);
+            if (d >= dist || ti === b.trail.length - 2) { b.segs.push({ x: c.x, y: c.y }); break; }
+            dist -= d; ti++;
+          }
+          dist = SPACING;
+        }
+        // Körper-Berührung tut weh
+        order.forEach(id => {
+          const f = fighters[id];
+          if (!f || f.hp <= 0) return;
+          if (Math.hypot(f.x - b.core.x, f.y - b.core.y) < 24) { hurtFighter(id, f, now); return; }
+          for (const s of b.segs) {
+            if (Math.hypot(f.x - s.x, f.y - s.y) < 20) { hurtFighter(id, f, now); break; }
+          }
+        });
+        // Feuerbälle (gezielt)
+        const volleyGap = ph === 1 ? 2100 : ph === 2 ? 1500 : 1100;
+        if (now > b.lastVolley + volleyGap) {
+          b.lastVolley = now;
+          const tgt = nearestFighter(b.core.x, b.core.y);
+          if (tgt) {
+            const a = Math.atan2(tgt.y - b.core.y, tgt.x - b.core.x);
+            const n = ph >= 2 ? 3 : 1;
+            for (let k = 0; k < n; k++) {
+              const aa = a + (k - (n - 1) / 2) * 0.22;
+              fireE(b.core.x, b.core.y, Math.cos(aa) * 165 * speedMul(), Math.sin(aa) * 165 * speedMul(), 7, '#ffb03a');
+            }
+          }
+        }
+        // Flammenkegel in Blickrichtung
+        if (now > b.lastCone + (ph === 3 ? 3400 : 4600)) {
+          b.lastCone = now;
+          for (let k = 0; k < 9; k++) {
+            const aa = b.heading + (k - 4) * 0.14;
+            const sp = (120 + Math.random() * 60) * speedMul();
+            fireE(b.core.x + Math.cos(b.heading) * 20, b.core.y + Math.sin(b.heading) * 20,
+              Math.cos(aa) * sp, Math.sin(aa) * sp, 6, b.color2);
+          }
+        }
+        // P3: brennende Spur am Schwanz
+        if (ph === 3 && now > b.lastFlame + 240 && b.segs.length) {
+          b.lastFlame = now;
+          const tail = b.segs[b.segs.length - 1];
+          b.flames.push({ x: tail.x, y: tail.y, r: 17, until: now + 2600 });
+        }
+        b.flames = b.flames.filter(fl => now < fl.until);
+        b.flames.forEach(fl => {
+          order.forEach(id => {
+            const f = fighters[id];
+            if (!f || f.hp <= 0) return;
+            if (Math.hypot(f.x - fl.x, f.y - fl.y) < fl.r) hurtFighter(id, f, now);
+          });
+        });
+      },
+      targets() {
+        const out = [{ x: b.core.x, y: b.core.y, r: 22, ref: 'core' }];
+        // Herz-Segment als Weakpoint
+        if (b.segs[5]) out.push({ x: b.segs[5].x, y: b.segs[5].y, r: 16, ref: 'heart' });
+        return out;
+      },
+      damage(ref, dmg) {
+        b.hp = Math.max(0, b.hp - (ref === 'heart' ? dmg * 1.7 : dmg));
+      },
+      draw(now) {
+        const ph = b.phaseNo();
+        // Flammen-Spur
+        b.flames.forEach(fl => {
+          const left = (fl.until - now) / 2600;
+          ctx.globalCompositeOperation = 'lighter';
+          drawGlow(fl.x + (Math.random() - 0.5) * 3, fl.y + (Math.random() - 0.5) * 3, fl.r * 0.75, '#ff7a30', 0.5 * left + 0.15);
+          ctx.globalCompositeOperation = 'source-over';
+        });
+        // Körper (hinten → vorne)
+        for (let i = b.segs.length - 1; i >= 0; i--) {
+          const s = b.segs[i], f = i / SEGS;
+          const r = 16 - f * 9;
+          const col = i === 5 ? '#fff' : b.color;
+          ctx.globalCompositeOperation = 'lighter';
+          drawGlow(s.x, s.y, r * 0.9, i === 5 ? b.color2 : b.color, i === 5 ? 0.9 : 0.4);
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.fillStyle = i % 2 ? '#0d3a2a' : '#11533a';
+          ctx.strokeStyle = col; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          if (i === 5) { // Herz-Weakpoint pulsiert
+            ctx.fillStyle = b.color2;
+            ctx.beginPath(); ctx.arc(s.x, s.y, 6 + Math.sin(now / 160) * 2, 0, Math.PI * 2); ctx.fill();
+          }
+        }
+        // Kopf
+        const hx = b.core.x, hy = b.core.y;
+        ctx.globalCompositeOperation = 'lighter';
+        drawGlow(hx, hy, 26, b.color, 0.7);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.save(); ctx.translate(hx, hy); ctx.rotate(b.heading);
+        ctx.fillStyle = '#11533a'; ctx.strokeStyle = b.color; ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(26, 0); ctx.lineTo(4, -16); ctx.lineTo(-14, -10); ctx.lineTo(-14, 10); ctx.lineTo(4, 16);
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        // Hörner + Augen
+        ctx.fillStyle = b.color2;
+        ctx.beginPath(); ctx.moveTo(-8, -12); ctx.lineTo(-20, -22); ctx.lineTo(-4, -15); ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(-8, 12); ctx.lineTo(-20, 22); ctx.lineTo(-4, 15); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = ph === 3 ? '#ff4040' : '#fff';
+        ctx.beginPath(); ctx.arc(8, -7, 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(8, 7, 3.4, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+    };
+    return b;
+  }
+
+  const BOSSES = { kraken: makeKraken, mecha: makeMecha, dragon: makeDragon };
 
   // ---------- Spieler ----------
   function nearestFighter(x, y) {
