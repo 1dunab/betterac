@@ -25,11 +25,14 @@
     var ws = new WebSocket(proto + '://' + location.host);
     this._ws = ws;
     ws.onopen = function () {
-      var resume = null;
+      var resume = null, secret = null;
       if (self._role !== 'screen') {
-        try { resume = parseInt(sessionStorage.getItem('ac_device_id'), 10) || null; } catch (e) {}
+        try {
+          var saved = JSON.parse(sessionStorage.getItem('ac_resume') || 'null');
+          if (saved && saved.id && saved.secret) { resume = saved.id; secret = saved.secret; }
+        } catch (e) {}
       }
-      ws.send(JSON.stringify({ type: 'register', role: self._role, resume: resume }));
+      ws.send(JSON.stringify({ type: 'register', role: self._role, resume: resume, secret: secret }));
     };
     ws.onmessage = function (evt) { self._handle(JSON.parse(evt.data)); };
     ws.onerror = function () { ws.close(); };
@@ -49,8 +52,8 @@
         this.device_id = msg.device_id;
         this._devices = msg.devices || [];
         this._retry = 0;
-        if (this._role !== 'screen') {
-          try { sessionStorage.setItem('ac_device_id', String(msg.device_id)); } catch (e) {}
+        if (this._role !== 'screen' && msg.secret) {
+          try { sessionStorage.setItem('ac_resume', JSON.stringify({ id: msg.device_id, secret: msg.secret })); } catch (e) {}
         }
         this.onReady(msg.code);
         // Bereits verbundene Geraete nachmelden (z.B. Controller, die vor

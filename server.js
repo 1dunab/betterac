@@ -26,7 +26,9 @@ const server = http.createServer((req, res) => {
 // --- WebSocket: Verbindung & Nachrichten-Routing ---
 const wss = new WebSocketServer({ server });
 const clients = new Map();   // device_id -> ws
+const secrets = new Map();   // device_id -> Resume-Secret (nur dieser Server-Lauf)
 let nextControllerId = 1;    // Screen ist immer 0, Controller ab 1
+const newSecret = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
 const send = (ws, obj) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
 function broadcast(obj, exceptId) {
@@ -47,9 +49,12 @@ wss.on('connection', (ws) => {
         id = 0;
         const old = clients.get(0);
         if (old && old !== ws) { send(old, { type: 'kicked' }); old.deviceId = undefined; old.terminate(); }
-      } else if (Number.isInteger(msg.resume) && msg.resume > 0 && msg.resume < nextControllerId) {
-        // Reconnect: alte ID wiederverwenden. Haengt der alte Socket noch in der Map,
-        // uebernimmt der neue still (kein connect/disconnect-Geflacker fuer den Screen).
+      } else if (Number.isInteger(msg.resume) && msg.resume > 0
+                 && typeof msg.secret === 'string' && msg.secret.length
+                 && secrets.get(msg.resume) === msg.secret) {
+        // Reconnect: alte ID nur mit passendem Secret wiederverwenden — sonst koennte
+        // ein Geraet mit gespeicherter ID aus einem alten Server-Lauf fremde IDs kapern.
+        // Haengt der alte Socket noch in der Map, uebernimmt der neue still.
         id = msg.resume;
         const old = clients.get(id);
         if (old && old !== ws) { old.deviceId = undefined; old.terminate(); silent = true; }
@@ -58,7 +63,8 @@ wss.on('connection', (ws) => {
       }
       ws.deviceId = id;
       clients.set(id, ws);
-      send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()] });
+      if (id > 0 && !secrets.has(id)) secrets.set(id, newSecret());
+      send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: secrets.get(id) });
       if (!silent) broadcast({ type: 'connect', device_id: id }, id); // andere informieren
       return;
     }
