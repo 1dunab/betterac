@@ -23,6 +23,7 @@
 </div>
 
 <script>window.__AC_ROLE__ = 'screen';</script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
 <script src="airconsole-local.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
@@ -219,6 +220,8 @@
 <script src="games/codebreakers/screen.js"></script>
 <script src="games/rhythmrelay/meta.js"></script>
 <script src="games/rhythmrelay/screen.js"></script>
+<script src="games/racer/meta.js"></script>
+<script src="games/racer/screen.js"></script>
 <script>
   // ===== Render-Schleife =====
   saveBtn.addEventListener('click', () => { if (active && active.save) active.save(); });
