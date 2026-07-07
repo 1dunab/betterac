@@ -90,6 +90,7 @@ registerGame({ key: 'racer', screen: function () {
   let phase = 'idle'; // countdown | race | heatOver | final
   let lastT = 0, camPos = null, camAim = null, phaseAt = 0, lastRankSent = 0;
   let heatNo = 0, elimOrder = [], heatWinner = null, champion = null, poofs = [];
+  let features = [], parts = [];
 
   // Fahrphysik (Arcade)
   const MAX_SPEED = 26, ACCEL = 22, TURN = 2.5, GRIP = 7;
@@ -97,6 +98,7 @@ registerGame({ key: 'racer', screen: function () {
   const NITRO_MS = 2200, NITRO_CD = 6500, NITRO_BOOST = 1.5;
   // Elimination: Rückstand zum Führenden (Streckenmeter) + Gnadenfrist
   const ELIM_DIST = 48, GRACE_MS = 2000;
+  const GRAVITY = 34;
 
   // ---------- Strecke bauen ----------
   function sampleTrack(ctrl) {
@@ -255,6 +257,8 @@ registerGame({ key: 'racer', screen: function () {
     start.rotation.z = Math.atan2(s0.t.x, s0.t.z);
     scene.add(start);
 
+    placeFeatures();
+
     // Deko außerhalb der Strecke verstreuen
     biome.deco.forEach(d => {
       for (let i = 0; i < d.n; i++) {
@@ -276,6 +280,124 @@ registerGame({ key: 'racer', screen: function () {
 
     camera = new THREE.PerspectiveCamera(55, W3 / H3, 0.5, 1600);
     camPos = null; camAim = null;
+  }
+
+  // ---------- Power-ups auf der Strecke ----------
+  function chevronTexture() {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = '#0f7a3d'; g.fillRect(0, 0, 64, 64);
+    g.strokeStyle = '#7dffb1'; g.lineWidth = 9; g.lineCap = 'round';
+    [14, 38].forEach(y => {
+      g.beginPath(); g.moveTo(12, y + 12); g.lineTo(32, y - 2); g.lineTo(52, y + 12); g.stroke();
+    });
+    return new THREE.CanvasTexture(c);
+  }
+
+  function rampMesh(width) {
+    // Keil: flach vorne, 1.5 hoch an der Absprungkante (lokal +x = Fahrtrichtung)
+    const L = 4.2, H = 1.5, hw = width / 2;
+    const v = new Float32Array([
+      // schräge Fläche
+      -L, 0, -hw, -L, 0, hw, 0, H, hw,
+      -L, 0, -hw, 0, H, hw, 0, H, -hw,
+      // Rückwand
+      0, 0, -hw, 0, H, hw, 0, 0, hw,
+      0, 0, -hw, 0, H, -hw, 0, H, hw,
+      // Seiten
+      -L, 0, -hw, 0, H, -hw, 0, 0, -hw,
+      -L, 0, hw, 0, 0, hw, 0, H, hw
+    ]);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(v, 3));
+    g.computeVertexNormals();
+    return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: '#ff9f0a' }));
+  }
+
+  function placeFeatures() {
+    features = [];
+    const N = samples.length;
+    const isStraight = (i) => samples[i].t.dot(samples[(i + 16) % N].t) > 0.995;
+    const farFromOthers = (i) => features.every(f => {
+      const d = Math.abs(((i - f.idx) % N + N) % N);
+      return Math.min(d, N - d) > 55;
+    });
+    const spots = [];
+    for (let i = 40; i < N - 40; i += 7) if (isStraight(i)) spots.push(i);
+    shuffle(spots);
+    const wanted = [
+      { kind: 'ramp', n: 2 }, { kind: 'boost', n: 3 }, { kind: 'oil', n: 3 }
+    ];
+    for (const w of wanted) {
+      let placed = 0;
+      for (const i of spots) {
+        if (placed >= w.n) break;
+        if (!farFromOthers(i)) continue;
+        const s = samples[i];
+        if (w.kind === 'ramp') {
+          const side = Math.random() < 0.5 ? 1 : -1, lat = side * ROAD_W / 4;
+          const m = rampMesh(ROAD_W / 2 - 0.4);
+          m.position.copy(s.p).addScaledVector(s.n, lat);
+          m.rotation.y = -Math.atan2(s.t.z, s.t.x);
+          scene.add(m);
+          features.push({ kind: 'ramp', idx: i, lat, halfW: ROAD_W / 4 - 0.3 });
+        } else if (w.kind === 'boost') {
+          const lat = (Math.random() * 2 - 1) * 2;
+          const m = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 3.6),
+            new THREE.MeshBasicMaterial({ map: chevronTexture(), transparent: true, opacity: 0.92 }));
+          m.rotation.x = -Math.PI / 2;
+          m.rotation.z = Math.atan2(s.t.x, s.t.z) + Math.PI;
+          m.position.copy(s.p).addScaledVector(s.n, lat); m.position.y = 0.08;
+          scene.add(m);
+          features.push({ kind: 'boost', idx: i, lat, halfW: 1.6 });
+        } else {
+          const lat = (Math.random() * 2 - 1) * 2.4;
+          const m = new THREE.Mesh(new THREE.CircleGeometry(1.9, 16),
+            new THREE.MeshBasicMaterial({ color: '#15151c', transparent: true, opacity: 0.88 }));
+          m.rotation.x = -Math.PI / 2; m.scale.x = 1.35;
+          m.position.copy(s.p).addScaledVector(s.n, lat); m.position.y = 0.07;
+          scene.add(m);
+          features.push({ kind: 'oil', idx: i, lat, halfW: 1.9 });
+        }
+        placed++;
+      }
+    }
+  }
+
+  // ---------- Partikel (Nitro-Flammen, Staub) ----------
+  function spawnPart(x, y, z, vx, vy, vz, color, life, size) {
+    if (parts.length > 220) return;
+    const m = new THREE.Mesh(new THREE.SphereGeometry(size, 6, 5),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85 }));
+    m.position.set(x, y, z);
+    scene.add(m);
+    parts.push({ m, vx, vy, vz, born: performance.now(), life });
+  }
+  function updateParts(dt, now) {
+    parts = parts.filter(p => {
+      const f = (now - p.born) / p.life;
+      if (f >= 1) { scene.remove(p.m); return false; }
+      p.vy -= 9 * dt;
+      p.m.position.x += p.vx * dt; p.m.position.y = Math.max(0.1, p.m.position.y + p.vy * dt); p.m.position.z += p.vz * dt;
+      p.m.material.opacity = 0.85 * (1 - f);
+      return true;
+    });
+  }
+  function emitRacerParts(r, now, offroad) {
+    const dirX = Math.cos(r.heading), dirZ = Math.sin(r.heading);
+    if (now < r.nitroUntil || now < r.boostUntil) {
+      spawnPart(r.x - dirX * 1.9, r.y + 0.6, r.z - dirZ * 1.9,
+        -dirX * 6 + (Math.random() - 0.5) * 2, 1.5, -dirZ * 6 + (Math.random() - 0.5) * 2,
+        Math.random() < 0.5 ? '#ff9f0a' : '#ffd60a', 320, 0.3);
+    }
+    if (r.y <= 0 && offroad && r.speed > 8 && Math.random() < 0.65) {
+      spawnPart(r.x - dirX * 1.4, 0.25, r.z - dirZ * 1.4,
+        (Math.random() - 0.5) * 3, 2.2, (Math.random() - 0.5) * 3, biome.ground2, 480, 0.34);
+    }
+    if (r.y <= 0 && Math.abs(r.steer) > 0.65 && r.speed > 16 && Math.random() < 0.5) {
+      spawnPart(r.x - dirX * 1.2, 0.2, r.z - dirZ * 1.2,
+        (Math.random() - 0.5) * 2.5, 1.6, (Math.random() - 0.5) * 2.5, '#cfcfcf', 380, 0.24);
+    }
   }
 
   // ---------- Autos ----------
@@ -322,7 +444,7 @@ registerGame({ key: 'racer', screen: function () {
       const shadow = blobShadow();
       scene.add(mesh); scene.add(shadow);
       racers[id] = {
-        x: pos.x, z: pos.z, heading, speed: 0, vx: 0, vz: 0, steer: 0,
+        x: pos.x, z: pos.z, y: 0, vy: 0, heading, speed: 0, vx: 0, vz: 0, steer: 0,
         idx: si, lap: 0, progress: si - N, alive: true, dangerSince: 0,
         nitroUntil: 0, nitroReadyAt: 0, nitroReadySent: true, boostUntil: 0, oilUntil: 0,
         mesh, shadow
@@ -332,10 +454,15 @@ registerGame({ key: 'racer', screen: function () {
   }
 
   function syncMesh(r) {
-    r.mesh.position.set(r.x, 0, r.z);
+    r.mesh.position.set(r.x, r.y, r.z);
     r.mesh.rotation.y = -r.heading;
     r.mesh.rotation.z = -r.steer * 0.09;
+    r.mesh.rotation.x = r.y > 0 ? clamp(-r.vy * 0.02, -0.28, 0.28) : 0;
     r.mesh.visible = r.alive;
+    // Blob-Schatten bleibt am Boden und schrumpft beim Sprung
+    const sh = 1 / (1 + r.y * 0.14);
+    r.shadow.scale.setScalar(sh);
+    r.shadow.material.opacity = 0.28 * sh;
     r.shadow.position.set(r.x, 0.04, r.z);
     r.shadow.visible = r.alive;
   }
@@ -355,25 +482,54 @@ registerGame({ key: 'racer', screen: function () {
 
   function updateRacer(id, r, dt, now) {
     if (!r.alive) return;
-    // Zielgeschwindigkeit: Auto-Gas + Modifikatoren
     const prevIdx = r.idx;
     r.idx = nearestIdx(r);
     const s = samples[r.idx];
     const distC = Math.hypot(r.x - s.p.x, r.z - s.p.z);
     const offroad = distC > ROAD_W / 2 + 0.9;
-    let target = MAX_SPEED;
-    if (offroad) target *= OFFROAD_FACTOR;
-    if (now < r.nitroUntil || now < r.boostUntil) target *= NITRO_BOOST;
-    r.speed += clamp(target - r.speed, -ACCEL * 1.4 * dt, ACCEL * dt);
 
-    // Lenken + Grip (Öl = kaum Grip)
-    const slippery = now < r.oilUntil;
-    r.heading += r.steer * TURN * dt * clamp(r.speed / MAX_SPEED, 0.25, 1) * (slippery ? 1.6 : 1);
-    const grip = slippery ? 1.1 : GRIP;
-    const fx = Math.cos(r.heading) * r.speed, fz = Math.sin(r.heading) * r.speed;
-    const k = Math.min(1, grip * dt);
-    r.vx += (fx - r.vx) * k; r.vz += (fz - r.vz) * k;
-    r.x += r.vx * dt; r.z += r.vz * dt;
+    if (r.y > 0) {
+      // Flugphase: keine Lenkung, kein Grip — Ballistik bis zur Landung
+      r.vy -= GRAVITY * dt;
+      r.y += r.vy * dt;
+      r.x += r.vx * dt; r.z += r.vz * dt;
+      if (r.y <= 0) {
+        r.y = 0; r.vy = 0;
+        for (let i = 0; i < 6; i++) {
+          spawnPart(r.x + (Math.random() - 0.5) * 2, 0.25, r.z + (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 5, 2.5, (Math.random() - 0.5) * 5, biome.ground2, 420, 0.3);
+        }
+      }
+    } else {
+      // Zielgeschwindigkeit: Auto-Gas + Modifikatoren
+      let target = MAX_SPEED;
+      if (offroad) target *= OFFROAD_FACTOR;
+      if (now < r.nitroUntil || now < r.boostUntil) target *= NITRO_BOOST;
+      r.speed += clamp(target - r.speed, -ACCEL * 1.4 * dt, ACCEL * dt);
+
+      // Lenken + Grip (Öl = kaum Grip, übersteuert)
+      const slippery = now < r.oilUntil;
+      r.heading += r.steer * TURN * dt * clamp(r.speed / MAX_SPEED, 0.25, 1) * (slippery ? 1.6 : 1);
+      const grip = slippery ? 1.1 : GRIP;
+      const fx = Math.cos(r.heading) * r.speed, fz = Math.sin(r.heading) * r.speed;
+      const k = Math.min(1, grip * dt);
+      r.vx += (fx - r.vx) * k; r.vz += (fz - r.vz) * k;
+      r.x += r.vx * dt; r.z += r.vz * dt;
+
+      // Power-ups einsammeln (nur am Boden)
+      const N = samples.length;
+      for (const f of features) {
+        const d = ((r.idx - f.idx) % N + N) % N;
+        if (d > 3 && d < N - 3) continue;
+        const lat = (r.x - s.p.x) * s.n.x + (r.z - s.p.z) * s.n.z;
+        if (Math.abs(lat - f.lat) > f.halfW) continue;
+        if (f.kind === 'boost') r.boostUntil = Math.max(r.boostUntil, now + 1300);
+        else if (f.kind === 'oil') r.oilUntil = Math.max(r.oilUntil, now + 1300);
+        else if (f.kind === 'ramp' && r.speed > 9) { r.vy = 9.5 + r.speed * 0.16; r.y = 0.05; }
+      }
+    }
+
+    emitRacerParts(r, now, offroad);
 
     // Fortschritt / Runden
     const N = samples.length;
@@ -506,6 +662,7 @@ registerGame({ key: 'racer', screen: function () {
   function respawnHeat() {
     Object.values(racers).forEach(r => scene.remove(r.mesh, r.shadow));
     poofs.forEach(p => scene.remove(p.m)); poofs = [];
+    parts.forEach(p => scene.remove(p.m)); parts = [];
     heatNo++; elimOrder = []; heatWinner = null;
     spawnRacers();
     phase = 'countdown';
@@ -677,7 +834,7 @@ registerGame({ key: 'racer', screen: function () {
       show3d(true);
       order.forEach(id => ac.message(id, { t: 'raceState', phase: 'countdown' }));
     },
-    stop() { show3d(false); scene = null; racers = {}; poofs = []; },
+    stop() { show3d(false); scene = null; racers = {}; poofs = []; parts = []; features = []; },
     onDisconnect(id) {
       const r = racers[id];
       if (r) { scene && scene.remove(r.mesh, r.shadow); }
@@ -715,6 +872,7 @@ registerGame({ key: 'racer', screen: function () {
       lastT = now;
       simulate(dt, now);
       updatePoofs(now);
+      updateParts(dt, now);
       updateCamera(dt);
       renderer.render(scene, camera);
       drawHud(now);
