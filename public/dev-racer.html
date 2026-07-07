@@ -71,7 +71,8 @@
           let diff = Math.atan2(tgt.z - r.z, tgt.x - r.x) - r.heading;
           while (diff > Math.PI) diff -= Math.PI * 2;
           while (diff < -Math.PI) diff += Math.PI * 2;
-          game.onMessage(id, { t: 'raceSteer', s: Math.max(-1, Math.min(1, diff * 3)) });
+          const skill = id === 4 ? 0.45 : 3; // Dino faehrt schlecht -> Elimination testen
+          game.onMessage(id, { t: 'raceSteer', s: Math.max(-1, Math.min(1, diff * skill)) });
         }
         if (Math.random() < 0.005) game.onMessage(1, { t: 'raceNitro' });
       }

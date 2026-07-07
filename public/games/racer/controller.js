@@ -20,6 +20,7 @@
     <button id="race-right">↻</button>
   </div>
   <div id="raceStatus" class="muted" style="text-align:center; padding:0 16px 14px">Gas gibt's automatisch — lenken und überleben!</div>
+  <button id="raceAgainBtn" class="btn go" style="display:none; margin:0 16px 14px; font-size:18px">🔁 Nochmal</button>
 </div>`);
   VIEWS.push('race');
 
@@ -49,27 +50,32 @@
     nitroBtn.textContent = ready ? '🔥 NITRO' : '⏳ NITRO';
   }
 
+  $('raceAgainBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'raceAgain' }));
+
   const RACEc = {
     activate() {
       steer.left = steer.right = false;
       setNitro(true);
       $('raceRank').textContent = '';
+      $('raceAgainBtn').style.display = 'none';
       $('raceStatus').textContent = 'Gas gibt\'s automatisch — lenken und überleben!';
       showView('race');
     },
     onMessage(d) {
       if (d.t === 'raceState') {
+        $('raceAgainBtn').style.display = 'none';
         if (d.phase === 'countdown') { setNitro(true); $('raceStatus').textContent = 'Gleich geht\'s los… 🚦'; }
         else if (d.phase === 'race') $('raceStatus').textContent = 'Fahr! 🏁';
       } else if (d.t === 'raceYou') {
         if (d.nitro !== undefined) setNitro(!!d.nitro);
         if (d.rank) $('raceRank').textContent = 'P' + d.rank;
-        if (d.out) $('raceStatus').textContent = '💥 Rausgeflogen — nächste Runde bist du wieder dabei!';
+        if (d.out) $('raceStatus').textContent = '💥 Rausgeflogen — nächster Heat kommt bestimmt!';
         else if (d.msg) $('raceStatus').textContent = d.msg;
       } else if (d.t === 'raceScore') {
-        $('raceStatus').textContent = (d.won ? '🏆 Runde gewonnen! ' : '') + 'Punkte: ' + d.points + ' / ' + d.target;
+        $('raceStatus').textContent = (d.won ? '🏆 Heat gewonnen! ' : '') + 'Punkte: ' + d.points + ' / ' + d.target;
       } else if (d.t === 'raceFinal') {
-        $('raceStatus').textContent = d.winner ? '👑 DU GEWINNST ALLES!' : d.name + ' gewinnt das Turnier.';
+        $('raceStatus').textContent = d.winner ? '👑 DU GEWINNST DAS TURNIER!' : '👑 ' + d.name + ' gewinnt das Turnier.';
+        $('raceAgainBtn').style.display = d.host ? 'block' : 'none';
       }
     }
   };

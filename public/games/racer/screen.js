@@ -89,11 +89,14 @@ registerGame({ key: 'racer', screen: function () {
   let racers = {}, order = [], points = {}, targetPoints = 5;
   let phase = 'idle'; // countdown | race | heatOver | final
   let lastT = 0, camPos = null, camAim = null, phaseAt = 0, lastRankSent = 0;
+  let heatNo = 0, elimOrder = [], heatWinner = null, champion = null, poofs = [];
 
   // Fahrphysik (Arcade)
   const MAX_SPEED = 26, ACCEL = 22, TURN = 2.5, GRIP = 7;
   const OFFROAD_FACTOR = 0.42, CAR_R = 1.5;
   const NITRO_MS = 2200, NITRO_CD = 6500, NITRO_BOOST = 1.5;
+  // Elimination: Rückstand zum Führenden (Streckenmeter) + Gnadenfrist
+  const ELIM_DIST = 48, GRACE_MS = 2000;
 
   // ---------- Strecke bauen ----------
   function sampleTrack(ctrl) {
@@ -311,7 +314,7 @@ registerGame({ key: 'racer', screen: function () {
     const N = samples.length;
     order.forEach((id, i) => {
       const row = Math.floor(i / 2), side = (i % 2 === 0) ? 1 : -1;
-      const si = ((N - 4) - row * Math.ceil(3.4 / segLen)) % N;
+      const si = (((N - 4) - row * Math.ceil(5.5 / segLen)) % N + N) % N;
       const s = samples[si];
       const pos = s.p.clone().addScaledVector(s.n, side * 2.2);
       const heading = Math.atan2(s.t.z, s.t.x);
@@ -320,7 +323,7 @@ registerGame({ key: 'racer', screen: function () {
       scene.add(mesh); scene.add(shadow);
       racers[id] = {
         x: pos.x, z: pos.z, heading, speed: 0, vx: 0, vz: 0, steer: 0,
-        idx: si, lap: 0, progress: si - N, alive: true,
+        idx: si, lap: 0, progress: si - N, alive: true, dangerSince: 0,
         nitroUntil: 0, nitroReadyAt: 0, nitroReadySent: true, boostUntil: 0, oilUntil: 0,
         mesh, shadow
       };
@@ -436,18 +439,116 @@ registerGame({ key: 'racer', screen: function () {
     camera.lookAt(camAim);
   }
 
+  // ---------- Elimination / Heats ----------
+  function poofAt(x, z) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1.4, 10, 8),
+      new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.9 }));
+    m.position.set(x, 1.2, z);
+    scene.add(m);
+    poofs.push({ m, born: performance.now() });
+  }
+  function updatePoofs(now) {
+    poofs = poofs.filter(p => {
+      const f = (now - p.born) / 600;
+      if (f >= 1) { scene.remove(p.m); return false; }
+      p.m.scale.setScalar(1 + f * 3.2);
+      p.m.material.opacity = 0.9 * (1 - f);
+      return true;
+    });
+  }
+
+  function eliminate(id, now) {
+    const r = racers[id];
+    if (!r || !r.alive) return;
+    r.alive = false; r.dangerSince = 0;
+    syncMesh(r);
+    poofAt(r.x, r.z);
+    elimOrder.push(id);
+    ac.message(id, { t: 'raceYou', out: true });
+    const alive = aliveIds();
+    if (alive.length <= 1) endHeat(alive[0] || null, now);
+  }
+
+  function checkElimination(now) {
+    const lead = leaderId();
+    if (!lead) return;
+    const lp = racers[lead].progress;
+    aliveIds().forEach(id => {
+      if (id === lead) { racers[id].dangerSince = 0; return; }
+      const r = racers[id];
+      const behind = (lp - r.progress) * segLen;
+      if (behind > ELIM_DIST) {
+        if (!r.dangerSince) {
+          r.dangerSince = now;
+          ac.message(id, { t: 'raceYou', msg: '⚠️ Du fällst zurück — Vollgas!' });
+        } else if (now - r.dangerSince > GRACE_MS) {
+          eliminate(id, now);
+        }
+      } else {
+        r.dangerSince = 0;
+      }
+    });
+  }
+
+  function endHeat(winnerId, now) {
+    phase = 'heatOver';
+    phaseAt = now + 4000;
+    heatWinner = winnerId;
+    // Gestaffelte Punkte nach Überlebensdauer: erster Rausflieger 0, Sieger n-1
+    const ranking = elimOrder.slice();
+    if (winnerId !== null) ranking.push(winnerId);
+    ranking.forEach((id, i) => { if (points[id] !== undefined) points[id] += i; });
+    order.forEach(id => ac.message(id, {
+      t: 'raceScore', won: id === winnerId, points: points[id] || 0, target: targetPoints
+    }));
+  }
+
+  function respawnHeat() {
+    Object.values(racers).forEach(r => scene.remove(r.mesh, r.shadow));
+    poofs.forEach(p => scene.remove(p.m)); poofs = [];
+    heatNo++; elimOrder = []; heatWinner = null;
+    spawnRacers();
+    phase = 'countdown';
+    phaseAt = performance.now() + 3200;
+    order.forEach(id => ac.message(id, { t: 'raceState', phase: 'countdown' }));
+  }
+
+  function afterHeat() {
+    const best = Math.max(...order.map(id => points[id] || 0));
+    const leaders = order.filter(id => (points[id] || 0) === best);
+    if (best >= targetPoints && leaders.length === 1) {
+      phase = 'final';
+      champion = leaders[0];
+      const h = hostId();
+      order.forEach(id => ac.message(id, {
+        t: 'raceFinal', winner: id === champion, name: nameOf(champion), host: id === h
+      }));
+      return;
+    }
+    respawnHeat();
+  }
+
   // ---------- Simulation ----------
   function simulate(dt, now) {
     if (phase === 'countdown') {
       if (now >= phaseAt) {
         phase = 'race';
+        phaseAt = now;
         order.forEach(id => ac.message(id, { t: 'raceState', phase: 'race' }));
       }
+      return;
+    }
+    if (phase === 'heatOver') {
+      // Sieger rollt weiter durchs Bild
+      order.forEach(id => { const r = racers[id]; if (r && r.alive) { updateRacer(id, r, dt, now); syncMesh(r); } });
+      if (now >= phaseAt) afterHeat();
       return;
     }
     if (phase !== 'race') return;
     order.forEach(id => { const r = racers[id]; if (r) updateRacer(id, r, dt, now); });
     collideCars();
+    checkElimination(now);
+    if (phase !== 'race') return; // Heat kann gerade geendet haben
     order.forEach(id => { const r = racers[id]; if (r) syncMesh(r); });
     sendRanks(now);
   }
@@ -495,6 +596,19 @@ registerGame({ key: 'racer', screen: function () {
       hctx.fillText((r.alive ? '' : '💥 ') + shortName(id) + ' · ' + (points[id] || 0) + 'P', W3 - 22, 25 + i * 26);
     });
 
+    // Gefahr: Spieler kurz vorm Rausfliegen → roter Puls-Rand + Hinweis
+    const inDanger = order.filter(id => racers[id] && racers[id].alive && racers[id].dangerSince);
+    if (phase === 'race' && inDanger.length) {
+      const pulse = 0.25 + 0.2 * Math.sin(now / 90);
+      hctx.strokeStyle = 'rgba(255,60,40,' + pulse + ')';
+      hctx.lineWidth = 22;
+      hctx.strokeRect(0, 0, W3, H3);
+      hctx.textAlign = 'center'; hctx.fillStyle = '#ff6b5e'; hctx.font = 'bold 24px system-ui,sans-serif';
+      hctx.shadowColor = 'rgba(0,0,0,.6)'; hctx.shadowBlur = 8;
+      hctx.fillText('⚠️ ' + inDanger.map(shortName).join(', ') + ' fällt zurück!', W3 / 2, H3 - 44);
+      hctx.shadowBlur = 0;
+    }
+
     // Countdown
     if (phase === 'countdown') {
       const left = Math.ceil((phaseAt - now) / 1000);
@@ -502,6 +616,7 @@ registerGame({ key: 'racer', screen: function () {
       hctx.font = 'bold 110px system-ui,sans-serif';
       hctx.shadowColor = 'rgba(0,0,0,.6)'; hctx.shadowBlur = 14;
       hctx.fillText(left > 0 ? String(left) : 'GO!', W3 / 2, H3 / 2 - 30);
+      if (heatNo > 0) { hctx.font = 'bold 30px system-ui,sans-serif'; hctx.fillText('Heat ' + (heatNo + 1), W3 / 2, H3 / 2 + 50); }
       hctx.shadowBlur = 0;
     } else if (phase === 'race' && now - phaseAt < 1100) {
       hctx.textAlign = 'center'; hctx.fillStyle = '#30d158';
@@ -509,6 +624,30 @@ registerGame({ key: 'racer', screen: function () {
       hctx.shadowColor = 'rgba(0,0,0,.6)'; hctx.shadowBlur = 14;
       hctx.fillText('GO!', W3 / 2, H3 / 2 - 30);
       hctx.shadowBlur = 0;
+    }
+
+    // Heat-Ende / Turnier-Finale
+    if (phase === 'heatOver') {
+      hctx.textAlign = 'center';
+      hctx.fillStyle = 'rgba(0,0,0,.55)'; hctx.fillRect(0, H3 / 2 - 74, W3, 128);
+      hctx.fillStyle = '#ffd60a'; hctx.font = 'bold 44px system-ui,sans-serif';
+      hctx.fillText(heatWinner !== null ? '🏁 ' + nameOf(heatWinner) + ' überlebt den Heat!' : '🏁 Heat vorbei!', W3 / 2, H3 / 2 - 26);
+      hctx.fillStyle = '#fff'; hctx.font = 'bold 20px system-ui,sans-serif';
+      hctx.fillText(standings().map(id => shortName(id) + ' ' + (points[id] || 0)).join('  ·  ') + '   (Ziel: ' + targetPoints + ')', W3 / 2, H3 / 2 + 26);
+    }
+    if (phase === 'final' && champion !== null) {
+      hctx.textAlign = 'center';
+      hctx.fillStyle = 'rgba(0,0,0,.62)'; hctx.fillRect(0, 0, W3, H3);
+      hctx.fillStyle = '#ffd60a'; hctx.font = 'bold 58px system-ui,sans-serif';
+      hctx.fillText('👑 ' + nameOf(champion) + ' gewinnt!', W3 / 2, H3 / 2 - 110);
+      const st = order.slice().sort((a, b) => (points[b] || 0) - (points[a] || 0));
+      hctx.font = 'bold 26px system-ui,sans-serif';
+      st.forEach((id, i) => {
+        hctx.fillStyle = players[id] ? players[id].color : '#888';
+        hctx.fillText((i + 1) + '.  ' + shortName(id) + ' — ' + (points[id] || 0) + ' Punkte', W3 / 2, H3 / 2 - 40 + i * 40);
+      });
+      hctx.fillStyle = 'rgba(255,255,255,.6)'; hctx.font = '17px system-ui,sans-serif';
+      hctx.fillText('⭐ Host kann am Handy eine Revanche starten', W3 / 2, H3 - 60);
     }
 
     hctx.textAlign = 'right'; hctx.font = '14px system-ui,sans-serif'; hctx.fillStyle = 'rgba(255,255,255,.75)';
@@ -531,23 +670,33 @@ registerGame({ key: 'racer', screen: function () {
         buildScene(key, TRACKS[key]);
       }
       spawnRacers();
+      heatNo = 0; elimOrder = []; heatWinner = null; champion = null; poofs = [];
       phase = 'countdown';
       phaseAt = performance.now() + 3200;
       lastT = performance.now();
       show3d(true);
       order.forEach(id => ac.message(id, { t: 'raceState', phase: 'countdown' }));
     },
-    stop() { show3d(false); scene = null; racers = {}; },
+    stop() { show3d(false); scene = null; racers = {}; poofs = []; },
     onDisconnect(id) {
       const r = racers[id];
       if (r) { scene && scene.remove(r.mesh, r.shadow); }
       order = order.filter(o => o !== id);
+      elimOrder = elimOrder.filter(o => o !== id);
       delete racers[id]; delete points[id];
-      if (order.length < 2) endToLobby('Micro Racer braucht mind. 2 Spieler.');
+      if (order.length < 2) { endToLobby('Micro Racer braucht mind. 2 Spieler.'); return; }
+      if (phase === 'race' && aliveIds().length <= 1) endHeat(aliveIds()[0] || null, performance.now());
     },
     onMessage(id, d) {
+      if (!d) return;
+      if (d.t === 'raceAgain' && id === hostId() && phase === 'final') {
+        points = {}; order.forEach(o => { points[o] = 0; });
+        champion = null; heatNo = -1;
+        respawnHeat();
+        return;
+      }
       const r = racers[id];
-      if (!d || !r || !r.alive) return;
+      if (!r || !r.alive) return;
       if (d.t === 'raceSteer') {
         r.steer = clamp(+d.s || 0, -1, 1);
       } else if (d.t === 'raceNitro' && phase === 'race') {
@@ -565,6 +714,7 @@ registerGame({ key: 'racer', screen: function () {
       const now = performance.now(), dt = Math.min(0.05, (now - lastT) / 1000);
       lastT = now;
       simulate(dt, now);
+      updatePoofs(now);
       updateCamera(dt);
       renderer.render(scene, camera);
       drawHud(now);
