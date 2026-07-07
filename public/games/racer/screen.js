@@ -59,18 +59,21 @@ registerGame({ key: 'racer', screen: function () {
     if (!THREE) return false;
     try {
       wrap3d = document.createElement('div');
-      wrap3d.style.cssText = 'position:relative; display:none; line-height:0;';
+      wrap3d.style.cssText = 'position:relative; display:none; line-height:0; width:fit-content; margin:0 auto;';
       const c3 = document.createElement('canvas');
       c3.width = W3; c3.height = H3;
       hud = document.createElement('canvas');
       hud.width = W3; hud.height = H3;
-      hud.style.cssText = 'position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none;';
+      // background/box-shadow explizit neutralisieren — die globale canvas-Regel
+      // in screen.html würde das Overlay sonst deckend über die 3D-Szene legen
+      hud.style.cssText = 'position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none;'
+        + 'background:transparent; border-radius:0; box-shadow:none; max-width:none; max-height:none;';
       wrap3d.append(c3, hud);
       cv.insertAdjacentElement('afterend', wrap3d);
       hctx = hud.getContext('2d');
       renderer = new THREE.WebGLRenderer({ canvas: c3, antialias: true });
-      renderer.setSize(W3, H3, false);
       renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.setSize(W3, H3, false);
       return true;
     } catch (e) {
       if (wrap3d) { wrap3d.remove(); wrap3d = null; }

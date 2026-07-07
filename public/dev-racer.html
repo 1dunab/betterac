@@ -5,7 +5,9 @@
 <title>Racer Dev</title>
 <style>
   html,body { margin:0; background:#0a0a14; }
-  canvas { display:block; }
+  /* identisch zur canvas-Regel in screen.html — deckt CSS-Konflikte im Test auf */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
 </style>
 </head>
 <body>
