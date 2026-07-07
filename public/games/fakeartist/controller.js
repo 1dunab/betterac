@@ -59,7 +59,8 @@
   const up = (e) => { if (e) e.preventDefault(); renderCard(false); };
   hold.addEventListener('touchstart', down); hold.addEventListener('touchend', up); hold.addEventListener('touchcancel', up);
   hold.addEventListener('mousedown', down); window.addEventListener('mouseup', () => renderCard(false));
-  $('faSeenBtn').addEventListener('click', () => { ac.message(AirConsole.SCREEN, { t: 'faSeen' }); renderCard(false); showWait('👀 Schaut auf den Bildschirm', 'Gleich geht es los…'); });
+  // Erst View wechseln, dann senden — die Antwort (faTurn) kann sofort eintreffen
+  $('faSeenBtn').addEventListener('click', () => { renderCard(false); showWait('👀 Schaut auf den Bildschirm', 'Gleich geht es los…'); ac.message(AirConsole.SCREEN, { t: 'faSeen' }); });
 
   // --- Ein-Strich-Pad (normalisierte Koordinaten wie beim Drawing-Spiel) ---
   const pad = $('faPad'), pctx = pad.getContext('2d');
