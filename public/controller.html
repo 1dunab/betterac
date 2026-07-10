@@ -12,7 +12,9 @@
   .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .word { font-size:22px; font-weight:800; }
   .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
-  canvas { background:#fff; flex:1; border-radius:10px; margin:0 10px; touch-action:none; }
+  /* min-height:0 erlaubt Flex-Schrumpfen unter die intrinsische Canvas-Höhe —
+     sonst schiebt z.B. der Rate-Canvas (600x520) Eingabefeld und Button aus dem Screen */
+  canvas { background:#fff; flex:1; min-height:0; border-radius:10px; margin:0 10px; touch-action:none; }
   .tools { display:flex; gap:8px; padding:10px; flex-wrap:wrap; align-items:center; }
   .sw { width:34px; height:34px; border-radius:50%; border:3px solid transparent; }
   .sw.sel { border-color:#fff; }
