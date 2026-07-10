@@ -99,8 +99,9 @@ registerGame({ key: 'racer', screen: function () {
   const MAX_SPEED = 26, ACCEL = 22, TURN = 2.5, GRIP = 7;
   const OFFROAD_FACTOR = 0.42, CAR_R = 1.5;
   const NITRO_MS = 2200, NITRO_CD = 6500, NITRO_BOOST = 1.5;
-  // Elimination: Rückstand zum Führenden (Streckenmeter) + Gnadenfrist
-  const ELIM_DIST = 48, GRACE_MS = 2000;
+  // Elimination: Rückstand zum Führenden (Streckenmeter) + Gnadenfrist.
+  // Grenze knapp hinter der Kamera-Sicht — wer nichts mehr sieht, ist raus.
+  const ELIM_DIST = 36, GRACE_MS = 1600;
   const GRAVITY = 34;
 
   // ---------- Strecke bauen ----------
