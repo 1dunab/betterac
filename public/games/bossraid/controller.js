@@ -5,14 +5,21 @@
 <style>
   #brClassPick { display:flex; flex-direction:column; gap:12px; width:100%; max-width:340px; }
   #brClassPick button { border:none; border-radius:16px; padding:16px; font-size:18px; font-weight:800; color:#fff; text-align:left; }
-  #brPad { flex:1; display:grid; gap:10px; padding:14px; min-height:0;
-           grid-template-columns:1fr 1fr 1fr; grid-template-rows:1fr 1fr 1fr 1.1fr; }
-  #brPad button { border:none; border-radius:18px; background:rgba(0,0,0,.30); color:#fff; font-size:32px; font-weight:800; }
-  #brPad button:active, #brPad button.on { background:rgba(255,255,255,.30); }
-  #br-up { grid-column:2; grid-row:1; } #br-left { grid-column:1; grid-row:2; }
-  #br-right { grid-column:3; grid-row:2; } #br-down { grid-column:2; grid-row:3; }
-  #br-skill { grid-column:1/span 3; grid-row:4; font-size:22px;
+  #brPad { flex:1; display:flex; flex-direction:column; gap:10px; padding:14px; min-height:0; }
+  /* Vollflächen-Pad, diagonal in 4 Quadranten geteilt — keine Lücken, Finger kann gleiten */
+  #brStick { flex:1; position:relative; border-radius:18px; overflow:hidden; min-height:0; touch-action:none;
+             background-color:rgba(0,0,0,.30);
+             background-image:
+               linear-gradient(to top right, transparent calc(50% - 1px), rgba(255,255,255,.16) 50%, transparent calc(50% + 1px)),
+               linear-gradient(to bottom right, transparent calc(50% - 1px), rgba(255,255,255,.16) 50%, transparent calc(50% + 1px)); }
+  #brStick .arrow { position:absolute; font-size:34px; font-weight:800; color:rgba(255,255,255,.55);
+                    transform:translate(-50%,-50%); pointer-events:none; transition:color .1s; }
+  #brStick .arrow.on { color:#fff; text-shadow:0 0 14px rgba(120,60,255,.9); }
+  #brDot { position:absolute; width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.65);
+           transform:translate(-50%,-50%); pointer-events:none; display:none; box-shadow:0 0 16px rgba(120,60,255,.9); }
+  #br-skill { border:none; border-radius:18px; color:#fff; font-size:22px; font-weight:800; padding:18px;
               background:linear-gradient(180deg, rgba(120,60,255,.55), rgba(0,0,0,.30)); }
+  #br-skill:active { filter:brightness(1.3); }
   #br-skill.cooldown { opacity:.35; }
   #brHearts { letter-spacing:3px; }
 </style>
@@ -30,10 +37,13 @@
 <div id="v-br-fight" class="view">
   <div class="bar"><span class="word" id="brCls">⚔️</span><span id="brHearts" class="timer">❤️❤️❤️</span></div>
   <div id="brPad">
-    <button id="br-up">↑</button>
-    <button id="br-left">←</button>
-    <button id="br-right">→</button>
-    <button id="br-down">↓</button>
+    <div id="brStick">
+      <span class="arrow" data-dir="up" style="left:50%; top:16%">↑</span>
+      <span class="arrow" data-dir="down" style="left:50%; top:84%">↓</span>
+      <span class="arrow" data-dir="left" style="left:12%; top:50%">←</span>
+      <span class="arrow" data-dir="right" style="left:88%; top:50%">→</span>
+      <div id="brDot"></div>
+    </div>
     <button id="br-skill">SKILL</button>
   </div>
   <div id="brStatus" class="muted" style="text-align:center; padding:0 16px 12px">Weiche aus — geschossen wird automatisch!</div>
@@ -51,18 +61,47 @@
     ac.message(AirConsole.SCREEN, { t: 'brClass', cls: myCls });
   }));
 
-  const move = { up: false, down: false, left: false, right: false };
-  function sendMove() {
-    ac.message(AirConsole.SCREEN, { t: 'brMove', x: (move.right ? 1 : 0) - (move.left ? 1 : 0), y: (move.down ? 1 : 0) - (move.up ? 1 : 0) });
+  // Analog-Stick: Richtung = Vektor vom Pad-Zentrum zum Finger (mit Deadzone)
+  const stick = $('brStick'), dot = $('brDot');
+  let lastSent = 0, lastX = 0, lastY = 0;
+  function sendMove(x, y, force) {
+    const now = performance.now();
+    if (!force && now - lastSent < 50 && Math.abs(x - lastX) < 0.08 && Math.abs(y - lastY) < 0.08) return;
+    lastSent = now; lastX = x; lastY = y;
+    ac.message(AirConsole.SCREEN, { t: 'brMove', x, y });
   }
-  function bindHold(id, key) {
-    const el = $(id);
-    const on = (e) => { e.preventDefault(); move[key] = true; el.classList.add('on'); sendMove(); };
-    const off = (e) => { e.preventDefault(); move[key] = false; el.classList.remove('on'); sendMove(); };
-    el.addEventListener('touchstart', on); el.addEventListener('touchend', off); el.addEventListener('touchcancel', off);
-    el.addEventListener('mousedown', on); el.addEventListener('mouseup', off); el.addEventListener('mouseleave', off);
+  function syncArrows(x, y) {
+    const active = (Math.abs(x) + Math.abs(y)) > 0.1
+      ? (Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up'))
+      : null;
+    document.querySelectorAll('#brStick .arrow').forEach(a => a.classList.toggle('on', a.getAttribute('data-dir') === active));
   }
-  bindHold('br-up', 'up'); bindHold('br-down', 'down'); bindHold('br-left', 'left'); bindHold('br-right', 'right');
+  function stickInput(clientX, clientY) {
+    const r = stick.getBoundingClientRect();
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    let dx = (clientX - cx) / (r.width / 2), dy = (clientY - cy) / (r.height / 2);
+    const len = Math.hypot(dx, dy);
+    if (len < 0.12) { dx = 0; dy = 0; }
+    else if (len > 1) { dx /= len; dy /= len; }
+    dot.style.display = 'block';
+    dot.style.left = (clientX - r.left) + 'px';
+    dot.style.top = (clientY - r.top) + 'px';
+    syncArrows(dx, dy);
+    sendMove(Math.round(dx * 100) / 100, Math.round(dy * 100) / 100);
+  }
+  function stickEnd(e) {
+    if (e) e.preventDefault();
+    dot.style.display = 'none';
+    syncArrows(0, 0);
+    sendMove(0, 0, true);
+  }
+  stick.addEventListener('touchstart', (e) => { e.preventDefault(); const t = e.touches[0]; stickInput(t.clientX, t.clientY); });
+  stick.addEventListener('touchmove', (e) => { e.preventDefault(); const t = e.touches[0]; stickInput(t.clientX, t.clientY); });
+  stick.addEventListener('touchend', stickEnd); stick.addEventListener('touchcancel', stickEnd);
+  let mouseHeld = false;
+  stick.addEventListener('mousedown', (e) => { e.preventDefault(); mouseHeld = true; stickInput(e.clientX, e.clientY); });
+  window.addEventListener('mousemove', (e) => { if (mouseHeld) stickInput(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { if (mouseHeld) { mouseHeld = false; stickEnd(); } });
 
   const skillBtn = $('br-skill');
   const fireSkill = (e) => { e.preventDefault(); if (skillReady) ac.message(AirConsole.SCREEN, { t: 'brSkill' }); };
@@ -77,7 +116,7 @@
   const BRc = {
     activate() {
       myCls = null; skillReady = true;
-      Object.keys(move).forEach(k => move[k] = false);
+      stickEnd();
       $('brPickInfo').textContent = 'Der Kampf startet, wenn alle gewählt haben.';
       $('brAgainBtn').style.display = 'none';
       showView('br-pick');
