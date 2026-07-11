@@ -65,6 +65,7 @@
         if (d.t === 'artilleryTurn' && d.active) {
           lastShot = fake;
           const weapon = q.get('weapon') || ['rocket', 'mortar', 'needle'][Math.floor(Math.random() * 3)];
+          if (dbg.tanks[to] && dbg.tanks[to].ammo[weapon] !== undefined || q.get('weapon')) dbg.tanks[to].ammo[weapon] = 9;
           game.onMessage(to, { t: 'artilleryFire', angle: 25 + Math.random() * 130, power: 45 + Math.random() * 50, weapon });
           break;
         }
@@ -72,9 +73,16 @@
       }
     }
 
+    function dbgLine() {
+      if (!q.get('dbg')) return;
+      const dbg = game._debug();
+      ctx.fillStyle = '#0ff'; ctx.font = 'bold 14px monospace'; ctx.textAlign = 'left';
+      ctx.fillText('DBG crates:' + dbg.crates.length + ' ' + dbg.crates.map(c => Math.round(c.x) + '/' + Math.round(c.y) + (c.landed ? 'L' : 'F')).join(' '), 10, 592);
+    }
     if (simMs > 0) {
       for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
-      (function loop() { fake += 16.7; bots(); game.render(); requestAnimationFrame(loop); })();
+      dbgLine();
+      (function loop() { fake += 16.7; bots(); game.render(); dbgLine(); requestAnimationFrame(loop); })();
     } else {
       for (let i = 0; i < 5; i++) game.render();
       (function loop() { bots(); game.render(); requestAnimationFrame(loop); })();

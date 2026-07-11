@@ -9,8 +9,17 @@ registerGame({ key: 'artillery', screen: function () {
   const WEAPONS = {
     rocket: { label: 'Rakete', speed: 4.15, radius: 44, damageRadius: 82, damage: 62, color: '#ffe9c4' },
     mortar: { label: 'Mörser', speed: 3.45, radius: 62, damageRadius: 112, damage: 76, color: '#ffd60a' },
-    needle: { label: 'Nadel', speed: 5.15, radius: 24, damageRadius: 46, damage: 92, color: '#64d2ff' }
+    needle: { label: 'Nadel', speed: 5.15, radius: 24, damageRadius: 46, damage: 92, color: '#64d2ff' },
+    // Spezialwaffen — nur mit Munition aus Versorgungskisten
+    cluster: { label: '💣 Cluster', speed: 4.0, radius: 24, damageRadius: 46, damage: 24, color: '#9ef01a', special: 'cluster' },
+    roller: { label: '🛢️ Roller', speed: 4.3, radius: 42, damageRadius: 80, damage: 58, color: '#ffb347', special: 'roller' },
+    napalm: { label: '🔥 Napalm', speed: 3.9, radius: 20, damageRadius: 34, damage: 16, color: '#ff6b3d', special: 'napalm' },
+    airstrike: { label: '✈️ Luftschlag', speed: 4.2, radius: 16, damageRadius: 22, damage: 8, color: '#ff5d5d', special: 'airstrike' },
+    // interne Kind-Projektile
+    bomblet: { label: 'Bomblet', speed: 0, radius: 22, damageRadius: 44, damage: 26, color: '#9ef01a', special: 'child' },
+    strikebomb: { label: 'Bombe', speed: 0, radius: 34, damageRadius: 66, damage: 42, color: '#ff5d5d', special: 'child' }
   };
+  const CRATE_KINDS = ['cluster', 'roller', 'napalm', 'airstrike', 'repair'];
   const TANK_TYPES = [
     { label: 'Scout', hp: 85, move: 90, body: 32 },
     { label: 'Kampfpanzer', hp: 110, move: 65, body: 38 },
@@ -45,7 +54,7 @@ registerGame({ key: 'artillery', screen: function () {
   let clouds = [], stars = [], decos = [];
 
   let order = [], tanks = {}, terrain = [], turn = 0, wind = 0, phase = 'aim', deadline = 0, winner = null;
-  let lastT = performance.now(), endAt = 0, currentId = null, shotTimer = null;
+  let lastT = performance.now(), endAt = 0, currentId = null, nextTurnAt = 0;
   let projectiles = [], parts = [], flashes = [], wrecks = [], crates = [], flames = [];
   let announce = null, shake = { mag: 0, until: 0 }, lastDraw = performance.now();
 
@@ -181,6 +190,17 @@ registerGame({ key: 'artillery', screen: function () {
     return out;
   }
 
+  function turnMsg(pid, id, remainMs) {
+    const t = tanks[id];
+    return {
+      t: 'artilleryTurn', active: pid === id, name: nameOf(id),
+      angle: t.angle, power: t.power, weapon: t.weapon,
+      weapons: weaponList(t),
+      moveLeft: Math.round(t.moveLeft), tankType: t.type.label,
+      wind: Math.round(wind), hp: t.hp, maxHp: t.maxHp, ms: remainMs
+    };
+  }
+
   function sendTurn() {
     const id = activeId();
     if (!id) return;
@@ -190,18 +210,12 @@ registerGame({ key: 'artillery', screen: function () {
     deadline = performance.now() + TURN_MS;
     order.forEach(pid => {
       if (!players[pid]) return;
-      ac.message(pid, {
-        t: 'artilleryTurn', active: pid === id, name: nameOf(id),
-        angle: t.angle, power: t.power, weapon: t.weapon,
-        weapons: weaponList(t),
-        moveLeft: Math.round(t.moveLeft), tankType: t.type.label,
-        wind: Math.round(wind), hp: t.hp, maxHp: t.maxHp, ms: TURN_MS
-      });
+      ac.message(pid, turnMsg(pid, id, TURN_MS));
     });
   }
 
   function nextTurn() {
-    if (shotTimer) { clearTimeout(shotTimer); shotTimer = null; }
+    nextTurnAt = 0;
     projectiles = []; phase = 'aim';
     const live = aliveIds();
     if (live.length <= 1) {
@@ -217,16 +231,77 @@ registerGame({ key: 'artillery', screen: function () {
     maybeDropCrate();
     sendTurn();
   }
-  function scheduleNextTurn() {
-    if (shotTimer) clearTimeout(shotTimer);
-    shotTimer = setTimeout(() => { if (!projectiles.length) nextTurn(); }, 700);
-  }
 
-  // ---------- Kisten (Welle 2) ----------
-  function maybeDropCrate() {}
-  function hitCrates(x, y, r) {}
-  function updateCrates(dt, now) {}
-  function drawCrates(now) {}
+  // ---------- Versorgungskisten ----------
+  let turnCounter = 0;
+  function maybeDropCrate() {
+    turnCounter++;
+    if (turnCounter % 2 !== 0 || crates.length >= 2) return;
+    for (let tries = 0; tries < 14; tries++) {
+      const x = 60 + Math.random() * (W - 120);
+      if (order.some(id => tanks[id] && tanks[id].alive && Math.abs(tanks[id].x - x) < 80)) continue;
+      crates.push({ x, y: -30, landed: false, sway: Math.random() * 9,
+        content: CRATE_KINDS[Math.floor(Math.random() * CRATE_KINDS.length)] });
+      say('📦 Versorgung im Anflug!', '#ffd60a', 1600);
+      return;
+    }
+  }
+  function updateCrates(dt, now) {
+    crates.forEach(c => {
+      if (c.landed) return;
+      c.y += 78 * dt;
+      c.x += Math.sin(now / 500 + c.sway) * 8 * dt;
+      if (c.y >= terrainY(c.x) - 9) { c.y = terrainY(c.x) - 9; c.landed = true; smokePuff(c.x, c.y + 6, 2, theme.night); }
+    });
+  }
+  function hitCrates(x, y, r) {
+    for (let i = crates.length - 1; i >= 0; i--) {
+      const c = crates[i];
+      if (Math.hypot(c.x - x, c.y - y) < r + 14) {
+        debrisBurst(c.x, c.y, 8, '#a8763e');
+        say('📦 Kiste zerstört! 💥', '#ff9f0a', 1400);
+        crates.splice(i, 1);
+      }
+    }
+  }
+  function pickupCrates(id, t) {
+    for (let i = crates.length - 1; i >= 0; i--) {
+      const c = crates[i];
+      if (!c.landed || Math.abs(c.x - t.x) > 26) continue;
+      if (c.content === 'repair') {
+        t.hp = Math.min(t.maxHp, t.hp + 30);
+        say('🔧 ' + nameOf(id) + ' repariert +30 HP!', '#30d158');
+      } else {
+        t.ammo[c.content] = (t.ammo[c.content] || 0) + 1;
+        say('📦 ' + nameOf(id) + ': ' + WEAPONS[c.content].label + ' ×' + t.ammo[c.content] + '!', '#ffd60a');
+      }
+      firePuff(c.x, c.y, 6, 70);
+      crates.splice(i, 1);
+      // aktualisierte Waffenliste/HP an den Sammler, Restzeit beibehalten
+      if (players[id]) ac.message(id, turnMsg(id, currentId, Math.max(1000, deadline - performance.now())));
+    }
+  }
+  function drawCrates(now) {
+    crates.forEach(c => {
+      ctx.save(); ctx.translate(c.x, c.y);
+      if (!c.landed) {
+        // Fallschirm
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath(); ctx.arc(0, -26, 17, Math.PI, 0); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1.4;
+        [[-15, -24], [0, -28], [15, -24]].forEach(([lx, ly]) => {
+          ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(0, -6); ctx.stroke();
+        });
+      }
+      ctx.fillStyle = '#a8763e'; ctx.strokeStyle = '#6e4a24'; ctx.lineWidth = 2;
+      rr(ctx, -11, -9, 22, 18, 3); ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = '#e8c88a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(0, 9); ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('?', 0, 1);
+      ctx.restore();
+    });
+  }
 
   // ---------- Schießen / Bewegen ----------
   function launch(owner, x, y, vx, vy, weaponKey) {
@@ -267,7 +342,6 @@ registerGame({ key: 'artillery', screen: function () {
     spawnP({ x: t.x, y: t.y + 8, vx: (oldX - t.x) * 3, vy: -14, g: 60, drag: 0.97, life: 380, color: theme.terrDeep, size: 2.6 });
     ac.message(id, { t: 'artilleryMove', moveLeft: Math.round(t.moveLeft) });
   }
-  function pickupCrates(id, t) {}
 
   // ---------- Simulation ----------
   function update() {
@@ -278,10 +352,39 @@ registerGame({ key: 'artillery', screen: function () {
 
     for (let pi = projectiles.length - 1; pi >= 0; pi--) {
       const p = projectiles[pi];
+      const w = WEAPONS[p.weapon] || WEAPONS.rocket;
+
+      if (p.rolling) {
+        // Roller: folgt dem Gefälle, zündet bei Stillstand, Timeout oder Panzer-Kontakt
+        p.vx += slopeAt(p.x) * 42 * dt;
+        p.vx *= 0.995;
+        p.x += p.vx * dt;
+        p.y = terrainY(p.x) - 5;
+        p.roll = (p.roll || 0) + p.vx * dt * 0.14;
+        let boomNow = now - p.rollStart > 2600 || (now - p.rollStart > 700 && Math.abs(p.vx) < 7);
+        for (const id of aliveIds()) {
+          const t = tanks[id];
+          if (id !== p.owner && Math.hypot(p.x - t.x, p.y - t.y) < 20) { boomNow = true; break; }
+        }
+        if (p.x < 4 || p.x > W - 4) boomNow = true;
+        if (boomNow) { explode(p.x, p.y, p.weapon); projectiles.splice(pi, 1); }
+        continue;
+      }
+
       p.vx += wind * dt;
       p.vy += GRAV * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
+      // Cluster teilt sich am Scheitelpunkt
+      if (w.special === 'cluster' && !p.split && p.vy > 0) {
+        p.split = true;
+        firePuff(p.x, p.y, 6, 80);
+        for (let i = 0; i < 5; i++) {
+          launch(p.owner, p.x, p.y, p.vx * 0.55 + (i - 2) * 42, p.vy * 0.4, 'bomblet');
+        }
+        projectiles.splice(pi, 1);
+        continue;
+      }
       // Rauch-Trail
       if (now > p.smokeAt) {
         p.smokeAt = now + 34;
@@ -295,13 +398,62 @@ registerGame({ key: 'artillery', screen: function () {
       }
       if (!boom && p.y >= terrainY(p.x)) boom = true;
       if (boom) {
-        explode(p.x, Math.min(p.y, terrainY(p.x)), p.weapon);
+        const bx = p.x, by = Math.min(p.y, terrainY(p.x));
+        if (w.special === 'roller') {
+          p.rolling = true; p.rollStart = now; p.y = terrainY(p.x) - 5;
+          smokePuff(bx, by, 3, theme.night);
+          continue;
+        }
+        explode(bx, by, p.weapon);
+        if (w.special === 'napalm') {
+          for (let i = 0; i < 9; i++) {
+            flames.push({ x: bx + (Math.random() - 0.5) * 30, vx: p.vx * 0.2 + (Math.random() - 0.5) * 70, born: now, life: 2900 + Math.random() * 900 });
+          }
+        } else if (w.special === 'airstrike') {
+          say('✈️ LUFTSCHLAG!', '#ff5d5d', 1400);
+          for (let i = 0; i < 3; i++) {
+            launch(p.owner, clamp(bx + (i - 1) * 74, 20, W - 20), -24 - i * 52, wind * 0.25, 130, 'strikebomb');
+          }
+        }
         projectiles.splice(pi, 1);
         continue;
       }
       if (p.x < -30 || p.x > W + 30 || p.y > H + 40) projectiles.splice(pi, 1);
     }
-    if (phase === 'shot' && !projectiles.length && !shotTimer) scheduleNextTurn();
+
+    // Napalm-Flammen: fließen hangabwärts, brennen, verletzen
+    flames = flames.filter(fl => {
+      const age = now - fl.born;
+      if (age > fl.life) return false;
+      fl.vx += slopeAt(fl.x) * 26 * dt;
+      fl.vx *= 0.96;
+      fl.x = clamp(fl.x + fl.vx * dt, 2, W - 2);
+      if (Math.random() < 0.3) {
+        spawnP({ x: fl.x + (Math.random() - 0.5) * 8, y: terrainY(fl.x) - 4, vx: (Math.random() - 0.5) * 16, vy: -34 - Math.random() * 30,
+          g: -30, drag: 0.96, life: 300 + Math.random() * 240, color: Math.random() < 0.5 ? '#ff9f43' : '#ffd27a', size: 2.5 + Math.random() * 3, add: true });
+      }
+      if (Math.random() < 0.05) smokePuff(fl.x, terrainY(fl.x) - 8, 1, true);
+      order.forEach(id => {
+        const t = tanks[id];
+        if (!t || !t.alive || now < (t.burnAt || 0)) return;
+        if (Math.hypot(t.x - fl.x, t.y - (terrainY(fl.x) - 4)) < 24) {
+          t.burnAt = now + 380;
+          damageTank(id, t, 5);
+        }
+      });
+      return true;
+    });
+
+    // Feuer kann auch in der Ziel-Phase töten — Zug/Spielende dann sauber weiterreichen
+    if (phase === 'aim' && (aliveIds().length <= 1 || (currentId !== null && tanks[currentId] && !tanks[currentId].alive))) nextTurn();
+
+    // Zugwechsel zeitbasiert (kein setTimeout — spielt mit Sim-Uhren und stop() sauber zusammen)
+    if (phase === 'shot' && !projectiles.length) {
+      if (!nextTurnAt) nextTurnAt = now + 700;
+      else if (now >= nextTurnAt) nextTurn();
+    } else {
+      nextTurnAt = 0;
+    }
   }
 
   // ---------- Zeichnen ----------
@@ -482,6 +634,7 @@ registerGame({ key: 'artillery', screen: function () {
     start(ids, cfg) {
       order = ids.slice(); turn = 0; phase = 'aim'; winner = null; lastT = performance.now();
       projectiles = []; parts = []; flashes = []; wrecks = []; crates = []; flames = []; announce = null;
+      turnCounter = 0;
       let key = (cfg && cfg.theme) || 'random';
       if (key === 'random' || !THEMES[key]) {
         const keys = Object.keys(THEMES);
@@ -492,7 +645,7 @@ registerGame({ key: 'artillery', screen: function () {
       wind = Math.random() * 80 - 40;
       sendTurn();
     },
-    stop() { projectiles = []; if (shotTimer) { clearTimeout(shotTimer); shotTimer = null; } },
+    stop() { projectiles = []; flames = []; nextTurnAt = 0; },
     onDisconnect(id) {
       if (tanks[id]) tanks[id].alive = false;
       if (aliveIds().length < 2) endToLobby('Zu wenige Spieler fuer Artillery Hills.');
@@ -521,8 +674,28 @@ registerGame({ key: 'artillery', screen: function () {
       drawCrates(now);
       wrecks.forEach(drawWreck);
       order.forEach(id => { const t = tanks[id]; if (t && t.alive) drawTank(id, t, now); });
+      // Napalm-Bodenfeuer (Glow am Terrain)
+      flames.forEach(fl => {
+        const fy = terrainY(fl.x) - 3;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.5 + Math.random() * 0.3;
+        ctx.fillStyle = '#ff7a30';
+        ctx.beginPath(); ctx.arc(fl.x, fy, 7 + Math.random() * 3, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = 'source-over';
+      });
       // Projektile mit Glow
       projectiles.forEach(p => {
+        if (p.rolling) {
+          // rollendes Fass
+          ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.roll || 0);
+          ctx.fillStyle = '#ffb347'; ctx.strokeStyle = '#7a4a12'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          ctx.strokeStyle = '#7a4a12'; ctx.lineWidth = 1.6;
+          ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(7, 0); ctx.stroke();
+          ctx.restore();
+          return;
+        }
         ctx.globalCompositeOperation = 'lighter';
         ctx.globalAlpha = 0.55;
         ctx.fillStyle = p.color;
