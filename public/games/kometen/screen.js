@@ -94,7 +94,10 @@ registerGame({ key: 'kometen', screen: function () {
   // ---------- Ball ----------
   const rallySpeed = () => Math.min(560, 195 + rally * 15);
   function spawnBall(x, y, ang, speed) {
-    balls.push({ x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, hot: false });
+    balls.push({
+      x, y, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed,
+      smashed: false, flashUntil: 0, nextFlash: performance.now() + 1400 + Math.random() * 700
+    });
   }
   function serve(now) {
     phase = 'serve';
@@ -161,12 +164,26 @@ registerGame({ key: 'kometen', screen: function () {
     if (Math.abs(dx) < 0.35) { dx = 0.35 * toEnemy; const s = Math.sign(dy) || 1; dy = s * Math.sqrt(1 - dx * dx); }
     rally++;
     const power = clamp(+d.power || 1, 0.3, 3);
-    const speed = rallySpeed() * (0.88 + 0.16 * Math.min(1.6, power));
+    // Smash: Wisch im weißen Aufblitzen = 1.8x Tempo
+    const smash = now < best.flashUntil;
+    let speed = rallySpeed() * (0.88 + 0.16 * Math.min(1.6, power));
+    if (smash) speed = Math.min(720, speed * 1.8);
     best.vx = dx * speed; best.vy = dy * speed;
-    best.hot = false;
-    waves.push({ x: best.x, y: best.y, born: now, life: 380, r1: 60, color: players[id] ? players[id].color : '#fff' });
-    spark(best.x, best.y, TEAM_COL[t], 8, 180, 2.5, 400);
-    setShake(3, 140);
+    best.smashed = smash;
+    waves.push({ x: best.x, y: best.y, born: now, life: smash ? 520 : 380, r1: smash ? 110 : 60, color: smash ? '#ffffff' : (players[id] ? players[id].color : '#fff') });
+    spark(best.x, best.y, smash ? '#ffffff' : TEAM_COL[t], smash ? 18 : 8, smash ? 280 : 180, 2.5, 400);
+    setShake(smash ? 9 : 3, smash ? 350 : 140);
+    if (smash) {
+      say('💥 SMASH von ' + nameOf(id) + '!', '#fff', 1100, 34);
+      ac.message(id, { t: 'kkFx', smash: true });
+    }
+    // Eskalation: bei Rally-Schwellen kommt ein weiterer Komet
+    if ((rally === 8 && balls.length < 2) || (rally === 14 && balls.length < 3)) {
+      const ang2 = (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.6;
+      spawnBall(W / 2, H * (0.25 + Math.random() * 0.5), ang2, rallySpeed() * 0.75);
+      say(balls.length === 2 ? '☄️☄️ ZWEITER KOMET!' : '☄️☄️☄️ DRITTER KOMET!', '#ff9f43', 2000, 42);
+      setShake(7, 400);
+    }
   }
 
   // ---------- Simulation ----------
@@ -184,9 +201,15 @@ registerGame({ key: 'kometen', screen: function () {
       b.y += b.vy * dt;
       if (b.y < R) { b.y = R; b.vy = Math.abs(b.vy); }
       if (b.y > H - R) { b.y = H - R; b.vy = -Math.abs(b.vy); }
-      // Trail
+      // Smash-Fenster taktet
+      if (now >= b.nextFlash) {
+        b.flashUntil = now + 220;
+        b.nextFlash = now + 1300 + Math.random() * 700;
+      }
+      // Trail (Smash: weißglühend)
       if (parts.length < 380) {
-        parts.push({ x: b.x - b.vx * 0.02, y: b.y - b.vy * 0.02, vx: -b.vx * 0.06 + (Math.random() - 0.5) * 24, vy: -b.vy * 0.06 + (Math.random() - 0.5) * 24, g: 0, color: Math.random() < 0.6 ? '#ff9f43' : '#ffd27a', size: 2.6, born: now, life: 300 });
+        const col = b.smashed ? '#ffffff' : (Math.random() < 0.6 ? '#ff9f43' : '#ffd27a');
+        parts.push({ x: b.x - b.vx * 0.02, y: b.y - b.vy * 0.02, vx: -b.vx * 0.06 + (Math.random() - 0.5) * 24, vy: -b.vy * 0.06 + (Math.random() - 0.5) * 24, g: 0, color: col, size: b.smashed ? 3.2 : 2.6, born: now, life: b.smashed ? 380 : 300 });
       }
       if (b.x < -R) { balls.splice(i, 1); pointFor(1, now); return; }
       if (b.x > W + R) { balls.splice(i, 1); pointFor(0, now); return; }
@@ -246,12 +269,27 @@ registerGame({ key: 'kometen', screen: function () {
 
   function drawBalls(now) {
     balls.forEach(b => {
+      const flashing = now < b.flashUntil;
       ctx.globalCompositeOperation = 'lighter';
-      drawGlow(b.x, b.y, R * 2.1, '#ff7a30', 0.8);
+      if (b.smashed) {
+        // Speed-Lines hinter dem Smash-Ball
+        const sp = Math.hypot(b.vx, b.vy) || 1;
+        const nx = b.vx / sp, ny = b.vy / sp;
+        ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+        for (let k = 1; k <= 3; k++) {
+          const off = (k - 2) * 8;
+          ctx.beginPath();
+          ctx.moveTo(b.x - nx * 14 + ny * off, b.y - ny * 14 - nx * off);
+          ctx.lineTo(b.x - nx * (34 + k * 10) + ny * off, b.y - ny * (34 + k * 10) - nx * off);
+          ctx.stroke();
+        }
+        drawGlow(b.x, b.y, R * 2.6, '#ffffff', 0.9);
+      }
+      drawGlow(b.x, b.y, R * 2.1, flashing ? '#ffffff' : '#ff7a30', flashing ? 1 : 0.8);
       drawGlow(b.x, b.y, R * 1.1, '#ffd27a', 0.95);
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = '#fff7e8';
-      ctx.beginPath(); ctx.arc(b.x, b.y, R * 0.55, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = flashing ? '#ffffff' : '#fff7e8';
+      ctx.beginPath(); ctx.arc(b.x, b.y, R * (flashing ? 0.75 : 0.55), 0, Math.PI * 2); ctx.fill();
     });
   }
 
