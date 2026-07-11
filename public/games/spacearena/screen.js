@@ -7,7 +7,7 @@ registerGame({ key: 'spacearena', screen: function () {
   const W = cv.width, H = cv.height, CX = W / 2, CY = H / 2;
   const TURN = 3.4, THRUST = 300, TURBO_THRUST = 470, VMAX = 340, TURBO_VMAX = 450;
   const SHIP_R = 12, FIRE_MS = 230, BULLET_SPEED = 470, BULLET_TTL = 1100;
-  const SUDDEN_AT = 50000, HOLE_R = 22, HOLE_R_MAX = 92, G_FORCE = 5.0e6;
+  const SUDDEN_AT = 50000, HOLE_R = 22, HOLE_R_MAX = 92, G_FORCE = 4.0e6;
 
   let ships = {}, order = [], points = {}, targetPoints = 3;
   let bullets = [], asteroids = [], powerups = [], stars = [], shoots = [];
