@@ -154,7 +154,21 @@ registerGame({ key: 'sintflut', screen: function () {
             else if (get(x - d, y + 1) === M.EMPTY) trySwap(i, idx(x - d, y + 1));
           }
         } else if (c === M.WATER || c === M.LAVA) {
-          if (c === M.LAVA && (frame % 3)) continue;    // Lava fließt zäh
+          if (c === M.LAVA) {
+            // Lava + Wasser = Obsidian (der Goldrausch-Moment)
+            let reacted = false;
+            for (const [nx, ny] of [[x, y - 1], [x, y + 1], [x - 1, y], [x + 1, y]]) {
+              if (get(nx, ny) === M.WATER) {
+                grid[i] = M.OBSIDIAN;
+                grid[idx(nx, ny)] = M.EMPTY;
+                if (Math.random() < 0.35) splash(x * CELL, y * CELL, '#cfd8e8', 2, 60); // Dampf
+                reacted = true;
+                break;
+              }
+            }
+            if (reacted) continue;
+            if (frame % 3) continue;                    // Lava fließt zäh
+          }
           const below = idx(x, y + 1);
           if (grid[below] === M.EMPTY) { trySwap(i, below); continue; }
           const d = Math.random() < 0.5 ? 1 : -1;
@@ -162,6 +176,10 @@ registerGame({ key: 'sintflut', screen: function () {
           if (get(x - d, y + 1) === M.EMPTY) { trySwap(i, idx(x - d, y + 1)); continue; }
           if (get(x + d, y) === M.EMPTY) { trySwap(i, idx(x + d, y)); continue; }
           if (get(x - d, y) === M.EMPTY) { trySwap(i, idx(x - d, y)); continue; }
+        } else if (c === M.ICE) {
+          // Eis taut langsam — neben Lava sofort
+          if (Math.random() < 0.0006) grid[i] = M.WATER;
+          else if (get(x, y - 1) === M.LAVA || get(x, y + 1) === M.LAVA || get(x - 1, y) === M.LAVA || get(x + 1, y) === M.LAVA) grid[i] = M.WATER;
         }
       }
     }
@@ -267,10 +285,113 @@ registerGame({ key: 'sintflut', screen: function () {
     p.tank = Math.min(100, p.tank + dt * (ghost[id] ? 2.5 : 6));
   }
 
-  // ---------- Elemente (TNT / Eis / Lava / Events — Welle 2) ----------
-  function updateTnts(now) {}
-  function updateEvents(now) {}
-  function drawTnts(now) {}
+  // ---------- TNT ----------
+  function explodeTnt(t, now) {
+    const R = 11;
+    for (let x = t.gx - R; x <= t.gx + R; x++) {
+      for (let y = t.gy - R; y <= t.gy + R; y++) {
+        if (!inb(x, y)) continue;
+        if ((x - t.gx) * (x - t.gx) + (y - t.gy) * (y - t.gy) > R * R) continue;
+        const c = grid[idx(x, y)];
+        if (c !== M.ROCK && c !== M.OBSIDIAN) grid[idx(x, y)] = M.EMPTY;
+      }
+    }
+    setShake(14, 500);
+    splash(t.gx * CELL, t.gy * CELL, '#ffd27a', 16, 220);
+    splash(t.gx * CELL, t.gy * CELL, '#ff7a30', 12, 180);
+    splash(t.gx * CELL, t.gy * CELL, '#7a5a66', 14, 260);
+  }
+  function updateTnts(now) {
+    for (let i = tnts.length - 1; i >= 0; i--) {
+      const t = tnts[i];
+      // TNT fällt, bis es aufliegt
+      if (get(t.gx, t.gy + 1) === M.EMPTY && (frame & 1)) t.gy++;
+      if (now >= t.at) { explodeTnt(t, now); tnts.splice(i, 1); }
+    }
+  }
+  function drawTnts(now) {
+    tnts.forEach(t => {
+      const blink = Math.sin((t.at - now) / 60) > 0;
+      const px = t.gx * CELL, py = t.gy * CELL;
+      ctx.fillStyle = blink ? '#ff5040' : '#8a1f16';
+      rr(ctx, px - 4, py - 5, 8, 10, 2); ctx.fill();
+      ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(px, py - 5); ctx.lineTo(px + 3, py - 9); ctx.stroke();
+      if (blink) {
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(glowSprite('#ff9f43'), px - 12, py - 16, 24, 24);
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    });
+  }
+
+  // ---------- Lava-Ausbruch + Events ----------
+  let event = null, rainUntil = 0, lavaVents = [];
+  function updateHazards(now) {
+    // Lava ab 55% der Rundenzeit
+    if (!lavaOn && now - startAt > durationMs * 0.55) {
+      lavaOn = true;
+      // 2 Vents aus 4 Kandidaten (Flanken + Bergschultern) — jede Partie woanders
+      const spots = shuffle([
+        { x: 6, y: Math.max(6, surfaceAt(8) - 46) },
+        { x: GW - 7, y: Math.max(6, surfaceAt(GW - 9) - 46) },
+        { x: (GW >> 1) - 40, y: Math.round(GH * 0.30) },
+        { x: (GW >> 1) + 40, y: Math.round(GH * 0.30) }
+      ]);
+      lavaVents = spots.slice(0, 2);
+      say('🌋 LAVA BRICHT AUS!', '#ff7a30', 3200);
+      setShake(10, 900);
+    }
+    if (lavaOn && (frame % 4) === 0) {
+      lavaVents.forEach(v => {
+        const i = idx(v.x + ((Math.random() * 3 - 1.5) | 0), v.y);
+        if (grid[i] === M.EMPTY) grid[i] = M.LAVA;
+      });
+    }
+    // Platzregen
+    if (now < rainUntil) {
+      for (let k = 0; k < 4; k++) {
+        const i = idx(2 + ((Math.random() * (GW - 4)) | 0), 1 + ((Math.random() * 3) | 0));
+        if (grid[i] === M.EMPTY) grid[i] = M.WATER;
+      }
+    }
+  }
+  function updateEvents(now) {
+    updateHazards(now);
+    if (now - startAt < 30000) return;                 // Schonfrist am Anfang
+    if (!event && now - lastEvent > 34000 + Math.random() * 14000) {
+      const kinds = ['dammbruch', 'regen', 'beben'];
+      event = { kind: kinds[(Math.random() * kinds.length) | 0], at: now + 2400 };
+      const label = { dammbruch: '⚠️ DAMMBRUCH!', regen: '🌧️ PLATZREGEN!', beben: '⚠️ ERDBEBEN!' };
+      const color = { dammbruch: '#4cd7ff', regen: '#8ab8ff', beben: '#ff9f43' };
+      eventBanner = { text: label[event.kind], color: color[event.kind], until: event.at };
+    }
+    if (event && now >= event.at) {
+      const k = event.kind;
+      event = null;
+      lastEvent = now;
+      if (k === 'dammbruch') {
+        // Schwall: dicker Wasserblock über dem Becken
+        for (let n = 0; n < 550; n++) {
+          const i = idx(spring.x + ((Math.random() * 26 - 13) | 0), 2 + ((Math.random() * 8) | 0));
+          if (grid[i] === M.EMPTY) grid[i] = M.WATER;
+        }
+        waterTarget += 350;
+        setShake(8, 600);
+      } else if (k === 'regen') {
+        rainUntil = now + 6500;
+      } else {
+        // Erdbeben: Oberfläche bröckelt zu rutschendem Sand
+        setShake(17, 1400);
+        for (let n = 0; n < 900; n++) {
+          const x = 3 + ((Math.random() * (GW - 6)) | 0);
+          const y = 2 + ((Math.random() * (GH - 8)) | 0);
+          const i = idx(x, y);
+          if (grid[i] === M.DIRT && get(x, y - 1) === M.EMPTY) grid[i] = M.SAND;
+        }
+      }
+    }
+  }
 
   // ---------- Rendering ----------
   const simC = document.createElement('canvas'); simC.width = GW; simC.height = GH;
@@ -448,6 +569,7 @@ registerGame({ key: 'sintflut', screen: function () {
       durationMs = ((cfg && cfg.dauer) || 5) * 60000;
       phase = 'run'; winner = null; ranking = []; ghost = {};
       parts = []; tnts = []; lavaOn = false; eventBanner = null; announce = null;
+      event = null; rainUntil = 0; lavaVents = [];
       frame = 0; lastCount = 0; countAt = 0;
       makeTerrain();
       placeHouses();
@@ -523,7 +645,27 @@ registerGame({ key: 'sintflut', screen: function () {
     _debug() { return { grid, houses, cursors, phase, ranking, lastCount, GW, GH, CELL, M }; }
   };
 
-  // Platzhalter (Welle 2)
-  function placeTnt(id, p) {}
-  function castIce(id, p) {}
+  function placeTnt(id, p) {
+    if (p.tnt <= 0 || ghost[id]) return;
+    p.tnt--;
+    tnts.push({ gx: Math.round(p.x / CELL), gy: Math.round(p.y / CELL), at: performance.now() + 1000 });
+    ac.message(id, { t: 'flYou', tnt: p.tnt });
+  }
+  function castIce(id, p) {
+    if (p.ice <= 0 || ghost[id]) return;
+    p.ice--;
+    const gx = Math.round(p.x / CELL), gy = Math.round(p.y / CELL), R = 15;
+    let frozen = 0;
+    for (let x = gx - R; x <= gx + R; x++) {
+      for (let y = gy - R; y <= gy + R; y++) {
+        if (!inb(x, y)) continue;
+        if ((x - gx) * (x - gx) + (y - gy) * (y - gy) > R * R) continue;
+        if (grid[idx(x, y)] === M.WATER) { grid[idx(x, y)] = M.ICE; frozen++; }
+      }
+    }
+    splash(p.x, p.y, '#aae1ff', 18, 190);
+    setShake(5, 300);
+    if (frozen > 30) say('❄️ ' + nameOf(id) + ' friert die Flut ein!', '#aae1ff');
+    ac.message(id, { t: 'flYou', ice: p.ice });
+  }
 }});
