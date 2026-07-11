@@ -115,7 +115,11 @@
         if (d.tank !== undefined) $('flTankFill').style.width = Math.round(d.tank) + '%';
         if (d.tnt !== undefined) { $('fl-tnt').textContent = '🧨 TNT ×' + d.tnt; $('fl-tnt').disabled = d.tnt <= 0; }
         if (d.ice !== undefined) { $('fl-ice').textContent = '❄️ EIS ×' + d.ice; $('fl-ice').disabled = d.ice <= 0; }
-        if (d.ghost) { $('flFill').textContent = '👻'; $('flStatus').textContent = '👻 Abgesoffen — grab und troll weiter!'; }
+        if (d.ghost) {
+          $('flFill').textContent = '👻';
+          $('flStatus').textContent = '👻 Abgesoffen — grab und troll weiter!';
+          try { navigator.vibrate && navigator.vibrate([120, 60, 240]); } catch (e) {}
+        }
         else if (d.msg) $('flStatus').textContent = d.msg;
       } else if (d.t === 'flState') {
         $('flAgainBtn').style.display = 'none';

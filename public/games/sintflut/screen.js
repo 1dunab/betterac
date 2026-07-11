@@ -471,6 +471,35 @@ registerGame({ key: 'sintflut', screen: function () {
     ctx.fillText((ghost[id] ? '👻 ' : '') + shortName(id), p.x, p.y - 17);
   }
 
+  // Ambient: zufällige Zellen abtasten — Lava sprüht Funken, fallendes Wasser gischtet
+  function ambientParts() {
+    for (let k = 0; k < 22; k++) {
+      const x = 2 + ((Math.random() * (GW - 4)) | 0);
+      const y = 2 + ((Math.random() * (GH - 4)) | 0);
+      const c = grid[idx(x, y)];
+      if (c === M.LAVA && get(x, y - 1) === M.EMPTY && Math.random() < 0.16) {
+        spawnP(x * CELL, y * CELL, (Math.random() - 0.5) * 26, -46 - Math.random() * 46,
+          Math.random() < 0.5 ? '#ffb03a' : '#ff7a30', 420, 1.8);
+      } else if (c === M.WATER && get(x, y + 1) === M.EMPTY && Math.random() < 0.1) {
+        spawnP(x * CELL, y * CELL, (Math.random() - 0.5) * 34, -14,
+          '#9fe8ff', 300, 1.6);
+      }
+    }
+  }
+
+  let vignette = null;
+  function drawVignette() {
+    if (!vignette) {
+      vignette = document.createElement('canvas');
+      vignette.width = W; vignette.height = H;
+      const g = vignette.getContext('2d');
+      const grad = g.createRadialGradient(W / 2, H / 2, H * 0.5, W / 2, H / 2, H * 1.0);
+      grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,0.45)');
+      g.fillStyle = grad; g.fillRect(0, 0, W, H);
+    }
+    ctx.drawImage(vignette, 0, 0);
+  }
+
   function drawParts(now, dt) {
     ctx.globalCompositeOperation = 'lighter';
     parts = parts.filter(p => {
@@ -637,8 +666,12 @@ registerGame({ key: 'sintflut', screen: function () {
       renderGrid(now);
       order.forEach(id => drawHouse(id, now));
       drawTnts(now);
-      if (phase === 'run') order.forEach(id => { const p = cursors[id]; if (p) drawCursor(id, p, now); });
+      if (phase === 'run') {
+        ambientParts();
+        order.forEach(id => { const p = cursors[id]; if (p) drawCursor(id, p, now); });
+      }
       drawParts(now, dt);
+      drawVignette();
       drawHud(now);
       ctx.restore();
     },
