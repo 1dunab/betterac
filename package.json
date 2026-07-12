@@ -1,7 +1,12 @@
 {
-  "name": "airconsole-local",
+  "name": "party-hub",
   "version": "1.0.0",
-  "description": "Lokale, server-lose AirConsole-kompatible Laufzeitumgebung fuer eigene Spiele",
+  "description": "Couch party games on your TV — every phone is a controller. Self-hosted, LAN-only, vanilla JS.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Uruser42/betterac.git"
+  },
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
