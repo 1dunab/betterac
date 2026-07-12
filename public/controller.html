@@ -58,6 +58,7 @@
       <div id="gameSettings" style="margin-top:16px"></div>
       <button id="startBtn" class="btn go" style="margin-top:22px; width:100%">START</button>
       <div id="needPlayers" class="muted" style="margin-top:10px"></div>
+      <div id="playerAdmin" style="margin-top:16px; text-align:left"></div>
       <button id="nightBtn" class="btn" style="display:none; margin-top:16px; width:100%; background:#4a3d14; color:#ffd60a">🌙 Feierabend — Champion küren</button>
     </div>
     <div id="guestLobby" class="muted" style="display:none"></div>
@@ -149,6 +150,49 @@
   }
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
 
+  // Host-Tools: Spielerliste mit Umbenennen (✏️→✓) und Kick (✖ mit Zwei-Tap)
+  function renderAdmin(d) {
+    const wrap = $('playerAdmin'); wrap.innerHTML = '';
+    const roster = d.roster || [];
+    if (!d.host || roster.length < 2) return;
+    const head = document.createElement('div'); head.className = 'muted'; head.style.marginBottom = '6px'; head.textContent = 'Spieler:';
+    wrap.appendChild(head);
+    roster.forEach(p => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px';
+      const dot = document.createElement('span');
+      dot.style.cssText = 'width:14px;height:14px;border-radius:50%;flex:none;background:' + p.color;
+      const nm = document.createElement('span'); nm.style.flex = '1'; nm.textContent = p.name + (p.id === d.player ? ' (du)' : '');
+      const ed = document.createElement('button'); ed.className = 'gamebtn'; ed.textContent = '✏️';
+      let editing = false;
+      const inp = document.createElement('input');
+      inp.type = 'text'; inp.maxLength = 14; inp.autocomplete = 'off';
+      inp.style.cssText = 'flex:1;min-width:0;font-size:16px;padding:8px;max-width:none';
+      ed.addEventListener('click', () => {
+        if (!editing) { editing = true; inp.value = p.name; row.replaceChild(inp, nm); ed.textContent = '✓'; inp.focus(); }
+        else if (inp.value.trim()) ac.message(AirConsole.SCREEN, { t: 'shellRename', id: p.id, name: inp.value });
+      });
+      row.append(dot, nm, ed);
+      if (p.id !== d.player) { // sich selbst kicken geht nicht
+        const kick = document.createElement('button');
+        kick.className = 'gamebtn'; kick.style.background = '#5a1e1e'; kick.textContent = '✖';
+        let armed = 0;
+        kick.addEventListener('click', () => {
+          if (Date.now() < armed) ac.message(AirConsole.SCREEN, { t: 'shellKick', id: p.id });
+          else { armed = Date.now() + 2500; kick.textContent = '✖ sicher?'; setTimeout(() => { if (Date.now() >= armed) kick.textContent = '✖'; }, 2600); }
+        });
+        row.appendChild(kick);
+      }
+      wrap.appendChild(row);
+    });
+  }
+
+  // Vom Host entfernt: Ende der Sitzung auf diesem Gerät (Reload tritt frisch bei)
+  ac.onKicked = () => {
+    document.body.style.background = '#1a1a24';
+    document.body.innerHTML = '<div class="view on"><div class="center"><div class="big">🚪 Der Host hat dich entfernt.</div><div class="muted">Lade die Seite neu, um wieder mitzuspielen.</div></div></div>';
+  };
+
   // Feierabend beendet die Abend-Wertung — Zwei-Tap-Bestätigung gegen Vertipper
   const NIGHT_LABEL = '🌙 Feierabend — Champion küren';
   let nightArm = 0;
@@ -230,6 +274,7 @@
         if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }
         else { const lab = (gamesMeta.find(g => g.key === d.selected) || {}).label || d.selected; $('guestLobby').textContent = 'Host wählt: ' + lab + ' — warte auf Start…'; }
         $('nightBtn').style.display = (d.host && d.night) ? 'block' : 'none';
+        renderAdmin(d);
         showView('shelllobby');
       }
       else if (d.cmd === 'enterGame') { inGame = true; myHost = d.host; updateAbort(); activeC = MODULES[d.game] || null; if (activeC) activeC.activate(); }

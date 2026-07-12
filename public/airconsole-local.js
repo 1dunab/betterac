@@ -76,7 +76,11 @@
         this.onMessage(msg.from, msg.data);
         break;
       case 'kicked':
-        this._stopped = true; // kein Reconnect — ein anderer Client hat uebernommen
+        this._stopped = true; // kein Reconnect — uebernommen oder vom Host entfernt
+        if (this._role !== 'screen') {
+          // Resume-Daten weg: ein Reload tritt frisch bei statt still zurueckzukommen
+          try { sessionStorage.removeItem('ac_resume'); } catch (e) {}
+        }
         this.onKicked();
         break;
     }
@@ -95,6 +99,8 @@
     this._send({ type: 'message', to: null, data: data });
   };
   AirConsole.prototype.getDeviceId = function () { return this.device_id; };
+  // Nur der Screen darf kicken (der Server prueft den Absender ebenfalls)
+  AirConsole.prototype.kick = function (id) { this._send({ type: 'kick', id: id }); };
   AirConsole.prototype.getControllerDeviceIds = function () {
     return this._devices.filter(function (d) { return d > 0; });
   };

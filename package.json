@@ -10,7 +10,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test-spy.js && node test-fakeartist.js && node test-categories.js && node test-reload.js && node test-gamenight.js && node test-allgames.js"
+    "test": "node test-spy.js && node test-fakeartist.js && node test-categories.js && node test-reload.js && node test-gamenight.js && node test-hosttools.js && node test-allgames.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -60,6 +60,18 @@ function makeBus() {
     },
     fromClient(label, raw) {
       const msg = JSON.parse(raw);
+      if (msg.type === 'kick') {
+        // Wie server.js: nur der Screen (ID 0) darf kicken
+        const sender = [...clients.entries()].find(([, l]) => l === label);
+        if (!sender || sender[0] !== 0) return;
+        const id = msg.id | 0, tl = clients.get(id);
+        if (id > 0 && tl !== undefined) {
+          clients.delete(id);
+          this.handlers[tl].deliver({ type: 'kicked' });
+          for (const [, ol] of clients) this.handlers[ol].deliver({ type: 'disconnect', device_id: id });
+        }
+        return;
+      }
       if (msg.type === 'register') {
         const id = msg.role === 'screen' ? 0 : nextId++;
         clients.set(id, label);

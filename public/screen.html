@@ -143,7 +143,8 @@
       t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
       selected: shell.selected, games: GAME_LIST, cfg: cfgFor(shell.selected),
       playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected),
-      night: Object.keys(nightScore).length > 0
+      night: Object.keys(nightScore).length > 0,
+      roster: namedIds().sort((a, b) => a - b).map(p => ({ id: p, name: nameOf(p), color: players[p].color }))
     }));
   }
   function sendHostUpdate() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'host', host: id === h })); }
@@ -233,6 +234,17 @@
       if (d.game === shell.selected) { applyCfg(d.game, d.cfg); sendLobby(); }
     } else if (d.t === 'shellStart' && id === hostId() && !active) {
       if (namedIds().length >= minFor(shell.selected)) startGame(shell.selected);
+    } else if (d.t === 'shellKick' && id === hostId() && !active) {
+      // Host-Tool: Spieler entfernen (sich selbst nicht — Host-Wechsel liefe ins Leere)
+      const tgt = d.id | 0;
+      if (tgt !== id && players[tgt]) { setBanner(nameOf(tgt) + ' wurde vom Host entfernt', 5000); ac.kick(tgt); }
+    } else if (d.t === 'shellRename' && id === hostId() && !active) {
+      const tgt = d.id | 0, n = String(d.name || '').trim().slice(0, 14);
+      if (players[tgt] && n) {
+        players[tgt].name = n;
+        if (nightScore[tgt]) nightScore[tgt].name = n; // Abend-Wertung folgt mit
+        sendLobby();
+      }
     } else if (d.t === 'shellNight' && id === hostId() && !active) {
       // Feierabend: Champion küren, Abend-Wertung zurücksetzen
       const st = nightStandings();

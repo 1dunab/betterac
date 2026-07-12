@@ -75,6 +75,22 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (msg.type === 'kick' && ws.deviceId === 0) {
+      // Host-Tool: Screen wirft einen Controller raus. Socket schliessen und
+      // Resume-Secret verwerfen — sonst kaeme das Geraet still wieder zurueck.
+      const id = msg.id | 0;
+      const target = clients.get(id);
+      if (id > 0 && target) {
+        send(target, { type: 'kicked' });
+        secrets.delete(id);
+        target.deviceId = undefined;
+        clients.delete(id);
+        target.terminate();
+        broadcast({ type: 'disconnect', device_id: id });
+      }
+      return;
+    }
+
     if (msg.type === 'message') {
       const from = ws.deviceId;
       if (msg.to === undefined || msg.to === null) {
