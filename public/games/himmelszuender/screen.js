@@ -217,6 +217,7 @@ registerGame({ key: 'himmelszuender', screen: function () {
     let best = -1;
     order.forEach(id => { if (py[id].points > best) { best = py[id].points; winner = id; } });
     const grade = crowd >= 80 ? '🤩 Legendär!' : crowd >= 50 ? '👏 Starke Show!' : '🙂 Nette Show.';
+    if (winner !== null && winner !== undefined) reportWinners([winner]);
     const h = hostId();
     order.forEach(id => ac.message(id, {
       t: 'hzEnd', win: id === winner, name: winner !== null ? nameOf(winner) : '—', host: id === h, grade

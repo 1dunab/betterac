@@ -252,6 +252,7 @@ registerGame({ key: 'sintflut', screen: function () {
       for (let i = dry.length - 1; i >= 0; i--) ranking.unshift(dry[i]);
     }
     setShake(6, 600);
+    if (winner !== null && winner !== undefined) reportWinners([winner]);
     const h = hostId();
     order.forEach(id => ac.message(id, {
       t: 'flEnd', winner: id === winner, name: winner !== null ? nameOf(winner) : '—', host: id === h

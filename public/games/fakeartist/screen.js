@@ -56,6 +56,7 @@
       let top = 0; count.forEach(n => { if (n > top) top = n; });
       const leaders = ids.filter(id => (count.get(id) || 0) === top && top > 0);
       result = { caught: leaders.length === 1 && leaders[0] === fake, count, reason: reason || '' };
+      reportWinners(result.caught ? ids.filter(id => id !== fake) : [fake]);
       const h = hostId();
       ids.forEach(id => ac.message(id, { t: 'faPhase', phase: 'result', host: id === h }));
     }

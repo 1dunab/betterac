@@ -90,6 +90,7 @@ There is **no separate tick loop** — do your simulation inside `render()` usin
 | `clamp(v, lo, hi)`, `shuffle(arr)` | the obvious helpers |
 | `setBanner(text, ms)` | overlay banner drawn by the shell (works even in lobby) |
 | `endToLobby(msg)` | end the game and return everyone to the lobby |
+| `reportWinners(ids)` | report who won *this* match — feeds the evening scoreboard (call once per finished match, when your winner screen appears; pass several ids for team/co-op wins; unknown ids are ignored) |
 | `rr(ctx, x, y, w, h, r)` | rounded-rect path helper |
 | `fitFont(ctx, text, maxWidth, startPx)` | shrink font until text fits |
 | `drawStrokesOn(ctx, strokes, x, y, w, h)` | render normalized drawing strokes |

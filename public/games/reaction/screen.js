@@ -43,6 +43,7 @@
       const leaders = ids.filter(id => (wins[id] || 0) === top);
       if (leaders.length > 1) { participants = leaders; nextRound(true); return; }
       phase = 'final'; sfx('fanfare');
+      reportWinners(leaders);
       const h = hostId();
       ids.forEach(id => ac.message(id, { t: 'rxPhase', phase: 'final', host: id === h }));
     }

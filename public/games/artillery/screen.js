@@ -220,6 +220,7 @@ registerGame({ key: 'artillery', screen: function () {
     const live = aliveIds();
     if (live.length <= 1) {
       winner = live[0] !== undefined ? live[0] : null; phase = 'done'; endAt = performance.now() + 5000;
+      if (winner !== null) reportWinners([winner]);
       order.forEach(id => { if (players[id]) ac.message(id, { t: 'artilleryDone', winner: winner === id, name: winner !== null ? nameOf(winner) : 'Niemand' }); });
       return;
     }

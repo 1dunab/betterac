@@ -130,6 +130,7 @@ registerGame({ key: 'kometen', screen: function () {
   function endMatch(team) {
     phase = 'end';
     winnerTeam = team;
+    reportWinners(order.filter(id => teamOf[id] === team));
     setShake(12, 800);
     balls = [];
     const h = hostId();

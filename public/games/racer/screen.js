@@ -680,6 +680,7 @@ registerGame({ key: 'racer', screen: function () {
     if (best >= targetPoints && leaders.length === 1) {
       phase = 'final';
       champion = leaders[0];
+      reportWinners([champion]);
       const h = hostId();
       order.forEach(id => ac.message(id, {
         t: 'raceFinal', winner: id === champion, name: nameOf(champion), host: id === h

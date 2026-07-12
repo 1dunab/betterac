@@ -30,6 +30,7 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
   function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log("Sieger:", ids); }
   function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
   function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
   const sent = [];

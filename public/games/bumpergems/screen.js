@@ -21,6 +21,7 @@ registerGame({ key: 'bumpergems', screen: function () {
   function finish() {
     done = true;
     const rank = ids().sort((a, b) => cars[b].score - cars[a].score);
+    if (rank.length) reportWinners(ids().filter(id => cars[id].score === cars[rank[0]].score));
     ids().forEach(id => { if (players[id]) ac.message(id, { t: 'bumperDone', winner: id === rank[0], score: cars[id].score, name: nameOf(rank[0]) }); });
   }
 

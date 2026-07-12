@@ -52,6 +52,8 @@
   const gameCfg = {};               // key -> aktuelle Settings-Werte (Schema in GAME_META)
   let active = null, activeKey = null;
   let banner = '', bannerUntil = 0;
+  let nightScore = {};              // Abend-Wertung: id -> {name, pts} (Siege des Abends)
+  let champion = null, confetti = [];
 
   const GAME_LIST = window.GAME_LIST;
   const GAME_META = window.GAME_META;
@@ -88,6 +90,19 @@
     }
   }
 
+  // Spieleabend-Wertung: Spiele melden hier ihre Sieger (+1 pro gewonnener Partie).
+  // Team-/Co-op-Siege einfach mit mehreren IDs melden. Unbekannte IDs werden ignoriert.
+  window.reportWinners = function (ids) {
+    (ids || []).forEach(id => {
+      if (!players[id]) return;
+      const e = nightScore[id] || (nightScore[id] = { name: nameOf(id), pts: 0 });
+      e.name = nameOf(id); e.pts++;
+    });
+  };
+  function nightStandings() {
+    return Object.keys(nightScore).map(id => nightScore[id]).sort((a, b) => b.pts - a.pts);
+  }
+
   // generische Zeichen-Helfer (für Drawing-Render + PNG-Export)
   function drawStrokesOn(o, strokes, bx, by, bw, bh) {
     o.save(); o.fillStyle = '#fff'; o.fillRect(bx, by, bw, bh);
@@ -116,7 +131,7 @@
     try {
       const ps = {};
       connectedIds().forEach(id => { if (players[id].named) ps[id] = { name: players[id].name, color: players[id].color }; });
-      sessionStorage.setItem('shellSnapshot', JSON.stringify({ t: Date.now(), players: ps, selected: shell.selected, cfg: gameCfg }));
+      sessionStorage.setItem('shellSnapshot', JSON.stringify({ t: Date.now(), players: ps, selected: shell.selected, cfg: gameCfg, night: nightScore }));
     } catch (e) {}
   }
 
@@ -127,7 +142,8 @@
     namedIds().forEach(id => ac.message(id, {
       t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
       selected: shell.selected, games: GAME_LIST, cfg: cfgFor(shell.selected),
-      playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected)
+      playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected),
+      night: Object.keys(nightScore).length > 0
     }));
   }
   function sendHostUpdate() { const h = hostId(); connectedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'host', host: id === h })); }
@@ -186,6 +202,7 @@
         snapshotApplied = true;
         if (snapshot.selected && GAMES[snapshot.selected]) shell.selected = snapshot.selected;
         if (snapshot.cfg) Object.keys(snapshot.cfg).forEach(k => { if (GAME_META[k]) applyCfg(k, snapshot.cfg[k]); });
+        if (snapshot.night) nightScore = snapshot.night; // Abend-Wertung überlebt den Reload mit
       }
       players[id] = { color: snap.color || COLORS[(id - 1) % COLORS.length], name: String(snap.name || '').slice(0, 14) || ('Spieler ' + id), named: true };
       sendLobby();
@@ -216,6 +233,21 @@
       if (d.game === shell.selected) { applyCfg(d.game, d.cfg); sendLobby(); }
     } else if (d.t === 'shellStart' && id === hostId() && !active) {
       if (namedIds().length >= minFor(shell.selected)) startGame(shell.selected);
+    } else if (d.t === 'shellNight' && id === hostId() && !active) {
+      // Feierabend: Champion küren, Abend-Wertung zurücksetzen
+      const st = nightStandings();
+      if (st.length) {
+        champion = { list: st.slice(0, 3), until: performance.now() + 9000 };
+        confetti = Array.from({ length: 120 }, () => ({
+          x: Math.random() * cv.width, y: -20 - Math.random() * cv.height,
+          vy: 60 + Math.random() * 90, vx: (Math.random() - 0.5) * 40,
+          size: 4 + Math.random() * 5, rot: Math.random() * Math.PI,
+          color: COLORS[(Math.random() * COLORS.length) | 0]
+        }));
+        sfx('fanfare');
+        nightScore = {};
+        sendLobby(); // Snapshot + Feierabend-Button verschwindet
+      }
     } else if (d.t === 'shellAbort' && id === hostId() && active) {
       endToLobby('');
     } else if (active && active.onMessage) {
@@ -296,6 +328,47 @@
     const ok = list.length >= minFor(shell.selected);
     ctx.fillStyle = ok ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
     ctx.fillText(ok ? '⭐ Host wählt das Spiel und tippt START' : ('Mind. ' + minFor(shell.selected) + ' Spieler für ' + sel.label + '…'), cv.width / 2, cv.height - 54);
+    // Abend-Wertung rechts (Siege des Abends, Feierabend kürt den Champion)
+    const st = nightStandings().slice(0, 8);
+    if (st.length) {
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 16px system-ui,sans-serif';
+      ctx.fillText('🏆 Abend-Wertung', cv.width - 22, 180);
+      ctx.font = '15px system-ui,sans-serif';
+      st.forEach((e, i) => {
+        ctx.fillStyle = i === 0 ? '#fff' : '#aaa';
+        const n = e.name.length > 11 ? e.name.slice(0, 10) + '…' : e.name;
+        ctx.fillText(n + '  ' + e.pts, cv.width - 22, 208 + i * 24);
+      });
+      ctx.textAlign = 'center';
+    }
+  }
+
+  // ===== Feierabend: Champion-Zeremonie (9s, dann zurück zur Lobby) =====
+  function renderChampion() {
+    const now = performance.now();
+    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
+    confetti.forEach(p => {
+      p.y += p.vy / 60; p.x += p.vx / 60; p.rot += 0.05;
+      if (p.y > cv.height + 20) { p.y = -20; p.x = Math.random() * cv.width; }
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.color; ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+      ctx.restore();
+    });
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const top = champion.list[0];
+    ctx.font = '80px system-ui,sans-serif'; ctx.fillText('👑', cv.width / 2, 150);
+    ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 28px system-ui,sans-serif';
+    ctx.fillText('Champion des Abends', cv.width / 2, 230);
+    ctx.fillStyle = '#fff'; fitFont(ctx, top.name, 700, 64);
+    ctx.fillText(top.name, cv.width / 2, 300);
+    ctx.fillStyle = '#aaa'; ctx.font = 'bold 24px system-ui,sans-serif';
+    ctx.fillText(top.pts + (top.pts === 1 ? ' Sieg' : ' Siege'), cv.width / 2, 352);
+    champion.list.slice(1).forEach((e, i) => {
+      ctx.fillStyle = '#888'; ctx.font = 'bold 20px system-ui,sans-serif';
+      ctx.fillText((i === 0 ? '🥈 ' : '🥉 ') + e.name + ' — ' + e.pts, cv.width / 2, 420 + i * 34);
+    });
+    if (now > champion.until) { champion = null; confetti = []; }
   }
 
 
@@ -341,7 +414,9 @@
   // ===== Render-Schleife =====
   saveBtn.addEventListener('click', () => { if (active && active.save) active.save(); });
   (function loop() {
-    if (active && active.render) active.render(); else renderLobby();
+    if (active && active.render) active.render();
+    else if (champion) renderChampion();
+    else renderLobby();
     if (performance.now() < bannerUntil && banner) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, cv.height / 2 - 34, cv.width, 68);
       ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = 'bold 24px system-ui,sans-serif';

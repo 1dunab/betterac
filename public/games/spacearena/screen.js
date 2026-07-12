@@ -199,6 +199,7 @@ registerGame({ key: 'spacearena', screen: function () {
     if (best >= targetPoints && leaders.length === 1) {
       phase = 'final';
       champion = leaders[0];
+      reportWinners([champion]);
       setFlash('#ffd60a', 500);
       const h = hostId();
       order.forEach(id => ac.message(id, { t: 'saFinal', winner: id === champion, name: nameOf(champion), host: id === h }));

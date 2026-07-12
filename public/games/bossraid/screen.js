@@ -642,6 +642,7 @@ registerGame({ key: 'bossraid', screen: function () {
   function startWin(now) {
     phase = 'win';
     phaseAt = now;
+    reportWinners(order); // Co-op: Boss besiegt = alle gewinnen
     ebullets = [];
     setShake(16, 1400);
     setFlash('#ffffff', 700);

@@ -40,7 +40,12 @@
     return {
       acceptsJoin: true,
       start(ids) { running = true; gp = {}; wins = {}; ids.forEach(id => gp[id] = { alive: false }); startRound(); },
-      stop() { running = false; clearT(); },
+      stop() {
+        running = false; clearT();
+        // Endlos-Runden: Abend-Wertung bekommt den Runden-Sieger-Leader der Session
+        const best = Math.max(0, ...Object.values(wins));
+        if (best > 0) reportWinners(Object.keys(wins).filter(id => wins[id] === best).map(Number));
+      },
       onConnect(id) { gp[id] = { alive: false }; },
       onDisconnect(id) { delete gp[id]; },
       onMessage(id, d) { if (d && d.turn && st === 'playing' && gp[id] && gp[id].alive) gp[id].nextDir = turn(gp[id].dir, d.turn); },

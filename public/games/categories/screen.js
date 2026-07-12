@@ -86,7 +86,12 @@
           if (ids.every(p => submitted.has(p))) finishRound();
         } else if (d.t === 'slfNext' && id === hostId()) {
           if (phase === 'score') {
-            if (roundNo >= cfg.rounds) { phase = 'final'; sendPhase(); }
+            if (roundNo >= cfg.rounds) {
+              phase = 'final';
+              const top = Math.max(...ids.map(p => totals[p] || 0));
+              reportWinners(ids.filter(p => (totals[p] || 0) === top));
+              sendPhase();
+            }
             else nextRound();
           } else if (phase === 'final') {
             totals = {}; roundNo = 0; unused = LETTERS.slice();

@@ -45,7 +45,12 @@
     }
     function next() {
       if (idx + 1 < targets.length) { idx++; startRound(); }
-      else { phase = 'done'; order.forEach(id => { if (players[id]) ac.message(id, { t: 'geoDone' }); }); }
+      else {
+        phase = 'done';
+        const top = Math.max(...order.map(id => scores[id] || 0));
+        reportWinners(order.filter(id => (scores[id] || 0) === top));
+        order.forEach(id => { if (players[id]) ac.message(id, { t: 'geoDone' }); });
+      }
     }
 
     return {

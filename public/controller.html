@@ -58,6 +58,7 @@
       <div id="gameSettings" style="margin-top:16px"></div>
       <button id="startBtn" class="btn go" style="margin-top:22px; width:100%">START</button>
       <div id="needPlayers" class="muted" style="margin-top:10px"></div>
+      <button id="nightBtn" class="btn" style="display:none; margin-top:16px; width:100%; background:#4a3d14; color:#ffd60a">🌙 Feierabend — Champion küren</button>
     </div>
     <div id="guestLobby" class="muted" style="display:none"></div>
   </div>
@@ -148,6 +149,20 @@
   }
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
 
+  // Feierabend beendet die Abend-Wertung — Zwei-Tap-Bestätigung gegen Vertipper
+  const NIGHT_LABEL = '🌙 Feierabend — Champion küren';
+  let nightArm = 0;
+  $('nightBtn').addEventListener('click', () => {
+    if (Date.now() < nightArm) {
+      nightArm = 0; $('nightBtn').textContent = NIGHT_LABEL;
+      ac.message(AirConsole.SCREEN, { t: 'shellNight' });
+    } else {
+      nightArm = Date.now() + 2500;
+      $('nightBtn').textContent = 'Wirklich? Nochmal tippen ✓';
+      setTimeout(() => { if (Date.now() >= nightArm) $('nightBtn').textContent = NIGHT_LABEL; }, 2600);
+    }
+  });
+
   // ---------- Countdown (Drawing) ----------
   let timerInt = null, endAt = 0, onZero = null, tEl = null;
   function startTimer(ms, el, cb) {
@@ -214,6 +229,7 @@
         $('guestLobby').style.display = d.host ? 'none' : 'block';
         if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }
         else { const lab = (gamesMeta.find(g => g.key === d.selected) || {}).label || d.selected; $('guestLobby').textContent = 'Host wählt: ' + lab + ' — warte auf Start…'; }
+        $('nightBtn').style.display = (d.host && d.night) ? 'block' : 'none';
         showView('shelllobby');
       }
       else if (d.cmd === 'enterGame') { inGame = true; myHost = d.host; updateAbort(); activeC = MODULES[d.game] || null; if (activeC) activeC.activate(); }
