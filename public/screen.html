@@ -24,6 +24,7 @@
 
 <script>window.__AC_ROLE__ = 'screen';</script>
 <script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script src="vendor/qrcode.js"></script>
 <script src="airconsole-local.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
@@ -185,6 +186,36 @@
     }
   };
 
+  // ===== Beitritts-QR: Handy-Kamera auf den TV halten statt IP abtippen =====
+  let qrCanvas = null, joinUrl = '';
+  function buildQr(host) {
+    try {
+      joinUrl = location.protocol + '//' + host + '/controller.html';
+      const qr = qrcode(0, 'M');
+      qr.addData(joinUrl);
+      qr.make();
+      const n = qr.getModuleCount(), cell = 4, pad = cell * 4; // Quiet Zone: 4 Module (Spec)
+      qrCanvas = document.createElement('canvas');
+      qrCanvas.width = qrCanvas.height = n * cell + pad * 2;
+      const g = qrCanvas.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, qrCanvas.width, qrCanvas.height);
+      g.fillStyle = '#000';
+      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+        if (qr.isDark(r, c)) g.fillRect(pad + c * cell, pad + r * cell, cell, cell);
+      }
+    } catch (e) { qrCanvas = null; }
+  }
+  if (/^(localhost|127\.)/.test(location.hostname) && typeof fetch === 'function') {
+    // Screen läuft lokal auf dem Server-Rechner — LAN-IP für die Handys erfragen
+    fetch('/info').then(r => r.json()).then(info => {
+      if (info.ips && info.ips.length) buildQr(info.ips[0] + ':' + info.port);
+      else buildQr(location.host);
+    }).catch(() => buildQr(location.host));
+  } else {
+    buildQr(location.host);
+  }
+
   // ===== Shell-Lobby-Render =====
   function renderLobby() {
     ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
@@ -215,6 +246,16 @@
       ctx.textAlign = 'center';
     });
     if (joining > 0) { ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif'; ctx.fillText(joining + ' tippt noch einen Namen…', cv.width / 2, cv.height - 84); }
+    // Beitritts-QR unten links
+    if (qrCanvas) {
+      const qx = 22, qy = cv.height - qrCanvas.height - 46;
+      ctx.drawImage(qrCanvas, qx, qy);
+      ctx.fillStyle = '#aaa'; ctx.font = 'bold 14px system-ui,sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('📱 Mitspielen:', qx, qy - 12);
+      ctx.font = '12px system-ui,sans-serif'; ctx.fillStyle = '#777';
+      ctx.fillText(joinUrl.replace(/^https?:\/\//, ''), qx, qy + qrCanvas.height + 16);
+      ctx.textAlign = 'center';
+    }
     const ok = list.length >= minFor(shell.selected);
     ctx.fillStyle = ok ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
     ctx.fillText(ok ? '⭐ Host wählt das Spiel und tippt START' : ('Mind. ' + minFor(shell.selected) + ' Spieler für ' + sel.label + '…'), cv.width / 2, cv.height - 54);

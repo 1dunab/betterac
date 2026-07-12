@@ -13,6 +13,12 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 // --- Statischer Datei-Server fuer screen.html / controller.html / shim ---
 const server = http.createServer((req, res) => {
   let urlPath = req.url.split('?')[0];
+  if (urlPath === '/info') {
+    // Für den Lobby-QR-Code: unter welcher LAN-Adresse sind wir erreichbar?
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ port: PORT, ips: lanIPs() }));
+    return;
+  }
   if (urlPath === '/') urlPath = '/screen.html';
   const filePath = path.normalize(path.join(PUBLIC, urlPath));
   if (!filePath.startsWith(PUBLIC + path.sep)) { res.writeHead(403); res.end(); return; }
