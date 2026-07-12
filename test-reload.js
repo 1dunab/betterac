@@ -20,6 +20,27 @@ function fail(msg) { console.error('FEHLER: ' + msg); process.exitCode = 1; }
   }
   await sleep(100);
 
+  // Roadmap #8: Name wird gemerkt (localStorage), Prefill bei Wiederkehr
+  const stored = c1.window.localStorage.getItem('playerName');
+  console.log('Gespeicherter Name c1:', stored, '(erwartet Anna)');
+  if (stored !== 'Anna') fail('Name nicht in localStorage gespeichert');
+  const cReturn = makeDom('controller.html', 'controller', bus, 'cReturn', { seedLocal: { playerName: 'Zoe' } });
+  await sleep(150);
+  const prefill = cReturn.window.document.getElementById('nameInput').value;
+  console.log('Prefill bei Wiederkehr:', prefill, '(erwartet Zoe)');
+  if (prefill !== 'Zoe') fail('Name-Prefill fehlt');
+
+  // Roadmap #10: 🎲 Zufall wählt nur Spiele, die mit 2 Spielern startbar sind
+  const tooBig = ['🕵️ Spion', '🖌️ Fake Artist', '🧪 Hexenschicht'];
+  for (let i = 0; i < 5; i++) {
+    [...c1.window.document.querySelectorAll('#gamePicker button')].find(b => b.textContent === '🎲 Zufall').click();
+    await sleep(60);
+    const sel = [...c1.window.document.querySelectorAll('#gamePicker button')].find(b => b.classList.contains('sel'));
+    if (!sel) { fail('Zufall: keine Auswahl'); break; }
+    if (tooBig.includes(sel.textContent)) { fail('Zufall wählte ' + sel.textContent + ' trotz nur 2 Spielern'); break; }
+  }
+  console.log('🎲 Zufall: 5 Würfe, alle mit 2 Spielern startbar ✓');
+
   // Host wählt ein anderes Spiel und ändert ein Setting
   const pick = [...c1.window.document.querySelectorAll('#gamePicker button')].find(b => b.textContent.includes('Reaktion'));
   pick.click();

@@ -27,6 +27,10 @@ function makeDom(file, role, bus, label, opts) {
       if (opts && opts.seedSession) {
         for (const k of Object.keys(opts.seedSession)) w.sessionStorage.setItem(k, opts.seedSession[k]);
       }
+      // simuliert localStorage eines wiederkehrenden Geräts (z.B. gemerkter Name)
+      if (opts && opts.seedLocal) {
+        for (const k of Object.keys(opts.seedLocal)) w.localStorage.setItem(k, opts.seedLocal[k]);
+      }
       w.HTMLCanvasElement.prototype.getContext = noopCtx;
       w.WebSocket = function () {
         const ws = { readyState: 1, OPEN: 1, send: (raw) => bus.fromClient(label, raw) };

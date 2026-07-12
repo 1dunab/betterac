@@ -84,17 +84,33 @@
   $('abortBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellAbort' }));
 
   // ---------- Name ----------
-  function joinLobby() { ac.message(AirConsole.SCREEN, { t: 'shellName', name: $('nameInput').value.trim() }); }
+  // Letzten Namen merken: beim nächsten Besuch ist Beitreten nur noch ein Tap
+  try { $('nameInput').value = localStorage.getItem('playerName') || ''; } catch (e) {}
+  function joinLobby() {
+    const name = $('nameInput').value.trim();
+    try { if (name) localStorage.setItem('playerName', name); } catch (e) {}
+    ac.message(AirConsole.SCREEN, { t: 'shellName', name });
+  }
   $('joinBtn').addEventListener('click', joinLobby);
   $('nameInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinLobby(); });
 
   // ---------- Shell-Lobby (Host) ----------
-  let curCfg = {}, selected = 'lightcycles';
+  let curCfg = {}, selected = 'lightcycles', playerCount = 0;
   function sendSelect(g) { ac.message(AirConsole.SCREEN, { t: 'shellSelect', game: g }); }
   function sendCfg() { ac.message(AirConsole.SCREEN, { t: 'shellConfig', game: selected, cfg: curCfg }); }
   function buildPicker() {
     const wrap = $('gamePicker'); wrap.innerHTML = '';
     gamesMeta.forEach(g => { const b = document.createElement('button'); b.className = 'gamebtn' + (g.key === selected ? ' sel' : ''); b.textContent = g.label; b.addEventListener('click', () => sendSelect(g.key)); wrap.appendChild(b); });
+    // 🎲 Zufall: würfelt ein Spiel, das mit der aktuellen Spielerzahl startbar ist
+    const rnd = document.createElement('button');
+    rnd.className = 'gamebtn';
+    rnd.style.background = '#6e2a5e';
+    rnd.textContent = '🎲 Zufall';
+    rnd.addEventListener('click', () => {
+      const pool = gamesMeta.filter(g => playerCount >= (g.min || 1) && g.key !== selected);
+      if (pool.length) sendSelect(pool[Math.floor(Math.random() * pool.length)].key);
+    });
+    wrap.appendChild(rnd);
   }
   // Settings-UI generisch aus dem Schema des gewählten Spiels (meta.js)
   function renderSettings() {
@@ -191,7 +207,7 @@
         inGame = false; activeC = null; updateAbort();
         $('helloName').textContent = 'Hallo, ' + (d.name || 'Spieler') + '!';
         document.body.style.background = shade(d.color || '#0a84ff');
-        gamesMeta = d.games || []; selected = d.selected; buildPicker();
+        gamesMeta = d.games || []; selected = d.selected; playerCount = d.playerCount || 0; buildPicker();
         curCfg = d.cfg || {};
         if (d.host) renderSettings();
         $('hostLobby').style.display = d.host ? 'block' : 'none';
