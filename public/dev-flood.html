@@ -74,7 +74,18 @@
       }
     }
 
-    if (simMs > 0) {
+    // ?sim=90000&bench=400 — nach dem Fast-Forward N Frames messen (Ergebnis oben links)
+    const benchN = parseInt(q.get('bench') || '0', 10);
+    if (simMs > 0 && benchN > 0) {
+      for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
+      const w0 = Date.now();
+      for (let i = 0; i < benchN; i++) { fake += 16.7; game.render(); }
+      const wall = Date.now() - w0;
+      document.title = 'BENCH frame=' + (wall / benchN).toFixed(2) + 'ms n=' + benchN;
+      ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 960, 60);
+      ctx.fillStyle = '#0f0'; ctx.font = 'bold 24px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(document.title, 16, 40);
+    } else if (simMs > 0) {
       for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
       (function loop() { fake += 16.7; bots(); game.render(); requestAnimationFrame(loop); })();
     } else {

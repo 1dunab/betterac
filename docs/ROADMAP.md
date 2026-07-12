@@ -81,12 +81,19 @@ open an issue before starting the L ones.
 
 ## Phase 4 — Perf & polish
 
-- [ ] **14. Perf pass on the heavy renderers (M)**
+- [x] **14. Perf pass on the heavy renderers (M)**
   Sintflut rebuilds a 64k-pixel ImageData per frame plus a full-grid scan; Boss Raid
   does O(bullets × players) each frame.
   *Requirement:* profile on a weak device (old laptop / TV browser), then: dirty-row
   tracking for the sand sim, spatial pruning for bullet checks — only if measurements
   say it's needed. Numbers first.
+  *Measured* (headless Firefox software rasterizer, worst case after 90s/60s
+  fast-forward, 400-frame average): Sintflut 3.1 ms/frame — grid scan 0.56 ms,
+  ImageData fill 0.37 ms, the rest is browser compositing. Boss Raid 2.9 ms/frame at
+  145 live bullets (of the 520 cap). Both suspected hot spots are cheap; even ~8×
+  slower hardware stays above 30 fps. **Decision: no optimization** — the proposed
+  dirty-row tracking / spatial pruning would add complexity for single-digit savings.
+  The `?sim=…&bench=N` mode in `dev-flood.html` / `dev-boss.html` stays for re-measuring.
 
 - [ ] **15. README media upgrade (S)**
   *Requirement:* animated GIFs (harness + screen recording) for 2–3 games; they sell the

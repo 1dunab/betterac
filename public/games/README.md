@@ -233,6 +233,11 @@ firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
 This is how every screenshot in the README was made, and it's the fastest way to tune
 balance without four phones on your desk.
 
+For performance work, `dev-flood.html` and `dev-boss.html` support `?sim=…&bench=N`:
+fast-forward first, then measure N frames and print the average frame time top-left
+(screenshot it headlessly). Measure before optimizing — see roadmap item 14 for the
+numbers that killed two "obvious" optimizations.
+
 ## 9. Tests
 
 `npm test` boots the real `screen.html` + `controller.html` in JSDOM against an
