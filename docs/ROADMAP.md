@@ -62,20 +62,20 @@ open an issue before starting the L ones.
 
 ## Phase 3 — Platform features
 
-- [ ] **11. Sound engine (M, the missing sense)**
+- [x] **11. Sound engine (M, the missing sense)**
   The platform is completely silent.
   *Requirement:* a tiny WebAudio synth on the screen page — no audio assets: noise-burst
   explosions, countdown beeps, victory fanfare, per-game ambient loops. Shell API
   `sfx(name)` + a documented sound palette so games (and contributors) can trigger them.
   Global mute toggle. Must start only after a user gesture (browser autoplay policy).
 
-- [ ] **12. Game-night mode: evening meta-scoreboard (M)**
+- [x] **12. Game-night mode: evening meta-scoreboard (M)**
   *Requirement:* games report winners (`endToLobby` gains an optional `winnerIds`
   param or a `reportWinners(ids)` helper); the shell tallies evening points per player,
   shows a standings strip in the lobby and crowns a champion via a "Feierabend" button.
   Persist across screen reloads together with item 3.
 
-- [ ] **13. Host tools (S–M)**
+- [x] **13. Host tools (S–M)**
   *Requirement:* host lobby gains per-player actions: kick (server closes the socket)
   and rename. Guard against kicking yourself.
 
@@ -95,7 +95,7 @@ open an issue before starting the L ones.
   dirty-row tracking / spatial pruning would add complexity for single-digit savings.
   The `?sim=…&bench=N` mode in `dev-flood.html` / `dev-boss.html` stays for re-measuring.
 
-- [ ] **15. README media upgrade (S)**
+- [x] **15. README media upgrade (S)**
   *Requirement:* animated GIFs (harness + screen recording) for 2–3 games; they sell the
   project far better than stills.
 
