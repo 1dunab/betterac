@@ -1,5 +1,7 @@
 # 🎉 Party Hub
 
+![tests](https://github.com/Uruser42/betterac/actions/workflows/test.yml/badge.svg)
+
 **Couch party games on your TV — every phone is a controller.** One command starts a local
 server; a TV (or laptop) shows the big screen, and everyone joins from their phone browser
 over Wi-Fi. No apps, no accounts, no internet required.

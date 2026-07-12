@@ -25,13 +25,13 @@ open an issue before starting the L ones.
   `sessionStorage`; on takeover/reload, restore named players instead of re-prompting.
   Restoring *running games* is out of scope.
 
-- [ ] **4. All-games smoke test (S, high leverage)**
+- [x] **4. All-games smoke test (S, high leverage)**
   `npm test` covers 3 of 17 games.
   *Requirement:* a generic JSDOM test that, for every registered game, boots the shell
   with `min` bot players, starts the game, runs ~100 frames and asserts no uncaught
   errors (WebGL games may exit to lobby — that's a pass). Chain into `npm test`.
 
-- [ ] **5. CI via GitHub Actions (S)**
+- [x] **5. CI via GitHub Actions (S)**
   *Requirement:* `.github/workflows/test.yml` running `npm ci && npm test` on push/PR,
   Node 18 + 20. Badge in the README.
 
