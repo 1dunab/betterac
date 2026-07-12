@@ -37,26 +37,26 @@ open an issue before starting the L ones.
 
 ## Phase 2 — Quick wins for game night
 
-- [ ] **6. QR code in the lobby (S, biggest onboarding win)**
+- [x] **6. QR code in the lobby (S, biggest onboarding win)**
   Typing `192.168.x.y:3000/controller.html` is the worst part of the evening.
   *Requirement:* vendor a minimal MIT QR encoder, render the controller URL as a QR on
   the screen's lobby (server already knows its LAN IPs — expose via a `/info` endpoint
   or embed at page load).
 
-- [ ] **7. Wake Lock (S)**
+- [x] **7. Wake Lock (S)**
   Phones dim during watch-phases (Spion!), TVs start screensavers.
   *Requirement:* `navigator.wakeLock` on controller and screen, re-acquired on
   visibilitychange; silent no-op where unsupported.
 
-- [ ] **8. Remember player names (S)**
+- [x] **8. Remember player names (S)**
   *Requirement:* controller stores the last name in `localStorage`, prefills the input,
   auto-focuses; joining is one tap on return visits.
 
-- [ ] **9. Fullscreen button on the screen page (S)**
+- [x] **9. Fullscreen button on the screen page (S)**
   *Requirement:* small ⛶ button (auto-hiding, like the cursor) toggling the Fullscreen
   API on the whole page.
 
-- [ ] **10. 🎲 Random game button (S)**
+- [x] **10. 🎲 Random game button (S)**
   *Requirement:* one extra picker button that host-selects a random game (respecting
   current player count vs `min`).
 
