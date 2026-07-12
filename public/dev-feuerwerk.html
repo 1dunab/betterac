@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Feuerwerk Dev</title>
+<style>
+  html,body { margin:0; background:#0a0a14; }
+  /* identisch zur canvas-Regel in screen.html — deckt CSS-Konflikte im Test auf */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/game-registry.js"></script>
+<script>
+  // Shell-Stubs für isoliertes Testen des Himmelszünder-Moduls
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = {
+    1: { color: '#ff2d55', name: 'Anna', named: true },
+    2: { color: '#0a84ff', name: 'Ben', named: true },
+    3: { color: '#30d158', name: 'Cleo', named: true },
+    4: { color: '#ffd60a', name: 'Dino', named: true }
+  };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  const ac = { message() {} };
+
+  function devFail(msg) {
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
+    String(msg).match(/.{1,70}/g).forEach((line, i) => ctx.fillText(line, 20, 60 + i * 30));
+    console.error(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+</script>
+<script src="games/himmelszuender/meta.js"></script>
+<script src="games/himmelszuender/screen.js"></script>
+<script>
+  try {
+    const q = new URLSearchParams(location.search);
+    const simMs = parseInt(q.get('sim') || '0', 10);
+    let fake = 1000;
+    if (simMs > 0) performance.now = () => fake;
+
+    const game = window.GAMES.himmelszuender();
+    window.__game = game;
+    game.start([1, 2, 3, 4], { wellen: parseInt(q.get('wellen') || '3', 10) });
+
+    const FORMS = ['peony', 'willow', 'ring'];
+    const nextAct = {};
+    function bots() {
+      const dbg = game._debug();
+      if (dbg.phase !== 'run') return;
+      for (const id of dbg.order) {
+        const r = dbg.rockets[id];
+        if (r) {
+          // zünden: gezielt in einem Beat-Ring, sonst am Scheitelpunkt
+          let det = r.vy > -30;
+          for (const ring of dbg.rings) {
+            if (Math.hypot(r.x - ring.x, r.y - ring.y) < ring.r * 0.8) det = true;
+          }
+          if (det) game.onMessage(id, { t: 'hzDet' });
+          continue;
+        }
+        if (fake < (nextAct[id] || 0)) continue;
+        nextAct[id] = fake + 1000 + Math.random() * 1400;
+        // auf einen Ring zielen, falls vorhanden
+        const ring = dbg.rings[0];
+        const x0 = 960 * (0.14 + 0.72 * (dbg.order.indexOf(id) / (dbg.order.length - 1)));
+        let ang = -Math.PI / 2 + (Math.random() - 0.5) * 0.8;
+        if (ring) ang = Math.atan2(ring.y - 444, ring.x - x0);
+        game.onMessage(id, { t: 'hzLaunch', ang, power: 0.8 + Math.random() * 1.6, kaliber: 1 + ((Math.random() * 3) | 0), form: FORMS[(Math.random() * 3) | 0] });
+      }
+    }
+
+    if (simMs > 0) {
+      for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; bots(); game.render(); }
+      (function loop() { fake += 16.7; bots(); game.render(); requestAnimationFrame(loop); })();
+    } else {
+      for (let i = 0; i < 5; i++) game.render();
+      (function loop() { bots(); game.render(); requestAnimationFrame(loop); })();
+    }
+    document.title = 'FEUERWERK-RUNNING';
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>
