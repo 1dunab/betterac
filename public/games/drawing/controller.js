@@ -58,8 +58,20 @@
     for (const s of strokes) { if (!s.p.length) continue; pctx.strokeStyle = s.c; pctx.lineWidth = Math.max(1, s.w * pad.width); pctx.beginPath(); pctx.moveTo(s.p[0][0] * pad.width, s.p[0][1] * pad.height); for (let i = 1; i < s.p.length; i++) pctx.lineTo(s.p[i][0] * pad.width, s.p[i][1] * pad.height); if (s.p.length === 1) pctx.lineTo(s.p[0][0] * pad.width + 0.5, s.p[0][1] * pad.height); pctx.stroke(); }
   }
   function padPos(e) { const r = pad.getBoundingClientRect(), t = e.touches ? e.touches[0] : e; return [clampN((t.clientX - r.left) / r.width), clampN((t.clientY - r.top) / r.height)]; }
-  function sStart(e) { e.preventDefault(); drawing = true; cur = { c: erasing ? '#ffffff' : color, w: erasing ? 0.06 : sizeFrac, p: [padPos(e).map(r3)] }; strokes.push(cur); redraw(); }
-  function sMove(e) { if (!drawing || !cur) return; e.preventDefault(); cur.p.push(padPos(e).map(r3)); redraw(); }
+  // Nur das neue Segment zeichnen — ein Voll-redraw() pro Move wäre O(n²)
+  // über die Zeichensession und macht das Pad auf älteren Handys zäh.
+  function drawTip(s) {
+    const n = s.p.length;
+    pctx.lineCap = 'round'; pctx.lineJoin = 'round';
+    pctx.strokeStyle = s.c; pctx.lineWidth = Math.max(1, s.w * pad.width);
+    const a = s.p[Math.max(0, n - 2)], b = s.p[n - 1];
+    pctx.beginPath();
+    pctx.moveTo(a[0] * pad.width, a[1] * pad.height);
+    pctx.lineTo(b[0] * pad.width + (n === 1 ? 0.5 : 0), b[1] * pad.height);
+    pctx.stroke();
+  }
+  function sStart(e) { e.preventDefault(); drawing = true; cur = { c: erasing ? '#ffffff' : color, w: erasing ? 0.06 : sizeFrac, p: [padPos(e).map(r3)] }; strokes.push(cur); drawTip(cur); }
+  function sMove(e) { if (!drawing || !cur) return; e.preventDefault(); cur.p.push(padPos(e).map(r3)); drawTip(cur); }
   function sEnd(e) { if (e) e.preventDefault(); drawing = false; cur = null; }
   pad.addEventListener('touchstart', sStart); pad.addEventListener('touchmove', sMove); pad.addEventListener('touchend', sEnd); pad.addEventListener('touchcancel', sEnd);
   pad.addEventListener('mousedown', sStart); pad.addEventListener('mousemove', sMove); window.addEventListener('mouseup', sEnd);
