@@ -464,7 +464,15 @@ registerGame({ key: 'himmelszuender', screen: function () {
     onDisconnect(id) {
       order = order.filter(o => o !== id);
       delete rockets[id]; delete py[id];
-      if (!order.length) endToLobby('');
+      if (!order.length) { endToLobby(''); return; }
+      if (phase === 'end') {
+        // Host könnte gegangen sein — Nochmal-Button an den neuen Host geben
+        const grade = crowd >= 80 ? '🤩 Legendär!' : crowd >= 50 ? '👏 Starke Show!' : '🙂 Nette Show.';
+        const h = hostId();
+        order.forEach(o => ac.message(o, {
+          t: 'hzEnd', win: o === winner, name: winner !== null && py[winner] ? nameOf(winner) : '—', host: o === h, grade
+        }));
+      }
     },
     onMessage(id, d) {
       if (!d || !py[id]) return;

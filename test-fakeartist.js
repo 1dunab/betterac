@@ -1,4 +1,5 @@
-// E2E-Test Fake Artist: genau ein Fake, Strich-Rotation, Voting, Auflösung, nächste Runde.
+// E2E-Test Fake Artist: genau ein Fake, Strich-Rotation, Voting, Auflösung,
+// Host-Handover auf dem End-Screen (Roadmap #2), nächste Runde.
 const { makeDom, makeBus, visible } = require('./test-helpers');
 
 const bus = makeBus();
@@ -6,7 +7,8 @@ const screen = makeDom('screen.html', 'screen', bus, 'screen');
 const c1 = makeDom('controller.html', 'controller', bus, 'c1');
 const c2 = makeDom('controller.html', 'controller', bus, 'c2');
 const c3 = makeDom('controller.html', 'controller', bus, 'c3');
-const all = [c1, c2, c3];
+const c4 = makeDom('controller.html', 'controller', bus, 'c4');
+const all = [c1, c2, c3, c4];
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function fail(msg) { console.error('FEHLER: ' + msg); process.exitCode = 1; }
@@ -23,7 +25,7 @@ function drawStroke(dom) {
 
 (async () => {
   await sleep(80);
-  for (const [dom, name] of [[c1, 'Anna'], [c2, 'Ben'], [c3, 'Cleo']]) {
+  for (const [dom, name] of [[c1, 'Anna'], [c2, 'Ben'], [c3, 'Cleo'], [c4, 'Dino']]) {
     dom.window.document.getElementById('nameInput').value = name;
     dom.window.document.getElementById('joinBtn').click();
   }
@@ -38,7 +40,7 @@ function drawStroke(dom) {
   c1.window.document.getElementById('startBtn').click();
   await sleep(80);
 
-  console.log('Nach Start:', all.map(visible).join(' | '), '(erwartet 3x v-fa-card)');
+  console.log('Nach Start:', all.map(visible).join(' | '), '(erwartet 4x v-fa-card)');
 
   // Rollen: genau ein Fake
   const roles = all.map(d => {
@@ -53,9 +55,9 @@ function drawStroke(dom) {
   all.forEach(d => d.window.document.getElementById('faSeenBtn').click());
   await sleep(50);
 
-  // 3 Spieler x 2 Striche (Default) = 6 Züge, Rotation prüfen
-  const strokesBy = { c1: 0, c2: 0, c3: 0 };
-  for (let turn = 0; turn < 6; turn++) {
+  // 4 Spieler x 2 Striche (Default) = 8 Züge, Rotation prüfen
+  const strokesBy = { c1: 0, c2: 0, c3: 0, c4: 0 };
+  for (let turn = 0; turn < 8; turn++) {
     const drawerIdx = all.findIndex(d => visible(d) === 'v-fa-draw');
     if (drawerIdx === -1) { fail('Kein aktiver Zeichner bei Zug ' + turn + ' — Views: ' + all.map(visible).join('|')); break; }
     const waiting = all.filter((d, i) => i !== drawerIdx).every(d => visible(d) === 'v-fa-wait');
@@ -68,13 +70,13 @@ function drawStroke(dom) {
   if (!Object.values(strokesBy).every(n => n === 2)) fail('Rotation ungleichmäßig');
 
   // Voting
-  console.log('Nach Zeichnen:', all.map(visible).join(' | '), '(erwartet 3x v-fa-vote)');
+  console.log('Nach Zeichnen:', all.map(visible).join(' | '), '(erwartet 4x v-fa-vote)');
   if (!all.every(d => visible(d) === 'v-fa-vote')) fail('Nicht alle im Vote-View');
   const voteOpts = [...c1.window.document.querySelectorAll('#faVoteList button')].map(b => b.textContent);
-  console.log('c1 Vote-Optionen:', voteOpts.join(','), '(erwartet Ben,Cleo — ohne sich selbst)');
+  console.log('c1 Vote-Optionen:', voteOpts.join(','), '(erwartet Ben,Cleo,Dino — ohne sich selbst)');
   if (voteOpts.includes('Anna')) fail('Eigener Name in Vote-Liste');
-  // c1 und c2 stimmen für Cleo, c3 für Anna → Cleo meistgewählt
-  for (const [dom, target] of [[c1, 'Cleo'], [c2, 'Cleo'], [c3, 'Anna']]) {
+  // c1, c2, c4 stimmen für Cleo; c3 für Anna → Cleo meistgewählt
+  for (const [dom, target] of [[c1, 'Cleo'], [c2, 'Cleo'], [c3, 'Anna'], [c4, 'Cleo']]) {
     [...dom.window.document.querySelectorAll('#faVoteList button')].find(b => b.textContent === target).click();
     await sleep(20);
   }
@@ -86,11 +88,19 @@ function drawStroke(dom) {
   if (c1.window.document.getElementById('faNextBtn').style.display === 'none') fail('Host hat keinen Next-Button');
   if (c2.window.document.getElementById('faNextBtn').style.display !== 'none') fail('Gast hat Next-Button');
 
-  // Nächste Runde
-  c1.window.document.getElementById('faNextBtn').click();
+  // Host-Handover: verlässt der Host den End-Screen, muss der neue Host
+  // (c2) den Next-Button bekommen (Roadmap #2)
+  bus.disconnect('c1');
+  await sleep(80);
+  const c2btn = c2.window.document.getElementById('faNextBtn').style.display;
+  console.log('Nach Host-Disconnect — NextBtn neuer Host (c2):', c2btn, '(erwartet inline-block)');
+  if (c2btn === 'none') fail('Neuer Host hat nach Host-Disconnect keinen Next-Button');
+
+  // Nächste Runde startet jetzt der neue Host
+  c2.window.document.getElementById('faNextBtn').click();
   await sleep(50);
-  console.log('Runde 2:', all.map(visible).join(' | '), '| Label:', c2.window.document.getElementById('faRoundLbl').textContent);
-  if (!all.every(d => visible(d) === 'v-fa-card')) fail('Runde 2 startet nicht mit Rollenkarten');
+  console.log('Runde 2:', [c2, c3, c4].map(visible).join(' | '), '| Label:', c2.window.document.getElementById('faRoundLbl').textContent);
+  if (![c2, c3, c4].every(d => visible(d) === 'v-fa-card')) fail('Runde 2 startet nicht mit Rollenkarten');
 
   console.log(process.exitCode ? '❌ Test fehlgeschlagen' : '✅ Alle Checks bestanden');
   process.exit(process.exitCode || 0);

@@ -995,6 +995,11 @@ registerGame({ key: 'bossraid', screen: function () {
       delete fighters[id];
       if (!order.length) { endToLobby(''); return; }
       if (phase === 'fight' && order.every(o => !fighters[o] || fighters[o].hp <= 0)) startWipe(performance.now());
+      else if (phase === 'win') {
+        // Host könnte gegangen sein — Revanche-Button an den neuen Host geben
+        const h = hostId();
+        order.forEach(o => ac.message(o, { t: 'brEnd', win: true, host: o === h }));
+      }
     },
     onMessage(id, d) {
       const f = fighters[id];

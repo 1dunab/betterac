@@ -847,6 +847,11 @@ registerGame({ key: 'racer', screen: function () {
       delete racers[id]; delete points[id];
       if (order.length < 2) { endToLobby('Micro Racer braucht mind. 2 Spieler.'); return; }
       if (phase === 'race' && aliveIds().length <= 1) endHeat(aliveIds()[0] || null, performance.now());
+      else if (phase === 'final' && champion !== null) {
+        // Host könnte gegangen sein — Nochmal-Button an den neuen Host geben
+        const h = hostId();
+        order.forEach(o => ac.message(o, { t: 'raceFinal', winner: o === champion, name: nameOf(champion), host: o === h }));
+      }
     },
     onMessage(id, d) {
       if (!d) return;

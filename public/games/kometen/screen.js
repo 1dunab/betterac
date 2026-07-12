@@ -401,10 +401,20 @@ registerGame({ key: 'kometen', screen: function () {
     onDisconnect(id) {
       const t = teamOf[id];
       order = order.filter(o => o !== id);
-      buildTeams();
       delete hotState[id];
+      if (phase === 'end') {
+        // Kein buildTeams() mehr — das würde die gespielten Teams umwürfeln.
+        // Host könnte gegangen sein: Nochmal-Button an den neuen Host geben.
+        if (order.length < 2) { endToLobby('Kometen-Klatsche braucht beide Teams.'); return; }
+        const h = hostId();
+        order.forEach(o => ac.message(o, {
+          t: 'kkEnd', win: teamOf[o] === winnerTeam, name: TEAM_NAME[winnerTeam], host: o === h
+        }));
+        return;
+      }
+      buildTeams();
       if (order.length < 2 || !teams[0].length || !teams[1].length) {
-        if (phase !== 'end' && t !== undefined && teams[1 - t].length) { endMatch(1 - t); return; }
+        if (t !== undefined && teams[1 - t] && teams[1 - t].length) { endMatch(1 - t); return; }
         endToLobby('Kometen-Klatsche braucht beide Teams.');
       }
     },

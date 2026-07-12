@@ -87,6 +87,11 @@
         if (phase === 'reveal' && ids.every(p => confirmed.has(p))) { phase = 'draw'; sendTurn(); }
         else if (phase === 'draw' && wasCurrent) sendTurn();
         else if (phase === 'vote' && ids.every(p => votes.has(p))) resolve();
+        else if (phase === 'result') {
+          // Host könnte gegangen sein — Next-Button an den neuen Host geben
+          const h = hostId();
+          ids.forEach(p => ac.message(p, { t: 'faPhase', phase: 'result', host: p === h }));
+        }
       },
       onMessage(id, d) {
         if (!d || !ids.includes(id)) return;

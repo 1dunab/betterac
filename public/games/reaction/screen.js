@@ -65,6 +65,11 @@
         if (ids.length < 2) { endToLobby('Reaktionsduell braucht mind. 2 Spieler.'); return; }
         if (participants.length === 0) participants = ids.slice();
         if (phase === 'go' && participants.every(p => taps.has(p) || failed.has(p))) endRound();
+        else if (phase === 'final') {
+          // Host könnte gegangen sein — Nochmal-Button an den neuen Host geben
+          const h = hostId();
+          ids.forEach(p => ac.message(p, { t: 'rxPhase', phase: 'final', host: p === h }));
+        }
       },
       onMessage(id, d) {
         if (!d || !ids.includes(id)) return;

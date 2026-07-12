@@ -42,6 +42,14 @@ function makeBus() {
   return {
     handlers: {},
     register(label, h) { this.handlers[label] = h; },
+    // Simuliert einen Verbindungsabbruch (z.B. Host geht) — wie server.js:
+    // Client aus der Map entfernen und disconnect an alle anderen broadcasten
+    disconnect(label) {
+      const entry = [...clients.entries()].find(([, l]) => l === label);
+      if (!entry) return;
+      clients.delete(entry[0]);
+      for (const [, ol] of clients) this.handlers[ol].deliver({ type: 'disconnect', device_id: entry[0] });
+    },
     fromClient(label, raw) {
       const msg = JSON.parse(raw);
       if (msg.type === 'register') {

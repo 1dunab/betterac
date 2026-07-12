@@ -652,6 +652,12 @@ registerGame({ key: 'spacearena', screen: function () {
       order = order.filter(o => o !== id);
       delete ships[id]; delete points[id];
       if (order.length < 2) { endToLobby('Space Arena braucht mind. 2 Spieler.'); return; }
+      if (phase === 'final' && champion !== null) {
+        // Host könnte gegangen sein — Nochmal-Button an den neuen Host geben
+        const h = hostId();
+        order.forEach(o => ac.message(o, { t: 'saFinal', winner: o === champion, name: nameOf(champion), host: o === h }));
+        return;
+      }
       checkRoundEnd(performance.now());
     },
     onMessage(id, d) {

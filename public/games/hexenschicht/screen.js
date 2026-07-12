@@ -425,6 +425,12 @@ registerGame({ key: 'hexenschicht', screen: function () {
       order = order.filter(o => o !== id);
       Object.values(items).forEach(it => { if (it.owner === id) delete items[it.uid]; });
       if (order.length < 3) { endToLobby('Hexenschicht braucht mind. 3 Hexen.'); return; }
+      if (phase === 'end') {
+        // Host könnte gegangen sein — Nochmal-Button an den neuen Host geben
+        const h = hostId();
+        order.forEach(o => ac.message(o, { t: 'hxEnd', score, potions, host: o === h }));
+        return;
+      }
       assignTools(rotated ? 1 : 0);
       recipes = recipes.map(r => r.needs.every(n => n.steps.every(s => availTools.includes(s))) ? r : newRecipe());
       sendSetup(wasKessel ? '🍲 Der Kessel braucht dich!' : null);

@@ -6,13 +6,13 @@ open an issue before starting the L ones.
 
 ## Phase 1 — Bugs & robustness
 
-- [ ] **1. Drawing Evolution: incremental pad rendering (S, confirmed bug)**
+- [x] **1. Drawing Evolution: incremental pad rendering (S, confirmed bug)**
   `sMove` calls `redraw()` on every touch move, repainting *all* strokes — O(n²) over a
   drawing session, laggy on older phones once the picture fills up.
   *Requirement:* draw only the new line segment on move; full `redraw()` only on
   undo/clear/round start. Visual result must be identical (round caps/joins).
 
-- [ ] **2. Host leaves on an end screen → nobody has the rematch button (S, confirmed)**
+- [x] **2. Host leaves on an end screen → nobody has the rematch button (S, confirmed)**
   The shell updates `myHost`/abort on host change, but game-specific end-screen buttons
   (Boss Raid, Space Arena, Sintflut, Kometen, Hexenschicht, Himmelszünder, Fake Artist,
   Racer) are only sent on phase entry.

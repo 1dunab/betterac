@@ -623,6 +623,12 @@ registerGame({ key: 'sintflut', screen: function () {
       if (phase === 'run') {
         const dry = order.filter(o => houses[o] && !houses[o].dead);
         if (dry.length <= 1) finish(performance.now(), dry[0] !== undefined ? dry[0] : null);
+      } else if (phase === 'done') {
+        // Host könnte gegangen sein — Revanche-Button an den neuen Host geben
+        const h = hostId();
+        order.forEach(o => ac.message(o, {
+          t: 'flEnd', winner: o === winner, name: winner !== null ? nameOf(winner) : '—', host: o === h
+        }));
       }
     },
     onMessage(id, d) {
