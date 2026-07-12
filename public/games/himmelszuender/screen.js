@@ -70,14 +70,102 @@ registerGame({ key: 'himmelszuender', screen: function () {
     else if (!weak && kaliber === 2) setShake(4, 200);
   }
 
-  // ---------- Beat-Ringe / Sync (Welle 2) ----------
-  function updateRings(now, dt) {}
-  function drawRings(now) {}
+  // ---------- Beat-Ringe ----------
+  const BEAT = 1000, FLASH_MS = 360, CYCLE = BEAT * 4;
+  let nextRingAt = 0, finale = false;
+  const ringTarget = () => finale ? 0 : (wave >= 3 ? 3 : 2);
+  const ringRadius = () => Math.max(44, 74 - (wave - 1) * 12);
+  const flashActive = (ring, now) => {
+    const ph = (now - ring.born) % CYCLE;
+    return ph > BEAT * 3 && ph < BEAT * 3 + FLASH_MS;
+  };
+  function spawnRing(now) {
+    for (let tries = 0; tries < 16; tries++) {
+      const x = 120 + Math.random() * (W - 240);
+      const y = 70 + Math.random() * (SEA_Y - 300);
+      if (rings.some(r => Math.hypot(r.x - x, r.y - y) < 190)) continue;
+      rings.push({ x, y, r: ringRadius(), born: now, expireAt: now + CYCLE * 3 });
+      return;
+    }
+  }
+  function updateRings(now, dt) {
+    rings = rings.filter(r => now < r.expireAt && !r.hit);
+    if (rings.length < ringTarget() && now >= nextRingAt) {
+      nextRingAt = now + 700;
+      spawnRing(now);
+    }
+  }
+  function drawRings(now) {
+    rings.forEach(ring => {
+      const ph = (now - ring.born) % CYCLE;
+      const beatIdx = Math.floor(ph / BEAT);
+      const beatPh = (ph % BEAT) / BEAT;
+      const flash = flashActive(ring, now);
+      const pulse = 1 + 0.07 * Math.sin(beatPh * Math.PI);
+      ctx.globalCompositeOperation = 'lighter';
+      if (flash) {
+        drawGlow(ring.x, ring.y, ring.r * 0.7, '#ffffff', 0.35);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 5;
+        ctx.setLineDash([]);
+      } else {
+        ctx.strokeStyle = 'rgba(140,180,255,' + (0.28 + beatIdx * 0.14) + ')';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([10, 8]);
+        ctx.lineDashOffset = -now / 40;
+      }
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, ring.r * pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Beat-Countdown: 3 Punkte füllen sich, der 4. ist der Blitz
+      for (let i = 0; i < 4; i++) {
+        const a = -Math.PI / 2 + i / 4 * Math.PI * 2;
+        const filled = i <= beatIdx;
+        ctx.globalAlpha = filled ? 0.9 : 0.25;
+        drawGlow(ring.x + Math.cos(a) * (ring.r + 16), ring.y + Math.sin(a) * (ring.r + 16), 3,
+          i === 3 ? '#ffffff' : '#8cb4ff', filled ? 0.9 : 0.25);
+      }
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+    });
+  }
+
   function scoreDetonation(id, x, y, kaliber, now) {
-    // Basis-Punkte (Ring-/Beat-/Sync-Logik folgt in Welle 2)
-    const pts = y < SEA_Y - 60 ? kaliber * 8 : 2;
+    const col = players[id] ? players[id].color : '#fff';
+    let pts, inRing = false, inBeat = false;
+    const ring = rings.find(r => !r.hit && Math.hypot(x - r.x, y - r.y) < r.r);
+    if (ring) {
+      inRing = true;
+      inBeat = flashActive(ring, now);
+      ring.hit = true;
+      pts = kaliber * 10 * (inBeat ? 2 : 1);
+    } else {
+      pts = finale ? kaliber * 6 : (y < SEA_Y - 60 ? kaliber * 3 : 2);
+    }
+    if (finale) crowd = Math.min(100, crowd + kaliber * 4);
     py[id].points += pts;
-    floatText(x, y - 20, '+' + pts, players[id] ? players[id].color : '#fff');
+    floatText(x, y - 20, '+' + pts + (inBeat ? ' BEAT!' : ''), inBeat ? '#fff' : col, inBeat ? 28 : 22);
+    // Sync: mehrere Spieler treffen Ringe im selben Fenster
+    if (inRing) {
+      dets.push({ id, t: now, pts, synced: false });
+      dets = dets.filter(d => now - d.t < 450);
+      const group = dets.filter(d => !d.synced);
+      const who = [...new Set(group.map(d => d.id))];
+      if (who.length >= 2) {
+        group.forEach(d => d.synced = true);
+        const mult = who.length;
+        timeScale = 0.25;
+        setFlash(220);
+        setShake(10, 500);
+        say('🤝 SYNC ×' + mult + '! ' + who.map(nameOf).join(' + '), '#ffd60a', 2400, 46);
+        group.forEach(d => {
+          const bonus = d.pts * (mult - 1);
+          py[d.id].points += bonus;
+          ac.message(d.id, { t: 'hzYou', points: py[d.id].points, sync: true, msg: '🤝 SYNC ×' + mult + '!' });
+        });
+      }
+    }
     return pts;
   }
 
@@ -119,10 +207,41 @@ registerGame({ key: 'himmelszuender', screen: function () {
   }
 
   // ---------- Simulation ----------
+  const WAVE_MS = 55000, FINALE_MS = 15000;
+  function endShow(now) {
+    phase = 'end';
+    // Publikums-Bonus für alle
+    order.forEach(id => { py[id].points += Math.round(crowd); });
+    let best = -1;
+    order.forEach(id => { if (py[id].points > best) { best = py[id].points; winner = id; } });
+    const grade = crowd >= 80 ? '🤩 Legendär!' : crowd >= 50 ? '👏 Starke Show!' : '🙂 Nette Show.';
+    const h = hostId();
+    order.forEach(id => ac.message(id, {
+      t: 'hzEnd', win: id === winner, name: winner !== null ? nameOf(winner) : '—', host: id === h, grade
+    }));
+  }
+
   function simulate(dt, now) {
     if (phase !== 'run') return;
     timeScale += (1 - timeScale) * Math.min(1, dt * 3);
     const sdt = dt * timeScale;
+    // Wellen-Dramaturgie
+    if (!finale && now - waveAt > WAVE_MS) {
+      if (wave < wavesTotal) {
+        wave++;
+        waveAt = now;
+        say('🌊 WELLE ' + wave + ' — schneller, kleiner, härter!', '#8cb4ff', 2600, 42);
+        order.forEach(id => ac.message(id, { t: 'hzState', msg: '🌊 Welle ' + wave + '!' }));
+      } else {
+        finale = true;
+        finaleAt = now;
+        rings = [];
+        say('🎇 FREISTIL-FINALE! ALLES RAUS!', '#ffd60a', 3000, 48);
+        setShake(8, 700);
+        order.forEach(id => { py[id].ammo = 100; ac.message(id, { t: 'hzYou', ammo: 100, msg: '🎇 FINALE — Publikum begeistern!' }); });
+      }
+    }
+    if (finale && now - finaleAt > FINALE_MS) { endShow(now); return; }
     updateRings(now, sdt);
     order.forEach(id => {
       const p = py[id];
@@ -264,6 +383,55 @@ registerGame({ key: 'himmelszuender', screen: function () {
   }
 
   function drawHud(now) {
+    ctx.textBaseline = 'middle';
+    if (phase === 'run' && !finale) {
+      ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(255,255,255,.7)';
+      ctx.font = 'bold 15px system-ui,sans-serif';
+      ctx.fillText('🌊 Welle ' + wave + ' / ' + wavesTotal, 14, 20);
+      const wleft = Math.max(0, Math.ceil((waveAt + WAVE_MS - now) / 1000));
+      ctx.fillStyle = 'rgba(255,255,255,.4)';
+      ctx.fillText(wleft + 's', 14, 40);
+    } else if (finale && phase === 'run') {
+      // Publikums-Meter
+      const bw = 300, bx = W / 2 - bw / 2;
+      ctx.fillStyle = 'rgba(255,255,255,.12)';
+      rr(ctx, bx, 12, bw, 16, 8); ctx.fill();
+      if (crowd > 0) {
+        ctx.fillStyle = '#ffd60a';
+        rr(ctx, bx, 12, Math.max(12, bw * crowd / 100), 16, 8); ctx.fill();
+      }
+      ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui,sans-serif';
+      ctx.fillText('👏 PUBLIKUM ' + Math.round(crowd) + '%', W / 2, 44);
+      const fleft = Math.max(0, Math.ceil((finaleAt + FINALE_MS - now) / 1000));
+      ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 22px system-ui,sans-serif';
+      ctx.fillText(fleft + 's', W / 2, 70);
+    }
+    if (phase === 'end') {
+      // Ambient-Feuerwerk hinter dem Ranking
+      if (Math.random() < 0.05) {
+        const kal = 1 + ((Math.random() * 2) | 0);
+        const id = order[(Math.random() * order.length) | 0];
+        explode(100 + Math.random() * (W - 200), 60 + Math.random() * (SEA_Y - 260), kal,
+          ['peony', 'willow', 'ring'][(Math.random() * 3) | 0], players[id] ? players[id].color : '#ffd60a', false);
+      }
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 50px system-ui,sans-serif';
+      ctx.shadowColor = '#ffd60a'; ctx.shadowBlur = 22;
+      ctx.fillText('🎆 Show vorbei!', W / 2, 100);
+      ctx.shadowBlur = 0;
+      const grade = crowd >= 80 ? '🤩 Legendär!' : crowd >= 50 ? '👏 Starke Show!' : '🙂 Nette Show.';
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui,sans-serif';
+      ctx.fillText('Publikum: ' + Math.round(crowd) + '% — ' + grade, W / 2, 148);
+      const st = order.slice().sort((a, b) => py[b].points - py[a].points);
+      ctx.font = 'bold 24px system-ui,sans-serif';
+      st.slice(0, 8).forEach((id, i) => {
+        ctx.fillStyle = players[id] ? players[id].color : '#888';
+        ctx.fillText((i + 1) + '.  ' + shortName(id) + ' — ' + py[id].points + ' Punkte' + (i === 0 ? ' 👑' : ''), W / 2, 200 + i * 36);
+      });
+      ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '16px system-ui,sans-serif';
+      ctx.fillText('⭐ Host kann am Handy eine neue Show starten', W / 2, H - 40);
+    }
     if (announce && now < announce.until) {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.globalAlpha = Math.min(1, (announce.until - now) / 400);
@@ -286,6 +454,7 @@ registerGame({ key: 'himmelszuender', screen: function () {
       py = {}; rockets = {}; parts = []; texts = []; rings = []; dets = [];
       order.forEach(id => { py[id] = { points: 0, ammo: 100 }; });
       phase = 'run'; wave = 1; timeScale = 1; crowd = 0; winner = null;
+      finale = false; nextRingAt = 0;
       startAt = performance.now(); lastT = startAt; waveAt = startAt; lastYou = 0;
       buildCity();
       say('🎆 Die Show beginnt!', '#ffd60a', 2400, 44);
