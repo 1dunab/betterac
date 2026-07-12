@@ -93,8 +93,23 @@
   function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
   function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } return f; }
 
+  // ===== Lobby-Snapshot: übersteht Screen-Reload (F5/Crash) im selben Tab =====
+  let snapshot = null, snapshotApplied = false;
+  try {
+    const s = JSON.parse(sessionStorage.getItem('shellSnapshot') || 'null');
+    if (s && s.players && Date.now() - s.t < 3 * 3600 * 1000) snapshot = s;
+  } catch (e) {}
+  function saveShellSnapshot() {
+    try {
+      const ps = {};
+      connectedIds().forEach(id => { if (players[id].named) ps[id] = { name: players[id].name, color: players[id].color }; });
+      sessionStorage.setItem('shellSnapshot', JSON.stringify({ t: Date.now(), players: ps, selected: shell.selected, cfg: gameCfg }));
+    } catch (e) {}
+  }
+
   // ===== Shell-Nachrichten an Controller =====
   function sendLobby() {
+    saveShellSnapshot();
     const h = hostId();
     namedIds().forEach(id => ac.message(id, {
       t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
@@ -125,6 +140,19 @@
     document.getElementById('info').textContent = '⚠️ Ein anderer Screen hat übernommen — dieses Fenster ist inaktiv.';
   };
   ac.onConnect = (id) => {
+    // Nach Screen-Reload: bekannte Spieler aus dem Snapshot wiederherstellen
+    // statt alle neu nach Namen zu fragen (Spiel-Auswahl + Settings gleich mit)
+    const snap = snapshot && snapshot.players[id];
+    if (snap && !active) {
+      if (!snapshotApplied) {
+        snapshotApplied = true;
+        if (snapshot.selected && GAMES[snapshot.selected]) shell.selected = snapshot.selected;
+        if (snapshot.cfg) Object.keys(snapshot.cfg).forEach(k => { if (GAME_META[k]) applyCfg(k, snapshot.cfg[k]); });
+      }
+      players[id] = { color: snap.color || COLORS[(id - 1) % COLORS.length], name: String(snap.name || '').slice(0, 14) || ('Spieler ' + id), named: true };
+      sendLobby();
+      return;
+    }
     players[id] = { color: COLORS[(id - 1) % COLORS.length], name: 'Spieler ' + id, named: false };
     ac.message(id, { t: 'shell', cmd: 'name' });
     connectedIds().filter(o => o !== id && players[o].named).forEach(o => { if (shell.state === 'lobby') sendLobby(); });

@@ -19,7 +19,7 @@ open an issue before starting the L ones.
   *Requirement:* in `onDisconnect`, while in an end phase, re-send the end message so the
   new host gets the button (Spion's `sendPhase` pattern). Fix all affected games.
 
-- [ ] **3. Screen reload loses the lobby (M)**
+- [x] **3. Screen reload loses the lobby (M)**
   A TV browser crash mid-evening dumps everyone back to the name prompt.
   *Requirement:* screen snapshots lobby state (names/colors per device-id) into
   `sessionStorage`; on takeover/reload, restore named players instead of re-prompting.

@@ -15,7 +15,7 @@ function noopCtx() {
   }, set: () => true });
 }
 
-function makeDom(file, role, bus, label) {
+function makeDom(file, role, bus, label, opts) {
   let html = fs.readFileSync(path.join(PUB, file), 'utf8');
   // <script src> inlinen, damit runScripts:'dangerously' ohne Netz funktioniert
   html = html.replace(/<script src="([^"]+)"><\/script>/g, (m, p) =>
@@ -23,6 +23,10 @@ function makeDom(file, role, bus, label) {
   const dom = new JSDOM(html, {
     runScripts: 'dangerously', url: 'http://localhost:3000/' + file, pretendToBeVisual: true,
     beforeParse(w) {
+      // simuliert z.B. sessionStorage, das einen Seiten-Reload im selben Tab überlebt
+      if (opts && opts.seedSession) {
+        for (const k of Object.keys(opts.seedSession)) w.sessionStorage.setItem(k, opts.seedSession[k]);
+      }
       w.HTMLCanvasElement.prototype.getContext = noopCtx;
       w.WebSocket = function () {
         const ws = { readyState: 1, OPEN: 1, send: (raw) => bus.fromClient(label, raw) };
@@ -61,7 +65,10 @@ function makeBus() {
         return;
       }
       if (msg.type === 'message') {
-        const from = [...clients.entries()].find(([, l]) => l === label)[0];
+        // Nicht (mehr) registrierte Sender ignorieren (z.B. ein ersetzter Screen)
+        const entry = [...clients.entries()].find(([, l]) => l === label);
+        if (!entry) return;
+        const from = entry[0];
         if (msg.to === undefined || msg.to === null) {
           for (const [oid, ol] of clients) if (ol !== label) this.handlers[ol].deliver({ type: 'message', from, data: msg.data });
         } else {
