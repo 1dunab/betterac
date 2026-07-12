@@ -14,12 +14,15 @@ bullet-hell boss fights and a falling-sand flood war.
 
 | | |
 |---|---|
-| ![Sintflut](docs/screenshots/sintflut.png) | ![Boss Raid](docs/screenshots/boss-raid.png) |
-| 🌊 Sintflut — falling-sand flood war | 🐉 Boss Raid — co-op neon bullet-hell |
-| ![Artillery](docs/screenshots/artillery.png) | ![Himmelszünder](docs/screenshots/himmelszuender.png) |
-| 💥 Artillery Hills — Worms-style tanks | 🎆 Himmelszünder — synchronized fireworks |
-| ![Kometen-Klatsche](docs/screenshots/kometen-klatsche.png) | |
-| ☄️ Kometen-Klatsche — swipe volleyball | ...and a real-3D racer (three.js), and 12 more |
+| ![Sintflut](docs/screenshots/sintflut.gif) | ![Kometen-Klatsche](docs/screenshots/kometen-klatsche.gif) |
+| 🌊 Sintflut — falling-sand flood war | ☄️ Kometen-Klatsche — swipe volleyball |
+| ![Himmelszünder](docs/screenshots/himmelszuender.gif) | ![Boss Raid](docs/screenshots/boss-raid.png) |
+| 🎆 Himmelszünder — synchronized fireworks | 🐉 Boss Raid — co-op neon bullet-hell |
+| ![Artillery](docs/screenshots/artillery.png) | |
+| 💥 Artillery Hills — Worms-style tanks | ...and a real-3D racer (three.js), and 12 more |
+
+The GIFs are captured straight from the dev harnesses (`?sim=…&seed=…&freeze=1` +
+headless Firefox + ffmpeg) — no phones were harmed.
 
 ## Quick start
 
