@@ -13,9 +13,16 @@
            max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
   #saveBtn { display:none; border:none; border-radius:12px; padding:12px 20px; font-size:16px; font-weight:700; background:#30d158; color:#06250f; cursor:pointer; }
   #saveBtn:active { filter:brightness(1.1); }
+  #fsBtn { position:fixed; top:10px; right:10px; z-index:50; border:none; border-radius:10px; padding:8px 12px;
+           font-size:18px; background:rgba(255,255,255,.12); color:#eee; cursor:pointer; transition:opacity .4s; }
+  #fsBtn:hover { background:rgba(255,255,255,.25); }
+  /* Nach 3s Maus-Ruhe: Cursor und Vollbild-Button ausblenden (TV-Modus) */
+  body.idle { cursor:none; }
+  body.idle #fsBtn { opacity:0; pointer-events:none; }
 </style>
 </head>
 <body>
+<button id="fsBtn" title="Vollbild">⛶</button>
 <div id="wrap">
   <div id="info">Party Hub — öffne <b>/controller.html</b> auf den Handys</div>
   <canvas id="c" width="960" height="600"></canvas>
@@ -136,6 +143,22 @@
     if (msg) setBanner(msg, 6000);
     sendLobby();
   }
+
+  // ===== Vollbild + Cursor-Auto-Hide (TV-Modus) =====
+  document.getElementById('fsBtn').addEventListener('click', () => {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen();
+    } catch (e) {}
+  });
+  let idleTimer = null;
+  function wakeUi() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => document.body.classList.add('idle'), 3000);
+  }
+  document.addEventListener('mousemove', wakeUi);
+  wakeUi();
 
   // ===== Events =====
   ac.onKicked = () => {
