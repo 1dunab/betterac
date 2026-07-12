@@ -230,6 +230,7 @@ registerGame({ key: 'sintflut', screen: function () {
     ranking.unshift(id);
     say(byLava ? '🌋 ' + nameOf(id) + ' — Haus verglüht!' : '🌊 ' + nameOf(id) + ' ist abgesoffen!', byLava ? '#ff7a30' : '#4cd7ff');
     setShake(8, 500);
+    sfx('splash');
     splash(h.x * CELL, (h.top + 4) * CELL, byLava ? '#ff7a30' : '#4cd7ff', 22, 160);
     ac.message(id, { t: 'flYou', ghost: true });
     const dry = order.filter(o => houses[o] && !houses[o].dead);
@@ -287,6 +288,7 @@ registerGame({ key: 'sintflut', screen: function () {
 
   // ---------- TNT ----------
   function explodeTnt(t, now) {
+    sfx('explosion');
     const R = 11;
     for (let x = t.gx - R; x <= t.gx + R; x++) {
       for (let y = t.gy - R; y <= t.gy + R; y++) {
@@ -597,6 +599,7 @@ registerGame({ key: 'sintflut', screen: function () {
       order = ids.slice().sort((a, b) => a - b);
       durationMs = ((cfg && cfg.dauer) || 5) * 60000;
       phase = 'run'; winner = null; ranking = []; ghost = {};
+      sfx.ambient('wind');
       parts = []; tnts = []; lavaOn = false; eventBanner = null; announce = null;
       event = null; rainUntil = 0; lavaVents = [];
       frame = 0; lastCount = 0; countAt = 0;

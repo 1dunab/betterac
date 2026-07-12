@@ -13,16 +13,19 @@
            max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
   #saveBtn { display:none; border:none; border-radius:12px; padding:12px 20px; font-size:16px; font-weight:700; background:#30d158; color:#06250f; cursor:pointer; }
   #saveBtn:active { filter:brightness(1.1); }
-  #fsBtn { position:fixed; top:10px; right:10px; z-index:50; border:none; border-radius:10px; padding:8px 12px;
+  #fsBtn, #muteBtn { position:fixed; top:10px; z-index:50; border:none; border-radius:10px; padding:8px 12px;
            font-size:18px; background:rgba(255,255,255,.12); color:#eee; cursor:pointer; transition:opacity .4s; }
-  #fsBtn:hover { background:rgba(255,255,255,.25); }
-  /* Nach 3s Maus-Ruhe: Cursor und Vollbild-Button ausblenden (TV-Modus) */
+  #fsBtn { right:10px; }
+  #muteBtn { right:58px; }
+  #fsBtn:hover, #muteBtn:hover { background:rgba(255,255,255,.25); }
+  /* Nach 3s Maus-Ruhe: Cursor und Ecken-Buttons ausblenden (TV-Modus) */
   body.idle { cursor:none; }
-  body.idle #fsBtn { opacity:0; pointer-events:none; }
+  body.idle #fsBtn, body.idle #muteBtn { opacity:0; pointer-events:none; }
 </style>
 </head>
 <body>
 <button id="fsBtn" title="Vollbild">⛶</button>
+<button id="muteBtn" title="Ton an/aus">🔊</button>
 <div id="wrap">
   <div id="info">Party Hub — öffne <b>/controller.html</b> auf den Handys</div>
   <canvas id="c" width="960" height="600"></canvas>
@@ -34,6 +37,7 @@
 <script src="vendor/qrcode.js"></script>
 <script src="airconsole-local.js"></script>
 <script src="core/wakelock.js"></script>
+<script src="core/sfx.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
   const ac = new AirConsole();
@@ -135,11 +139,13 @@
     shell.state = 'playing';
     const h = hostId();
     namedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'enterGame', game: key, host: id === h }));
+    sfx('whoosh');
     active.start(namedIds().sort((a, b) => a - b), cfgFor(key));
   }
   function endToLobby(msg) {
     if (active && active.stop) active.stop();
     active = null; activeKey = null; shell.state = 'lobby';
+    sfx.ambient(null); // Spiel-Ambient endet mit dem Spiel
     if (msg) setBanner(msg, 6000);
     sendLobby();
   }
@@ -150,6 +156,13 @@
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen();
     } catch (e) {}
+  });
+  const muteBtn = document.getElementById('muteBtn');
+  muteBtn.textContent = sfx.muted ? '🔇' : '🔊';
+  muteBtn.addEventListener('click', () => {
+    sfx.setMuted(!sfx.muted);
+    muteBtn.textContent = sfx.muted ? '🔇' : '🔊';
+    sfx('pop'); // hörbares Feedback beim Einschalten (und Autoplay-Freischaltung)
   });
   let idleTimer = null;
   function wakeUi() {
@@ -193,12 +206,12 @@
   ac.onMessage = (id, d) => {
     if (!d) return;
     if (d.t === 'shellName') {
-      if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; }
+      if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; sfx('pop'); }
       if (!active) sendLobby();
       else if (active.acceptsJoin) { active.onConnect && active.onConnect(id); ac.message(id, { t: 'shell', cmd: 'enterGame', game: activeKey, host: id === hostId() }); }
       else ac.message(id, { t: 'shell', cmd: 'spectate', host: id === hostId() });
     } else if (d.t === 'shellSelect' && id === hostId() && !active) {
-      if (GAMES[d.game]) { shell.selected = d.game; sendLobby(); }
+      if (GAMES[d.game]) { shell.selected = d.game; sfx('tick'); sendLobby(); }
     } else if (d.t === 'shellConfig' && id === hostId() && !active) {
       if (d.game === shell.selected) { applyCfg(d.game, d.cfg); sendLobby(); }
     } else if (d.t === 'shellStart' && id === hostId() && !active) {

@@ -20,7 +20,7 @@
       sendState();
       later(() => {
         if (phase !== 'armed') return;
-        phase = 'go'; goAt = performance.now(); sendState();
+        phase = 'go'; goAt = performance.now(); sfx('go'); sendState();
         later(() => { if (phase === 'go') endRound(); }, 5000); // niemand tippt → Runde verfällt
       }, 1500 + Math.random() * 3500);
     }
@@ -29,7 +29,7 @@
       phase = 'result';
       let winner = null, best = Infinity;
       taps.forEach((ms, id) => { if (ms < best) { best = ms; winner = id; } });
-      if (winner !== null) wins[winner] = (wins[winner] || 0) + 1;
+      if (winner !== null) { wins[winner] = (wins[winner] || 0) + 1; sfx('coin'); }
       lastRound = { winner, times: participants.map(id => ({ id, ms: taps.has(id) ? Math.round(taps.get(id)) : null, early: failed.has(id) })) };
       participants.forEach(id => {
         const res = failed.has(id) ? 'early' : !taps.has(id) ? 'none' : id === winner ? 'win' : 'ok';
@@ -42,7 +42,7 @@
       let top = 0; ids.forEach(id => { top = Math.max(top, wins[id] || 0); });
       const leaders = ids.filter(id => (wins[id] || 0) === top);
       if (leaders.length > 1) { participants = leaders; nextRound(true); return; }
-      phase = 'final';
+      phase = 'final'; sfx('fanfare');
       const h = hostId();
       ids.forEach(id => ac.message(id, { t: 'rxPhase', phase: 'final', host: id === h }));
     }
@@ -80,7 +80,7 @@
         }
         if (d.t !== 'rxTap' || !participants.includes(id)) return;
         if (phase === 'armed') {
-          if (!failed.has(id)) { failed.add(id); ac.message(id, { t: 'rxYou', res: 'early', ms: null }); }
+          if (!failed.has(id)) { failed.add(id); sfx('buzz'); ac.message(id, { t: 'rxYou', res: 'early', ms: null }); }
         } else if (phase === 'go') {
           if (failed.has(id) || taps.has(id)) return;
           taps.set(id, performance.now() - goAt);

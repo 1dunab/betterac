@@ -974,6 +974,7 @@ registerGame({ key: 'bossraid', screen: function () {
     start(ids, settings) {
       cfg = settings || {};
       hard = cfg.difficulty === 'hard';
+      sfx.ambient('drone');
       order = ids.slice().sort((a, b) => a - b);
       fighters = {}; ebullets = []; pshots = []; sparks = []; zones = []; announce = null;
       stars = Array.from({ length: 90 }, () => ({ x: Math.random() * W, y: Math.random() * H, v: 0.15 + Math.random() * 0.5, s: Math.random() < 0.2 ? 2 : 1, a: 0.3 + Math.random() * 0.7 }));

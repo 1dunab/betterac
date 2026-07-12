@@ -93,7 +93,37 @@ There is **no separate tick loop** — do your simulation inside `render()` usin
 | `rr(ctx, x, y, w, h, r)` | rounded-rect path helper |
 | `fitFont(ctx, text, maxWidth, startPx)` | shrink font until text fits |
 | `drawStrokesOn(ctx, strokes, x, y, w, h)` | render normalized drawing strokes |
+| `sfx(name)`, `sfx.ambient(name)` | sound engine — see the palette below |
 | `GAME_META` | all registered metadata (rarely needed) |
+
+### Sound palette (`core/sfx.js`)
+
+Everything is synthesized in WebAudio — no audio files, no assets to license. Call
+`sfx('name')` from `screen.js` whenever something happens; it is a silent no-op until
+the browser allows audio (first click/keypress on the screen page) and when muted
+(🔊 button, persisted). One-shots:
+
+| Name | Character | Typical use |
+|---|---|---|
+| `pop` | soft blip | player joins, UI feedback |
+| `tick` | tiny click | selection, menu |
+| `beep` | short mid beep | countdown steps |
+| `go` | bright long beep | round start signal |
+| `coin` | two rising notes | point scored, success |
+| `powerup` | rising sweep | pickup collected |
+| `buzz` | low rasp | wrong answer, false start |
+| `hit` | short noise snap | small impact |
+| `thud` | dull low punch | body hit, landing |
+| `splash` | watery noise | water contact |
+| `whoosh` | filtered sweep | launch, dash, game start |
+| `explosion` | big noise + sub drop | the big one |
+| `fanfare` | 4-note arpeggio | winner screen |
+| `sad` | descending notes | defeat, elimination |
+
+Ambient loops run until replaced or the game ends (the shell calls `sfx.ambient(null)`
+in `endToLobby`): `sfx.ambient('wind' | 'drone' | 'space' | 'rain')`. Start one in your
+`start()` if it fits the mood — Sintflut uses `wind`, Boss Raid `drone`, Space Arena
+`space`. Keep it subtle; ambients are quiet by design.
 
 Needing WebGL? See `racer/screen.js`: it creates its own canvas + 2D HUD overlay that
 replace `cv` during the game (`window.THREE` is provided by the vendored three.js) and

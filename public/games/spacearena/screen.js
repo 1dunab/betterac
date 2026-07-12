@@ -55,6 +55,7 @@ registerGame({ key: 'spacearena', screen: function () {
 
   // ---------- Explosionen & Verschlucken ----------
   function explodeShip(id, s, now) {
+    sfx('explosion');
     const col = players[id] ? players[id].color : '#fff';
     for (let i = 0; i < 5; i++) {
       debris.push({
@@ -638,6 +639,7 @@ registerGame({ key: 'spacearena', screen: function () {
     acceptsJoin: false,
     start(ids, cfg) {
       order = ids.slice().sort((a, b) => a - b);
+      sfx.ambient('space');
       targetPoints = (cfg && cfg.targetPoints) || 3;
       points = {}; order.forEach(id => { points[id] = 0; });
       ships = {}; sparks = []; debris = []; waves = []; sucks = []; holeDust = []; shoots = [];

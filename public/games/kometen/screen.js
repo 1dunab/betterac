@@ -173,6 +173,7 @@ registerGame({ key: 'kometen', screen: function () {
     waves.push({ x: best.x, y: best.y, born: now, life: smash ? 520 : 380, r1: smash ? 110 : 60, color: smash ? '#ffffff' : (players[id] ? players[id].color : '#fff') });
     spark(best.x, best.y, smash ? '#ffffff' : TEAM_COL[t], smash ? 18 : 8, smash ? 280 : 180, 2.5, 400);
     setShake(smash ? 9 : 3, smash ? 350 : 140);
+    sfx(smash ? 'explosion' : 'thud');
     if (smash) {
       say('💥 SMASH von ' + nameOf(id) + '!', '#fff', 1100, 34);
       ac.message(id, { t: 'kkFx', smash: true });

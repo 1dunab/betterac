@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Dev: Sound-Palette</title>
+<style>
+  body { background:#0a0a14; color:#eee; font-family:system-ui,sans-serif; padding:24px; }
+  h1 { font-size:20px; } h2 { font-size:15px; color:#aaa; margin-top:24px; }
+  button { border:none; border-radius:10px; padding:10px 16px; margin:4px; font-size:15px;
+           background:#26263c; color:#eee; cursor:pointer; }
+  button:hover { background:#34345a; }
+  button.on { background:#6e2a5e; }
+  p { color:#888; font-size:13px; max-width:640px; }
+</style>
+</head>
+<body>
+<h1>🔊 Sound-Palette (core/sfx.js)</h1>
+<p>Erster Klick schaltet Audio frei (Autoplay-Policy). Namen = API für <code>sfx('name')</code>
+   in screen.js — siehe games/README.md.</p>
+<h2>Einmal-Sounds</h2>
+<div id="shots"></div>
+<h2>Ambient-Loops (exklusiv — einer läuft)</h2>
+<div id="loops"></div>
+<script src="core/sfx.js"></script>
+<script>
+  const SHOTS = ['pop','tick','beep','go','coin','powerup','buzz','hit','thud','splash','whoosh','explosion','fanfare','sad'];
+  const LOOPS = ['wind','drone','space','rain'];
+  const shots = document.getElementById('shots'), loops = document.getElementById('loops');
+  SHOTS.forEach(n => {
+    const b = document.createElement('button');
+    b.textContent = n;
+    b.addEventListener('click', () => sfx(n));
+    shots.appendChild(b);
+  });
+  let current = null;
+  LOOPS.concat(['aus']).forEach(n => {
+    const b = document.createElement('button');
+    b.textContent = n;
+    b.addEventListener('click', () => {
+      sfx.ambient(n === 'aus' ? null : n);
+      current = n;
+      [...loops.children].forEach(c => c.classList.toggle('on', c.textContent === current));
+    });
+    loops.appendChild(b);
+  });
+</script>
+</body>
+</html>

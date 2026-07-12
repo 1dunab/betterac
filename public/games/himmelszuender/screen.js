@@ -47,6 +47,7 @@ registerGame({ key: 'himmelszuender', screen: function () {
 
   // ---------- Explosionen ----------
   function explode(x, y, kaliber, form, color, weak) {
+    sfx(weak ? 'hit' : 'explosion');
     const n = weak ? 22 : KAL_PARTS[kaliber] || 70;
     const base = weak ? 60 : 90 + kaliber * 55;
     const cols = [color, color, '#fff7d0', '#ffd60a'];
@@ -193,6 +194,7 @@ registerGame({ key: 'himmelszuender', screen: function () {
       kaliber, form: ['peony', 'willow', 'ring'].includes(d.form) ? d.form : 'peony', born: now
     };
     spawnP({ x, y: SEA_Y - 6, vx: (Math.random() - 0.5) * 30, vy: 30, color: '#ffd60a', life: 300, size: 2 });
+    sfx('whoosh');
     ac.message(id, { t: 'hzYou', ammo: p.ammo, flying: true });
   }
   function detonate(id, now, weak) {
