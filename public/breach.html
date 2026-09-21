@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#102431">
+  <title>BREACH — Station NEXUS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' fill='%23152633'/%3E%3Cpath d='M9 8h20v10H17v5h12v9H9z' fill='%23ddebb1'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="games/breach/style.css?v=20260920-ffa-1">
+  <link rel="stylesheet" href="games/breach/controls.css?v=20260920-ffa-1">
+</head>
+<body>
+  <main id="br-app">
+    <div id="br-stage" aria-label="3D-Spielfeld Station NEXUS"></div>
+    <div id="br-menu" class="br-menu">
+      <header class="br-header"><a class="br-brand" href="breach.html"><span class="br-mark">B</span> BREACH<span class="br-edition">TACTICAL / 01</span></a><a class="br-back" href="screen.html">← PARTY HUB</a></header>
+      <div id="br-home" class="br-home">
+        <section class="br-hero">
+          <div class="br-eyebrow"><span></span> MULTIPLAYER · 1–8 OPERATOR</div>
+          <h1>BETRETET<br>DEN <em>SEKTOR.</em></h1>
+          <p>Eine verlassene Forschungsstation.<br>Zwei Teams. Eine Entscheidung in Sekunden.</p>
+          <div class="br-map-label"><span class="br-map-icon">⌖</span><div><b>STATION NEXUS</b><small>EXOPLANET KEPLER · SEKTOR 07</small></div><span class="br-map-live">MAP / 01</span></div>
+          <div class="br-features"><span>01 <b>TAKTISCHE RUNDEN</b></span><span>02 <b>ZWEI BOMBENPLÄTZE</b></span><span>03 <b>EURE CREW</b></span></div>
+        </section>
+        <section class="br-card br-deploy" aria-labelledby="br-deploy-title">
+          <div class="br-card-top"><span>VERBINDUNG AUFBAUEN</span><span class="br-status-dot"></span></div>
+          <h2 id="br-deploy-title">Euer nächster Einsatz.</h2>
+          <p>Privaten Raum erstellen und Freunde über den Einladungslink ins Team holen.</p>
+          <label for="br-name">DEIN RUFNAME</label><input id="br-name" maxlength="18" autocomplete="nickname" placeholder="Operator" value="Operator">
+          <button id="br-create" class="br-primary">RAUM ERSTELLEN <span>↗</span></button>
+          <div class="br-divider"><span>ODER MIT CODE BEITRETEN</span></div>
+          <div class="br-join-row"><input id="br-code" aria-label="Raumcode" maxlength="5" placeholder="ABCDE" autocapitalize="characters" spellcheck="false"><button id="br-join" aria-label="Raum beitreten">→</button></div>
+          <label for="br-solo-mode">SOLO-SPIELMODUS</label><select id="br-solo-mode"></select><p id="br-solo-hint" class="br-mode-description"></p>
+          <button id="br-training" class="br-secondary">◇ SOLO-TRAINING MIT BOTS</button>
+          <p id="br-error" class="br-error" role="alert"></p>
+          <div class="br-card-foot">KEIN ACCOUNT. DIREKT IM BROWSER.</div>
+        </section>
+      </div>
+      <section id="br-room" class="br-room" hidden>
+        <div class="br-room-main">
+          <div class="br-eyebrow"><span></span> PRIVATER EINSATZRAUM</div><h1>EURE <em>CREW.</em></h1>
+          <p id="br-mode-info" class="br-mode-description"></p><p id="br-room-status">Warte auf dein Team.</p>
+          <div class="br-teams"><section class="br-team"><div><b>01 / ANGRIFF</b><button data-team="0">BEITRETEN</button></div><ul id="br-team0"></ul><small>Bombe auf A oder B legen.</small></section><section class="br-team br-team-orange"><div><b>02 / VERTEIDIGUNG</b><button data-team="1">BEITRETEN</button></div><ul id="br-team1"></ul><small>Plätze sichern. Bombe entschärfen.</small></section></div>
+          <p class="br-room-hint">Freie Plätze können mit Bots aufgefüllt werden. Bis zu 8 Freunde pro Raum.</p>
+        </div>
+        <div class="br-card br-room-controls"><div class="br-card-top">EINLADUNGSCODE <span>↗</span></div><div id="br-room-code" class="br-code-display"></div><button id="br-copy" class="br-secondary">EINLADUNGSLINK KOPIEREN</button><input id="br-invite" readonly aria-label="Einladungslink" hidden>
+          <div id="br-config"><label for="br-mode">SPIELMODUS</label><select id="br-mode"><option value="tactical">Taktisch · Bombe legen / entschärfen</option><option value="deathmatch">Team-Deathmatch · 150 Sekunden</option></select><label for="br-difficulty">BOT-STÄRKE</label><select id="br-difficulty"><option value="easy" selected>Entspannt</option><option value="normal">Taktisch</option><option value="hard">Veteran</option></select><label for="br-target">SIEGE BIS MATCHENDE</label><select id="br-target"><option value="1">1 Runde</option><option value="3" selected>3 Runden</option><option value="5">5 Runden</option></select><label class="br-check"><input id="br-bots" type="checkbox" checked> Freie Plätze mit Bots füllen</label></div>
+          <button id="br-start" class="br-primary">EINSATZ STARTEN <span>→</span></button><button id="br-watch" class="br-secondary" hidden>ZUM LAUFENDEN MATCH</button><button id="br-leave" class="br-text-btn">RAUM VERLASSEN</button><p id="br-room-error" class="br-error" role="alert"></p>
+        </div>
+      </section>
+      <footer class="br-footer"><span><b>W A S D</b> BEWEGEN <i>·</i> <b>MAUS</b> ZIELEN <i>·</i> <b>E</b> INTERAGIEREN</span><span>ORIGINAL MAP <i>/</i> BUILT FOR YOUR CREW</span></footer>
+    </div>
+    <div id="br-game-tools" hidden><span id="br-net"></span><button id="br-audio" title="Ton umschalten">TON AN</button><button id="br-fullscreen" title="Vollbild">⛶</button><button id="br-armory-button">ARSENAL</button><button id="br-menu-button">MENÜ</button></div>
+    <div id="br-pause" hidden class="br-pause"><div class="br-card"><div class="br-card-top">STATION NEXUS / EINSATZ</div><h2>Dein Arsenal.</h2><p id="br-pause-mode"></p><div id="br-armory-grid"></div><label for="br-desktop-sensitivity">ZIEL-EMPFINDLICHKEIT</label><input id="br-desktop-sensitivity" type="range" min="0.3" max="1.8" step="0.1"><p>WASD bewegen · Maus zielen · Klick feuern<br>Rechtsklick anvisieren · Auto-Reload · R manuell<br>E halten: Bombe legen / entschärfen<br>G Rauch · Leertaste springen · Tab Statistik</p><button id="br-resume" class="br-primary">WEITERSPIELEN <span>→</span></button><button id="br-return" class="br-secondary">ZUM RAUM</button><small>Online läuft der Einsatz während des Menüs weiter.</small></div></div>
+    <div id="br-fatal" class="br-fatal" hidden role="alert"></div>
+  </main>
+  <script src="games/breach/world.js?v=20260920-ffa-1"></script>
+  <script src="games/breach/simulation.js?v=20260920-ffa-1"></script>
+<script src="games/breach/feedback.js?v=20260920-ffa-1"></script>
+  <script src="games/breach/render.js?v=20260920-ffa-1"></script>
+  <script src="games/breach/input.js?v=20260920-ffa-1"></script>
+  <script src="games/breach/sound.js?v=20260920-ffa-1"></script>
+  <script src="games/breach/client.js?v=20260920-ffa-1"></script>
+  <script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE; window.initBreachApp();</script>
+</body>
+</html>

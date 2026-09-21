@@ -35,12 +35,12 @@
 <script>window.__AC_ROLE__ = 'screen';</script>
 <script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
 <script src="vendor/qrcode.js"></script>
-<script src="airconsole-local.js"></script>
+<script src="airconsole-local.js?v=20260920-ffa-1"></script>
 <script src="core/wakelock.js"></script>
 <script src="core/sfx.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
-  const ac = new AirConsole();
+  const ac = new AirConsole({ deferConnect: true });
   const cv = document.getElementById('c');
   const ctx = cv.getContext('2d');
   const saveBtn = document.getElementById('saveBtn');
@@ -223,7 +223,14 @@
   };
   ac.onMessage = (id, d) => {
     if (!d) return;
-    if (d.t === 'shellName') {
+    if (d.t === 'shellSync') {
+      if (!players[id] || !players[id].named) return;
+      if (!active) sendLobby();
+      else if (active.canResume && active.canResume(id)) {
+        ac.message(id, { t: 'shell', cmd: 'enterGame', game: activeKey, host: id === hostId() });
+        active.onReconnect(id);
+      }
+    } else if (d.t === 'shellName') {
       if (players[id]) { players[id].name = ((d.name || '').trim().slice(0, 14)) || ('Spieler ' + id); players[id].named = true; sfx('pop'); }
       if (!active) sendLobby();
       else if (active.acceptsJoin) { active.onConnect && active.onConnect(id); ac.message(id, { t: 'shell', cmd: 'enterGame', game: activeKey, host: id === hostId() }); }
@@ -307,6 +314,7 @@
     const schema = (GAME_META[shell.selected] || {}).settings || {};
     const parts = Object.keys(schema).map(f => {
       const def = schema[f], v = cfgFor(shell.selected)[f];
+      if (def.when && !Object.entries(def.when).every(([key, value]) => cfgFor(shell.selected)[key] === value)) return null;
       if (def.type === 'choice') { const o = (def.options || []).find(o => o.v === v); return def.label + ': ' + (o ? o.label : v); }
       if (def.type === 'text') { const s = String(v || ''); return s ? (s.length > 40 ? s.slice(0, 39) + '…' : s) : null; }
       return def.label + ' ' + v + (def.unit || '');
@@ -422,8 +430,17 @@
 <script src="games/himmelszuender/meta.js"></script>
 <script src="games/himmelszuender/screen.js"></script>
 <!-- ▼ Register new games here (meta.js first, then screen.js — see games/README.md) -->
+<script src="games/breach/meta.js?v=20260920-ffa-1"></script>
+<script src="games/breach/world.js?v=20260920-ffa-1"></script>
+<script src="games/breach/simulation.js?v=20260920-ffa-1"></script>
+<script src="games/breach/feedback.js?v=20260920-ffa-1"></script>
+<script src="games/breach/render.js?v=20260920-ffa-1"></script>
+<script src="games/breach/input.js?v=20260920-ffa-1"></script>
+<script src="games/breach/sound.js?v=20260920-ffa-1"></script>
+<script src="games/breach/screen.js?v=20260920-ffa-1"></script>
 <script>
   // ===== Render-Schleife =====
+  ac._connect();
   saveBtn.addEventListener('click', () => { if (active && active.save) active.save(); });
   (function loop() {
     if (active && active.render) active.render();

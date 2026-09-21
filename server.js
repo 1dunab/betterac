@@ -12,6 +12,9 @@ const MIME = { '.html': 'text/html', '.js': 'application/javascript', '.css': 't
 
 // --- Statischer Datei-Server fuer screen.html / controller.html / shim ---
 const server = http.createServer((req, res) => {
+  // Phones must never combine an old controller script with a new touch layout.
+  // This LAN app serves editable files directly, without a fingerprinted build.
+  res.setHeader('Cache-Control', 'no-store');
   let urlPath = req.url.split('?')[0];
   if (urlPath === '/info') {
     // Für den Lobby-QR-Code: unter welcher LAN-Adresse sind wir erreichbar?
@@ -30,9 +33,16 @@ const server = http.createServer((req, res) => {
 });
 
 // --- WebSocket: Verbindung & Nachrichten-Routing ---
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
+const breach = require('./breach-server')();
+server.on('upgrade', (req, socket, head) => {
+  if (req.url.split('?')[0] === '/breach-ws') breach.upgrade(req, socket, head);
+  else wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+});
+server.on('close', () => breach.close());
 const clients = new Map();   // device_id -> ws
 const secrets = new Map();   // device_id -> Resume-Secret (nur dieser Server-Lauf)
+const pendingDisconnects = new Map();
 let nextControllerId = 1;    // Screen ist immer 0, Controller ab 1
 const newSecret = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
@@ -68,6 +78,7 @@ wss.on('connection', (ws) => {
         id = nextControllerId++;
       }
       ws.deviceId = id;
+      clearTimeout(pendingDisconnects.get(id)); pendingDisconnects.delete(id);
       clients.set(id, ws);
       if (id > 0 && !secrets.has(id)) secrets.set(id, newSecret());
       send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: secrets.get(id) });
@@ -81,6 +92,7 @@ wss.on('connection', (ws) => {
       const id = msg.id | 0;
       const target = clients.get(id);
       if (id > 0 && target) {
+        clearTimeout(pendingDisconnects.get(id)); pendingDisconnects.delete(id);
         send(target, { type: 'kicked' });
         secrets.delete(id);
         target.deviceId = undefined;
@@ -105,8 +117,17 @@ wss.on('connection', (ws) => {
     // Nur aufraeumen, wenn die ID noch zu diesem Socket gehoert — der verspaetete
     // close eines uebernommenen Sockets darf den Nachfolger nicht loeschen.
     if (ws.deviceId !== undefined && clients.get(ws.deviceId) === ws) {
-      clients.delete(ws.deviceId);
-      broadcast({ type: 'disconnect', device_id: ws.deviceId });
+      const id = ws.deviceId;
+      const disconnect = () => {
+        pendingDisconnects.delete(id);
+        if (clients.get(id) !== ws) return;
+        clients.delete(id);
+        broadcast({ type: 'disconnect', device_id: id });
+      };
+      // A page reload closes its socket before the replacement can resume it.
+      // Keep that authenticated seat briefly, instead of removing its live actor.
+      if (id > 0) pendingDisconnects.set(id, setTimeout(disconnect, 8000));
+      else disconnect();
     }
   });
 });
@@ -124,7 +145,7 @@ const heartbeat = setInterval(() => {
     ws.ping();
   }
 }, 10000);
-wss.on('close', () => clearInterval(heartbeat));
+wss.on('close', () => { clearInterval(heartbeat); for (const timer of pendingDisconnects.values()) clearTimeout(timer); pendingDisconnects.clear(); });
 
 function lanIPs() {
   const out = [], ifs = os.networkInterfaces();
@@ -134,6 +155,7 @@ function lanIPs() {
 server.listen(PORT, () => {
   const ips = lanIPs();
   console.log(`AirConsole-Local laeuft auf Port ${PORT}.`);
+  console.log(`  BREACH:     http://localhost:${PORT}/breach.html (Online-Raeume / Solo)`);
   if (!ips.length) {
     console.log(`  Screen:     http://localhost:${PORT}/screen.html`);
     console.log(`  Controller: http://localhost:${PORT}/controller.html`);

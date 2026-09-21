@@ -14,7 +14,7 @@
     this.onDisconnect = function () {};
     this.onMessage = function () {};
     this.onKicked = function () {};
-    this._connect();
+    if (!opts.deferConnect) this._connect();
   }
 
   AirConsole.SCREEN = 0; // der Screen hat immer Geraete-ID 0

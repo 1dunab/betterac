@@ -9,6 +9,7 @@
                -webkit-user-select:none; user-select:none; touch-action:none; }
   .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
   .view.on { display:flex; }
+  #v-shelllobby{overflow-y:auto;touch-action:pan-y}#v-shelllobby>.center{flex:1 0 auto}
   .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .word { font-size:22px; font-weight:800; }
   .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
@@ -34,6 +35,7 @@
   #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
               padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
 </style>
+<link rel="stylesheet" href="games/breach/controls.css?v=20260920-ffa-1">
 </head>
 <body>
 
@@ -71,14 +73,14 @@
 <!-- Spiel-Views injizieren die Module selbst (siehe games/README.md) -->
 
 <script>window.__AC_ROLE__ = 'controller';</script>
-<script src="airconsole-local.js"></script>
+<script src="airconsole-local.js?v=20260920-ffa-1"></script>
 <script src="core/wakelock.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
-  const ac = new AirConsole();
+  const ac = new AirConsole({ deferConnect: true });
   const $ = (id) => document.getElementById(id);
   const VIEWS = ['name','shelllobby','spectate'];
-  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); document.documentElement.style.touchAction = document.body.style.touchAction = v === 'shelllobby' || v === 'name' ? 'pan-y' : 'none'; }
   function shade(hex) { const n = parseInt(hex.slice(1), 16); return 'rgb(' + Math.round(((n >> 16) & 255) * 0.4) + ',' + Math.round(((n >> 8) & 255) * 0.4) + ',' + Math.round((n & 255) * 0.4) + ')'; }
 
   let inGame = false, myHost = false, activeC = null, gamesMeta = [];
@@ -120,6 +122,7 @@
     const schema = (window.GAME_META[selected] || {}).settings || {};
     for (const f in schema) {
       const def = schema[f];
+      if (def.when && !Object.entries(def.when).every(([key, value]) => curCfg[key] === value)) continue;
       if (def.type === 'choice') {
         const row = document.createElement('div'); row.className = 'modes'; row.style.marginBottom = '14px';
         (def.options || []).forEach(o => {
@@ -146,6 +149,10 @@
         inp.addEventListener('change', () => { curCfg[f] = inp.value; sendCfg(); });
         row.append(lab, inp); wrap.appendChild(row);
       }
+    }
+    if (selected === 'breach' && window.BreachWorld) {
+      const hint = document.createElement('p'); hint.id = 'br-lobby-mode-hint'; hint.style.cssText = 'font-size:13px;line-height:1.5;color:#c4d9d7';
+      hint.textContent = BreachWorld.modes[curCfg.mode]?.description || ''; $('gameSettings').append(hint);
     }
   }
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
@@ -253,11 +260,15 @@
 <script src="games/himmelszuender/meta.js"></script>
 <script src="games/himmelszuender/controller.js"></script>
 <!-- ▼ Register new games here (meta.js first, then controller.js — see games/README.md) -->
+<script src="games/breach/meta.js?v=20260920-ffa-1"></script>
+<script src="games/breach/world.js?v=20260920-ffa-1"></script>
+<script src="games/breach/input.js?v=20260920-ffa-1"></script>
+<script src="games/breach/controller.js?v=20260920-ffa-1"></script>
 <script>
   const MODULES = window.CONTROLLERS;
 
   // ============ Nachrichten ============
-  ac.onReady = () => { /* Name-Ansicht aktiv */ };
+  ac.onReady = () => ac.message(AirConsole.SCREEN, { t: 'shellSync' });
   ac.onMessage = (from, d) => {
     if (!d) return;
     if (d.t === 'shell') {
@@ -285,6 +296,8 @@
     }
   };
   showView('name');
+  // Connect only after every controller and message handler is ready.
+  ac._connect();
 </script>
 </body>
 </html>

@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BREACH · Dev</title>
+<style>html,body{margin:0;background:#12232f;color:white;font-family:monospace}#stage{position:absolute;inset:0}#hint{position:absolute;bottom:5px;left:45%;font-size:10px;z-index:2;pointer-events:none}</style></head>
+<body><div id="stage"></div><div id="hint">BREACH / DEV · Klick + WASD</div>
+<script src="games/breach/world.js?v=20260920-ffa-1"></script><script src="games/breach/simulation.js?v=20260920-ffa-1"></script>
+<script src="games/breach/feedback.js?v=20260920-ffa-1"></script><script src="games/breach/render.js?v=20260920-ffa-1"></script><script src="games/breach/input.js?v=20260920-ffa-1"></script>
+<script type="module">
+import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;
+const q = new URLSearchParams(location.search), ids = q.has('split') ? [1,2] : [1];
+const game = new BreachGame.Match(ids, { target: 3, mode: q.get('mode') || 'tactical' });
+const view = new BreachView(document.getElementById('stage')), input = new BreachInput(view.renderer.domElement); input.enabled = true;
+window.__game = game; window.__view = view; window.__input = input;
+if (q.has('sim')) for (let i = 0; i < Math.min(180000, Number(q.get('sim'))) / 16.667; i++) game.step(1/60);
+let last = performance.now();
+function tick(now) { const dt = Math.min(.05,(now-last)/1000); last=now; if (!q.has('freeze')) { game.input(1,input.read()); game.step(dt); } view.effects(game.events.splice(0),{1:'Anna',2:'Ben'}); view.draw(game,ids,{1:'Anna',2:'Ben'},dt,q.has('overview')); requestAnimationFrame(tick); } requestAnimationFrame(tick);
+</script></body></html>

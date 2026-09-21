@@ -19,7 +19,7 @@ function makeDom(file, role, bus, label, opts) {
   let html = fs.readFileSync(path.join(PUB, file), 'utf8');
   // <script src> inlinen, damit runScripts:'dangerously' ohne Netz funktioniert
   html = html.replace(/<script src="([^"]+)"><\/script>/g, (m, p) =>
-    '<script>' + fs.readFileSync(path.join(PUB, p), 'utf8').replace(/<\/script>/g, '<\\/script>') + '</script>');
+    '<script>' + fs.readFileSync(path.join(PUB, p.split('?')[0]), 'utf8').replace(/<\/script>/g, '<\\/script>') + '</script>');
   const dom = new JSDOM(html, {
     runScripts: 'dangerously', url: 'http://localhost:3000/' + file, pretendToBeVisual: true,
     beforeParse(w) {
