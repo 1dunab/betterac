@@ -99,6 +99,60 @@ open an issue before starting the L ones.
   *Requirement:* animated GIFs (harness + screen recording) for 2–3 games; they sell the
   project far better than stills.
 
+## Game follow-ups
+
+### 🐶 Wauwau-WG — next phases
+Phase 1 is done ([design notes](WAUWAUWG.md)): adoption, care, Gassi, park, shop, the day
+loop and dogs that live on the phones. Everything below builds on the dog record and the
+scene contract — new record fields must also pass `WW.sanitizeDog`, or phones and the TV
+backup silently drop them.
+
+**Phase 2 — tricks, contests, more world**
+
+- [ ] **16. Tricks (L)**
+  *Sitz, Platz, Pfote, Rolle, Männchen*, taught on the phone: draw the trick's gesture,
+  then reward with a 🍪 at the right moment; after a few good sessions the dog knows it.
+  *Requirement:* trick progress in the dog record; known tricks performed on the TV
+  (Sitz / Platz / Männchen map to the `sit` / `lie` / `beg` poses, Pfote and Rolle need
+  new ones in dogart.js).
+- [ ] **17. Evening competitions (L)**
+  Some days end with a contest instead of the park: **frisbee distance** (the park physics
+  as is), **agility timing** (a course scene — tunnel, jumps, slalom — with timing taps on
+  the phone), **obedience race** (commands on the TV, first correct gesture wins).
+  *Requirement:* results go through `reportWinners`, so the evening scoreboard sees them.
+- [ ] **18. Accessories visible on the TV (M)**
+  Collars, hats and bows from the shop, worn in every scene. `drawDog` / `drawPortrait`
+  already take a `collar` color; hats and bows need head anchors per breed.
+- [ ] **19. Tug-of-war rope (M)**
+  A park toy for two dogs: both owners hammer their phones, the rope drifts towards the
+  stronger side.
+- [ ] **20. More walk routes (M each)**
+  Forest path, river bank, old town — each with its own backdrop, sniff-spot kinds and
+  loot table; the day or the host picks the route.
+- [ ] **21. NPC dogs (M)**
+  Neighbors' dogs on the walk and in the park: sniff greetings, the occasional toy thief,
+  a playmate for the solo player.
+
+**Phase 3 — a living WG**
+
+- [ ] **22. Dog friendships (M)**
+  Dogs that often play together become friends (per uid pair): they greet each other,
+  nap side by side and pick each other for chases.
+- [ ] **23. Personalities (M)**
+  A trait or two per dog (*verfressen, verspielt, verschmust, faul*) that bends need
+  rates, favorite activities and behavior in the scenes.
+- [ ] **24. Decorating the flat (L)**
+  Furniture and decor bought with Taler, placed in the home scene and remembered by the
+  TV.
+- [ ] **25. Weather & seasons (M)**
+  Rainy days (more puddles, wet dogs), snow, autumn leaves; the season follows the real
+  date.
+- [ ] **26. "Hundepass" export code (M)**
+  The ☰ Hundepass shows a code / QR code that carries the dog, the Tierheim imports it:
+  dogs move between phones and between addresses (home Wi-Fi ↔ online server).
+  *Requirement:* imports go through `WW.sanitizeDog`; the `uid` keeps a dog unique in the
+  WG.
+
 ## New game candidates
 
 Jury scores from the concept brainstorm: fun / graphics-wow / feasibility / novelty (of 10).
@@ -153,3 +207,8 @@ are data PRs.
 
 - 17 games, reconnect + heartbeat, resume secrets, declarative settings, view-injection
   modules, contributor docs + template (see git history for the journey).
+- 🎯 BREACH · Station NEXUS — original 3D tactical FPS with six modes, bots and private
+  online rooms ([notes](BREACH.md)).
+- 🐶 Wauwau-WG, Phase 1 — Nintendogs-style dog care: one in-game day per round (Morgen →
+  Gassi → Park → Feierabend), dogs that live on the phones with a TV backup by name
+  ([design notes](WAUWAUWG.md)).

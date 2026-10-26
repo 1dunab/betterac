@@ -36,7 +36,7 @@ Playtest with real phones on your Wi-Fi, or open several controller tabs on your
 3. Add the script tags to `public/screen.html` **and** `public/controller.html` at the
    `▼ Register new games here` marker (exact one-line `<script src="…"></script>` form —
    the test runner depends on it).
-4. Build your game. Steal freely from the 17 existing ones — particles, glow sprites,
+4. Build your game. Steal freely from the 19 existing ones — particles, glow sprites,
    analog pads, swipe gestures, beat timing: it's all in the tree.
 5. Copy `_template/dev.html` to `public/dev-<yourkey>.html`, add dumb bots, and use
    `?sim=<ms>` fast-forwarding to tune and screenshot your game headlessly.

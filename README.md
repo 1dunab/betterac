@@ -7,8 +7,8 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **17 games** — from social deduction and drawing chains to real-3D racing, co-op
-bullet-hell boss fights and a falling-sand flood war.
+and **19 games** — from social deduction and drawing chains to real-3D racing, co-op
+bullet-hell boss fights, a falling-sand flood war and a flat-share full of dogs.
 
 ## Screenshots
 
@@ -18,11 +18,12 @@ bullet-hell boss fights and a falling-sand flood war.
 | 🌊 Sintflut — falling-sand flood war | ☄️ Kometen-Klatsche — swipe volleyball |
 | ![Himmelszünder](docs/screenshots/himmelszuender.gif) | ![Boss Raid](docs/screenshots/boss-raid.png) |
 | 🎆 Himmelszünder — synchronized fireworks | 🐉 Boss Raid — co-op neon bullet-hell |
-| ![Artillery](docs/screenshots/artillery.png) | |
-| 💥 Artillery Hills — Worms-style tanks | ...and a real-3D racer (three.js), and 12 more |
+| ![Artillery](docs/screenshots/artillery.png) | ![Wauwau-WG](docs/screenshots/wauwauwg.png) |
+| 💥 Artillery Hills — Worms-style tanks | 🐶 Wauwau-WG — dog care in a shared flat |
 
-The GIFs are captured straight from the dev harnesses (`?sim=…&seed=…&freeze=1` +
-headless Firefox + ffmpeg) — no phones were harmed.
+...plus a real-3D racer (three.js), the BREACH tactical shooter and 11 more. The GIFs are
+captured straight from the dev harnesses (`?sim=…&seed=…&freeze=1` + headless Firefox +
+ffmpeg) — no phones were harmed.
 
 ## Quick start
 
@@ -33,7 +34,10 @@ npm install
 npm start
 ```
 
-The server prints two URLs:
+The server prints its links with your LAN address. The easiest way in is
+`http://<your-ip>:3000/` on every device: the TV / laptop taps **📺 Ich bin der
+Bildschirm**, every phone taps **📱 Mitspielen** (or scans the QR code in the lobby). There
+is only one screen per server — a second one takes over the first. Or go direct:
 
 - **Screen** (open on the TV / laptop): `http://<your-ip>:3000/screen.html`
 - **Controller** (open on every phone): `http://<your-ip>:3000/controller.html`
@@ -41,6 +45,10 @@ The server prints two URLs:
 Players type a name, the first player becomes the host, picks a game and its settings in
 the lobby, and hits START. Phones reconnect automatically after screen locks or Wi-Fi
 hiccups, and keep their identity.
+
+**Playing online:** no shared Wi-Fi? Host the server on Render, share the screen in a
+Discord / Zoom call and let everyone join from their phone — see
+[Playing online](docs/ONLINE.md).
 
 ## The games
 
@@ -64,6 +72,7 @@ hiccups, and keep their identity.
 | 🧪 Hexenschicht | 3+ | Co-op witch kitchen: throw ingredients from phone to phone |
 | 🎆 Himmelszünder | 1+ | Fireworks show with beat targets and sync combos |
 | 🎯 BREACH · Station NEXUS | 1–8 | Original 3D tactical FPS: phone-controlled split-screen, private online rooms, bots, two bomb sites |
+| 🐶 Wauwau-WG | 1+ | Nintendogs-style dog care: pet, bathe, walk and play fetch — your dog lives on your phone |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -126,11 +135,36 @@ proxy. The game is a private-room prototype, not a ranked matchmaking service.
 integration test, plus pointer ownership and short-tap regressions. `/dev-breach.html?split=1&sim=6000&freeze=1` is the split-screen
 development harness; `?overview=1` shows the complete map. See [BREACH notes](docs/BREACH.md).
 
+## Wauwau-WG
+
+A cozy Nintendogs-style game: every player adopts a dog, and the TV is the shared flat
+("WG"), street and park where all dogs live together. Your phone shows *your* dog up close
+— pet it (every dog has a favorite spot), brush and feed it, give it a three-step foam
+bath, walk it on a leash, throw its toys and shop with the Taler it earns.
+
+One round is one day: **☀️ Morgen** in the flat (care and shopping) → **🦮 Gassi** down a
+scrolling street (dig at sniff spots for loot, dodge mud puddles, pick up after your dog,
+call it back from a cat) → **🎾 Park** (swipe to throw ball, frisbee, duck or stick; dogs
+catch in the air and steal each other's toys) → **🌙 Feierabend**: the day's summary crowns
+the "Hund des Tages" for the evening scoreboard, and the host starts the next day. The
+lobby setting **Tageslänge** picks Kurz, Normal or Lang (about 3, 5 or 8 minutes a day).
+
+Your dog lives on your phone (browser storage, one slot per player name) and comes back
+next game night with its love, toys and Taler — needs only change while you play, so
+nobody starves between evenings. The TV keeps a backup by player name and offers it to a
+phone that arrives without one ("Willkommen zurück! 👋"). Latecomers can join at any time
+and adopt or bring their dog straight into the current scene.
+
+`npm run test:wauwauwg` runs the rules/protocol test and a JSDOM end-to-end test through
+the real phone UI. `/dev-wauwauwg.html?phase=walk&sim=20000&freeze=1` is the TV harness
+with bot dogs; `/dev-wauwauwg-phone.html?view=home` runs the phone UI against a fake
+screen. See the [Wauwau-WG design notes](docs/WAUWAUWG.md).
+
 ## How it works
 
 ```
 ┌──────────┐   WebSocket relay    ┌──────────────┐
-│ Phone(s) │ ◄──────────────────► │  server.js   │  ← ~90 lines: static files +
+│ Phone(s) │ ◄──────────────────► │  server.js   │  ← small: static files +
 │controller│                      │ (id routing) │    message routing, no game logic
 └──────────┘                      └──────┬───────┘
                                          │
@@ -140,8 +174,9 @@ development harness; `?overview=1` shows the complete map. See [BREACH notes](do
                                   └──────────────┘
 ```
 
-- **`server.js`** — serves `public/` and relays JSON messages between devices. It knows
-  nothing about games.
+- **`server.js`** — serves `public/` (with a small landing page at `/`) and relays JSON
+  messages between devices. The relay knows nothing about games (BREACH's online rooms
+  live separately in `breach-server.js`).
 - **`public/screen.html` / `public/controller.html`** — the shell: lobby, player names,
   host logic, settings UI, and a registry that routes messages to the active game.
 - **`public/games/<key>/`** — one folder per game: `meta.js` (label, min players,

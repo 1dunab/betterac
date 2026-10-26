@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Wauwau-WG Dev</title>
+<!-- Dev harness: runs the Wauwau-WG screen standalone with bot dogs.
+     ?sim=<ms>       fast-forward with a fake clock (screenshots)
+     ?phase=walk     jump to home | walk | park | night after adoption
+     ?players=4      number of bots (1–8)      ?nodogs=1  nobody has adopted yet
+     ?seed=7         deterministic run          ?freeze=1  stop the clock after ?sim
+     ?tag=normal     day length (kurz | normal | lang)
+     ?arrive=1       bots adopt after the day started: dogs walk in through the door
+                     (default: they are already home and wake up in their beds)
+     ?act=bathStart  every bot sends this care act once after adoption (&item=meat for feed)
+     ?act2=bath&at2=8000  …and this one once the sim clock reaches at2 ms (e.g. the end of a bath)
+     ?bots=0         no bot input at all (scene autonomy only)
+     ?needs=clean:10,energy:5   set these needs on every bot dog after adoption (dirty, tired, …)
+     Bots use each scene's optional devBot(id, rnd) to send phone messages.
+     firefox --headless --no-remote --profile <dir> --window-size=980,620 \
+       --screenshot out.png "http://localhost:3000/dev-wauwauwg.html?phase=walk&sim=20000&freeze=1" -->
+<style>
+  html,body { margin:0; background:#0a0a14; color:#ccc; font:13px system-ui,sans-serif; }
+  /* keep identical to the canvas rule in screen.html — surfaces CSS conflicts early */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  // ---- shell stubs ----
+  const q = new URLSearchParams(location.search);
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const BOTS = [
+    ['Anna', '#ff2d55', 'Krümel', 'dackel', 0], ['Ben', '#0a84ff', 'Balu', 'husky', 1],
+    ['Cleo', '#30d158', 'Luna', 'corgi', 0], ['Dino', '#ffd60a', 'Bruno', 'labrador', 1],
+    ['Emil', '#bf5af2', 'Frieda', 'pudel', 1], ['Fine', '#64d2ff', 'Socke', 'mischling', 0],
+    ['Gus', '#ff9f0a', 'Rudi', 'schaefer', 0], ['Hanna', '#ac8e68', 'Keks', 'mops', 0]
+  ];
+  const nBots = Math.max(1, Math.min(8, parseInt(q.get('players') || '4', 10)));
+  const players = {};
+  BOTS.slice(0, nBots).forEach((b, i) => { players[i + 1] = { color: b[1], name: b[0], named: true }; });
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = (id) => { const n = nameOf(id); return n.length > 9 ? n.slice(0, 8) + '…' : n; };
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } return f; }
+  // Phone inbox: window.__phone[id] holds the last messages each bot phone got.
+  window.__phone = {};
+  const ac = { message(id, d) {
+    const box = window.__phone[id] || (window.__phone[id] = []);
+    box.push(d); if (box.length > 60) box.shift();
+    if (d.t === 'wwEvent') console.log('📱 ' + nameOf(id) + ': ' + d.text);
+  } };
+
+  function devFail(msg) {
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    String(msg).match(/.{1,80}/g).slice(0, 18).forEach((line, i) => ctx.fillText(line, 16, 40 + i * 26));
+    console.error(msg);
+    window.__devFailed = true;
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+</script>
+<script src="games/wauwauwg/meta.js"></script>
+<script src="games/wauwauwg/core.js"></script>
+<script src="games/wauwauwg/dogart.js"></script>
+<script src="games/wauwauwg/sound.js"></script>
+<script src="games/wauwauwg/home.js"></script>
+<script src="games/wauwauwg/walk.js"></script>
+<script src="games/wauwauwg/park.js"></script>
+<script src="games/wauwauwg/screen.js"></script>
+<script>
+  try {
+    const simMs = parseInt(q.get('sim') || '0', 10);
+    const freeze = q.get('freeze') === '1';
+    const seed = parseInt(q.get('seed') || '7', 10);
+    let fake = 1000;
+    if (simMs > 0 || freeze) performance.now = () => fake;   // fake clock for fast-forwarding
+
+    const game = window.GAMES.wauwauwg();
+    window.__game = game;
+    const ids = Object.keys(players).map(Number);
+    const adopt = () => ids.forEach((id, i) => { const b = BOTS[i]; game.onMessage(id, { t: 'wwAdoptDone', name: b[2], breed: b[3], coat: b[4] }); });
+    const arrive = q.get('arrive') === '1', dogsOn = q.get('nodogs') !== '1';
+    if (dogsOn && !arrive) adopt();
+    game.start(ids, { tag: q.get('tag') || 'normal', seed });
+    if (dogsOn && arrive) adopt();
+    if (q.get('needs')) {
+      const dbgDogs = game._debug().dogs;
+      q.get('needs').split(',').forEach(pair => {
+        const [k, v] = pair.split(':');
+        ids.forEach(id => { if (dbgDogs[id] && k in dbgDogs[id].needs) dbgDogs[id].needs[k] = +v; });
+      });
+    }
+    if (q.get('phase')) game._debug().jump(q.get('phase'));
+    if (q.get('act')) ids.forEach(id => game.onMessage(id, { t: 'wwCare', act: q.get('act'), item: q.get('item') || 'kibble', zone: 'head' }));
+
+    // ---- bots: each scene may offer devBot(id, rnd) → a phone message or null ----
+    const botRnd = window.WW.rng(seed * 31 + 1);
+    function bots() {
+      if (q.get('bots') === '0') return;
+      const sc = game._debug().scene;
+      if (!sc || !sc.devBot) return;
+      ids.forEach(id => { const m = sc.devBot(id, botRnd); if (m) game.onMessage(id, m); });
+    }
+    let act2Sent = false;
+    function frame() {
+      if (q.get('act2') && !act2Sent && game._debug().simT * 1000 >= parseInt(q.get('at2') || '0', 10)) {
+        act2Sent = true;
+        ids.forEach(id => game.onMessage(id, { t: 'wwCare', act: q.get('act2'), item: q.get('item') || 'kibble', zone: 'head' }));
+      }
+      bots(); game.render();
+    }
+
+    if (simMs > 0) for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; frame(); }
+    else for (let i = 0; i < 3; i++) game.render();
+    (function loop() {
+      if (!freeze) { if (simMs > 0) fake += 16.7; frame(); } else game.render();
+      requestAnimationFrame(loop);
+    })();
+    document.title = 'DEV-RUNNING';
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>

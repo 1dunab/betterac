@@ -10,7 +10,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node test-spy.js && node test-fakeartist.js && node test-categories.js && node test-reload.js && node test-gamenight.js && node test-hosttools.js && node test-allgames.js && node test-breach.js && node test-breach-modes.js && node test-breach-ffa.js && node test-breach-network.js && node test-breach-controls.js && node test-breach-feedback.js && node test-breach-controller.js && node test-controller-reconnect.js",
+    "test": "node test-spy.js && node test-fakeartist.js && node test-categories.js && node test-reload.js && node test-gamenight.js && node test-hosttools.js && node test-allgames.js && node test-breach.js && node test-breach-modes.js && node test-breach-ffa.js && node test-breach-network.js && node test-breach-controls.js && node test-breach-feedback.js && node test-breach-controller.js && node test-controller-reconnect.js && node test-wauwauwg.js && node test-wauwauwg-phone.js",
+    "test:wauwauwg": "node test-wauwauwg.js && node test-wauwauwg-phone.js",
     "test:breach": "node test-breach.js && node test-breach-modes.js && node test-breach-ffa.js && node test-breach-network.js && node test-breach-controls.js && node test-breach-feedback.js && node test-breach-controller.js && node test-controller-reconnect.js"
   },
   "dependencies": {

@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wauwau-WG Dogs</title>
+<!-- (?zones=1 overlays the portraitZone() map on the portraits) Art gallery for games/wauwauwg/dogart.js: every breed × coat, every pose, portraits, toys.
+     Animated by default. Stable screenshots: ?freeze=1&t=1.3
+     Filters (combine freely):
+       ?sec=breeds|poses|portraits|states|toys   only that section
+       ?pose=walk,run                            only these poses (implies sec=poses)
+       ?breed=husky   ?coat=1                    only this breed / coat
+       ?portrait=1                               only the portraits
+       ?scale=1.5                                dog scale (side views)      ?size=260  portrait size
+       ?strip=run                                one dog across a gait cycle (&n=8&span=0.66&breed=labrador)
+       ?bg=light|dark|grass|wood|kennel          backdrop      ?anchors=1  mark points() nose/head/tail/collar/butt
+       ?facing=-1                                look left     ?wet=0.8 ?dirt=0.8 ?tongue=1 ?wag=1 ?mouth=ball
+     firefox --headless --no-remote --profile <dir> --window-size=1400,1000 \
+       --screenshot out.png "http://localhost:3000/dev-wauwauwg-dogs.html?freeze=1&t=1.3&pose=walk,run,sit" -->
+<style>
+  html, body { margin: 0; background: #14141f; color: #d8d8e4; font: 13px system-ui, sans-serif; }
+  main { padding: 10px 14px 30px; }
+  h2 { margin: 14px 0 6px; font-size: 14px; font-weight: 700; color: #ffd60a; letter-spacing: .02em; }
+  nav { padding: 8px 14px 0; font-size: 12px; opacity: .8; }
+  nav a { color: #9ad0ff; margin-right: 10px; text-decoration: none; }
+  canvas { display: block; border-radius: 8px; }
+</style>
+</head>
+<body>
+<nav id="nav"></nav>
+<main id="root"></main>
+<script src="games/wauwauwg/core.js"></script>
+<script src="games/wauwauwg/dogart.js"></script>
+<script>
+(function () {
+  'use strict';
+  const q = new URLSearchParams(location.search), WW = window.WW, art = WW.art;
+  const num = (k, d) => { const v = parseFloat(q.get(k)); return isFinite(v) ? v : d; };
+  const FREEZE = q.get('freeze') === '1', T0 = num('t', 0), SC = num('scale', 1), PS = num('size', 0);
+  const BG = q.get('bg') || 'light', FACING = num('facing', 1) === -1 ? -1 : 1, ANCH = q.get('anchors') === '1';
+  const POSES = ['stand', 'walk', 'run', 'sit', 'lie', 'sleep', 'dig', 'eat', 'shake', 'beg', 'squat', 'jump'];
+  const BREEDS = WW.BREED_KEYS.filter(b => !q.get('breed') || q.get('breed').split(',').indexOf(b) >= 0);
+  const coatsOf = (b) => WW.BREEDS[b].coats.map((c, i) => i).filter(i => q.get('coat') == null || +q.get('coat') === i);
+  const poseList = q.get('pose') ? q.get('pose').split(',') : null;
+  const sec = q.get('sec') || (q.get('portrait') === '1' ? 'portraits' : poseList ? 'poses' : q.get('strip') ? 'strip' : 'all');
+  const want = (s) => sec === 'all' || sec === s;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const root = document.getElementById('root'), blocks = [];
+
+  // links
+  const nav = document.getElementById('nav');
+  [['all', ''], ['breeds', '?sec=breeds'], ['poses', '?sec=poses&pose=stand,walk,run,sit'], ['poses 2', '?pose=lie,sleep,dig,eat'], ['poses 3', '?pose=shake,beg,squat,jump'],
+    ['portraits', '?portrait=1'], ['states', '?sec=states'], ['toys', '?sec=toys'], ['strip run', '?strip=run'], ['frozen', '?freeze=1&t=1.3']].forEach(([n, h]) => {
+    const a = document.createElement('a'); a.textContent = n; a.href = location.pathname + h; nav.appendChild(a);
+  });
+
+  const BGS = {
+    light: ['#f3eee4', '#d9cdb8'], dark: ['#1c1f3a', '#101328'], grass: ['#8fcf6a', '#6fb04e'],
+    wood: ['#b77d48', '#a06838'], kennel: ['#ffe9cc', '#f7c99a']
+  };
+  function paintBg(g, x, y, w, h) {
+    const c = BGS[BG] || BGS.light;
+    const gr = g.createLinearGradient(0, y, 0, y + h);
+    gr.addColorStop(0, c[0]); gr.addColorStop(1, c[1]);
+    g.fillStyle = gr; g.fillRect(x, y, w, h);
+  }
+  const ink = () => (BG === 'dark' || BG === 'wood') ? 'rgba(255,255,255,.75)' : 'rgba(30,24,40,.7)';
+
+  function block(title, w, h, draw) {
+    const h2 = document.createElement('h2'); h2.textContent = title; root.appendChild(h2);
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    root.appendChild(cv);
+    const g = cv.getContext('2d');
+    blocks.push({ g, w, h, draw });
+  }
+  function text(g, s, x, y, size, col, align) {
+    g.font = (size || 11) + 'px system-ui,sans-serif'; g.fillStyle = col || ink(); g.textAlign = align || 'center'; g.textBaseline = 'alphabetic';
+    g.fillText(s, x, y);
+  }
+  const mk = (breed, coat, i) => ({ breed, coat, uid: 'gal' + breed.slice(0, 3) + coat + (i || 0), name: WW.BREEDS[breed].label });
+  const phase = (i) => FREEZE ? 0 : i * 0.41;
+
+  function dogOpts(pose, tm, extra) {
+    const o = { pose, t: tm, scale: SC, facing: FACING, wag: num('wag', 0.7), dirt: num('dirt', 0), wet: num('wet', 0), tongue: q.get('tongue') === '1', mouth: q.get('mouth') || null };
+    return Object.assign(o, extra || {});
+  }
+  function drawOne(g, dog, x, y, o) {
+    art.drawDog(g, dog, x, y, o);
+    if (ANCH) {
+      const p = art.points(dog, o.scale), f = o.facing === -1 ? -1 : 1, mark = (dx, dy, col) => { g.fillStyle = col; g.beginPath(); g.arc(x + f * dx, y + dy, 2.6, 0, 6.3); g.fill(); };
+      g.strokeStyle = 'rgba(255,0,100,.35)'; g.lineWidth = 1; g.strokeRect(x - f * 0.42 * p.w - (f < 0 ? 0 : 0), y - p.h, 1, p.h);
+      mark(p.nose[0], p.nose[1], '#ff2d55'); mark(p.head[0], p.head[1], '#0a84ff'); mark(p.tail[0], p.tail[1], '#30d158');
+      mark(p.head[0] * 0.62, p.head[1] * 0.74, '#ffd60a'); mark(-0.42 * p.w, -2, '#ff9f0a'); mark(0, 0, '#bf5af2');
+    }
+  }
+
+  // ---------- sections ----------
+  function secBreeds() {
+    const cw = 215 * Math.max(1, SC * 0.9), rh = 130 * Math.max(1, SC * 0.9), ps = PS || 104;
+    const rows = BREEDS.length, w = 1380, h = rows * rh + 4;
+    block('Rassen × Felle — stehend + Portrait', w, h, (g, t) => {
+      paintBg(g, 0, 0, w, h);
+      BREEDS.forEach((b, r) => {
+        const coats = coatsOf(b);
+        text(g, WW.BREEDS[b].label + ' (SIZE ' + art.SIZE[b] + ')', 8, r * rh + 14, 11, ink(), 'left');
+        coats.forEach((c, ci) => {
+          const x = 70 + ci * cw * 0.68, y = r * rh + rh - 18;
+          g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(x - 56, y, 112, 1);
+          drawOne(g, mk(b, c), x, y, dogOpts('stand', T0 + t + phase(r + ci), { scale: SC }));
+          text(g, WW.BREEDS[b].coats[c].label, x, y + 12, 10);
+          const px = 70 + 3 * cw * 0.68 + ci * (ps + 22);
+          art.drawPortrait(g, mk(b, c), px + ps / 2, r * rh + rh / 2, ps, { t: T0 + t + phase(r + ci), happy: (r + ci) % 3 === 0 ? 0.8 : 0, tongue: ci === 1 });
+        });
+      });
+    });
+  }
+  function secPoses(list) {
+    list.forEach(pose => {
+      const cols = BREEDS.length, coats = q.get('coat') != null ? [+q.get('coat')] : q.get('allcoats') === '1' ? [0, 1, 2] : [0];
+      const cw = 150 * Math.max(1, SC), rh = 128 * Math.max(1, SC), w = cols * cw + 4, h = coats.length * rh + 4;
+      block('Pose: ' + pose, w, h, (g, t) => {
+        paintBg(g, 0, 0, w, h);
+        coats.forEach((c, r) => BREEDS.forEach((b, i) => {
+          const x = i * cw + cw / 2, y = r * rh + rh - 20;
+          g.fillStyle = 'rgba(0,0,0,.08)'; g.fillRect(x - 60, y, 120, 1);
+          drawOne(g, mk(b, c), x, y, dogOpts(pose, T0 + t + phase(i + r), { shadow: true }));
+          if (r === 0) text(g, WW.BREEDS[b].label, x, 11, 10);
+        }));
+      });
+    });
+  }
+  function secPortraits() {
+    const size = PS || 220, cell = size + 16, per = Math.max(1, Math.floor(1380 / cell));
+    const list = [];
+    BREEDS.forEach(b => coatsOf(b).forEach(c => list.push([b, c])));
+    const rows = Math.ceil(list.length / per), w = per * cell, h = rows * (cell + 8);
+    block('Portraits (size ' + size + ')', w, h, (g, t) => {
+      paintBg(g, 0, 0, w, h);
+      list.forEach(([b, c], i) => {
+        const cx = (i % per) * cell + cell / 2, cy = Math.floor(i / per) * (cell + 8) + cell / 2 + 4;
+        const happy = num('happy', i % 4 === 1 ? 0.85 : 0);
+        art.drawPortrait(g, mk(b, c), cx, cy, size, { t: T0 + t + phase(i), happy, tongue: q.get('tongue') === '1' || i % 4 === 2, dirt: num('dirt', 0), wet: num('wet', 0), eat: num('eat', 0), tilt: num('tilt', 0), look: { x: num('lx', 0), y: num('ly', 0) } });
+        if (q.get('zones') === '1') {                  // petting zones: head red, ears blue, chin green, belly yellow, body purple
+          const zc = { head: '255,50,50', ears: '40,110,255', chin: '40,190,80', belly: '255,200,0', body: '170,70,255' }, d = mk(b, c), st = Math.max(3, Math.round(size / 55));
+          for (let yy = -size / 2; yy < size / 2; yy += st) for (let xx = -size / 2; xx < size / 2; xx += st) {
+            const z = art.portraitZone(d, size, xx + st / 2, yy + st / 2);
+            if (z) { g.fillStyle = 'rgba(' + zc[z] + ',.38)'; g.fillRect(cx + xx, cy + yy, st, st); }
+          }
+        }
+        text(g, WW.BREEDS[b].label + ' · ' + WW.BREEDS[b].coats[c].label, cx, cy + size / 2 + 8, 10);
+      });
+    });
+  }
+  function secStates() {
+    const ds = [mk('labrador', 0), mk('husky', 1), mk('dackel', 0), mk('corgi', 0), mk('pudel', 1), mk('mops', 0), mk('schaefer', 0), mk('mischling', 0)];
+    const cw = 170, w = 8 * cw, rows = [
+      ['mouth: ball / frisbee / duck / stick (+ walk)', (d, i) => ({ pose: i % 2 ? 'walk' : 'stand', mouth: ['ball', 'frisbee', 'duck', 'stick'][i % 4] })],
+      ['tongue + run, facing left', (d, i) => ({ pose: 'run', tongue: true, facing: -1 })],
+      ['dirt 0.25 / 0.5 / 0.75 / 1 (stand, then sit)', (d, i) => ({ pose: i < 4 ? 'stand' : 'sit', dirt: [0.25, 0.5, 0.75, 1][i % 4] })],
+      ['wet 0.4 / 0.8 / 1 + shake', (d, i) => ({ pose: i % 3 === 2 ? 'shake' : 'stand', wet: [0.4, 0.8, 1][i % 3], dirt: 0 })]
+    ];
+    block('Zustände', w, rows.length * 112 + 4, (g, t) => {
+      paintBg(g, 0, 0, w, rows.length * 112 + 4);
+      rows.forEach(([name, fn], r) => {
+        text(g, name, 6, r * 112 + 12, 11, ink(), 'left');
+        ds.forEach((d, i) => { const x = i * cw + cw / 2, y = r * 112 + 98; drawOne(g, d, x, y, dogOpts('stand', T0 + t + phase(i), Object.assign({ scale: SC }, fn(d, i)))); });
+      });
+    });
+    block('Portrait-Zustände: happy / eat / wet / dirt / tilt', w, 190, (g, t) => {
+      paintBg(g, 0, 0, w, 190);
+      const opts = [{ happy: 0 }, { happy: 1, tongue: true }, { eat: 0.5 + 0.5 * Math.sin((T0 + t) * 6), happy: 0.4 }, { wet: 1 }, { dirt: 0.6 }, { dirt: 1, wet: 0 }, { tilt: 0.35, look: { x: 1, y: 0.5 } }, { happy: 0.45 }];
+      opts.forEach((o, i) => art.drawPortrait(g, ds[i], i * cw + cw / 2, 92, 172, Object.assign({ t: T0 + t + phase(i) }, o)));
+    });
+  }
+  function secToys() {
+    const keys = ['ball', 'frisbee', 'duck', 'stick'], scs = [1, 2, 4, 8], w = 4 * 200, h = scs.length * 70 + 8;
+    block('Spielzeug (Skala 1 / 2 / 4 / 8, Rotation animiert)', w, h, (g, t) => {
+      paintBg(g, 0, 0, w, h);
+      scs.forEach((s, r) => keys.forEach((k, i) => art.drawToy(g, k, i * 200 + 100, r * 70 + 36, s, (r % 2) * (T0 + t) * 0.8)));
+    });
+  }
+  function secStrip(pose) {
+    const b = BREEDS[0] || 'labrador', n = Math.round(num('n', 8)), span = num('span', pose === 'run' ? 0.33 : 0.66), cw = 190 * Math.max(1, SC), w = n * cw, h = 150 * Math.max(1, SC);
+    const dogs = coatsOf(b).slice(0, 1).map(c => mk(b, c));
+    block('Strip: ' + b + ' ' + pose + ' (' + n + ' Frames über ' + span + ' s)', w, h, (g, t) => {
+      paintBg(g, 0, 0, w, h);
+      for (let i = 0; i < n; i++) {
+        const x = i * cw + cw / 2, y = h - 24, tm = T0 + i * span / n;
+        g.fillStyle = 'rgba(0,0,0,.1)'; g.fillRect(x - cw / 2 + 4, y, cw - 8, 1);
+        drawOne(g, dogs[0], x, y, dogOpts(pose, tm));
+        text(g, 't=' + tm.toFixed(2), x, h - 6, 10);
+      }
+    });
+  }
+
+  if (q.get('strip')) secStrip(q.get('strip'));
+  if (want('breeds') && !poseList && !q.get('strip')) secBreeds();
+  if ((sec === 'all' || sec === 'poses') && !q.get('strip')) secPoses(poseList || POSES);
+  if (want('portraits') && !q.get('strip') && !(sec === 'all' && poseList)) secPortraits();
+  if (want('states') && !poseList && !q.get('strip')) secStates();
+  if (want('toys') && !poseList && !q.get('strip')) secToys();
+
+  function frame(now) {
+    const t = FREEZE ? 0 : now / 1000;
+    for (const b of blocks) {
+      b.g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      b.g.clearRect(0, 0, b.w, b.h);
+      b.draw(b.g, t);
+    }
+    if (!FREEZE) requestAnimationFrame(frame);
+    else document.title = 'GALLERY-READY';
+  }
+  try { if (FREEZE) frame(0); else requestAnimationFrame(frame); } catch (e) { document.title = 'ERR ' + e.message; console.error(e); }
+  window.addEventListener('error', (e) => { document.title = 'ERROR: ' + e.message + ' @' + e.lineno; });
+})();
+</script>
+</body>
+</html>

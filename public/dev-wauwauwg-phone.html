@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Wauwau-WG Phone Dev</title>
+<!-- Phone dev page: runs the Wauwau-WG controller standalone. Shell globals are
+     stubbed and a fake screen answers with the real core.js rules.
+     ?view=adopt | restore | home | shop | bag | menu | bath | feed | walk | find | park | night
+     ?freeze=1   stop the clock and the CSS animations after setup (stable screenshots)
+     ?host=0     guest instead of host   ?breed=husky&coat=1&dirty=1&name=Wuffi   demo dog look
+     ?toast=Text shows a toast   ?step=2&fill=0.5 bath progress (view=bath)
+     The views drive the real pad handlers with synthetic mouse events (rub()); a runtime
+     error is painted as a red banner at the bottom, so screenshots show it too.
+     firefox --headless --no-remote --profile <dir> --window-size=390,844 \
+       --screenshot out.png "http://localhost:3000/dev-wauwauwg-phone.html?view=home&freeze=1" -->
+<style>
+  /* the essential shell rules from controller.html (keep in sync) */
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
+  canvas { background:#fff; flex:1; min-height:0; border-radius:10px; margin:0 10px; touch-action:none; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .btn.go { background:#30d158; color:#06250f; flex:1; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:20px; }
+  input[type=text] { font-size:20px; padding:14px; border-radius:12px; border:none; width:100%; max-width:340px; box-sizing:border-box; }
+  .big { font-size:26px; font-weight:800; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+  #devErr { position:fixed; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:8px 10px; background:#b00020; color:#fff;
+            font:12px/1.35 monospace; white-space:pre-wrap; pointer-events:none; }
+  #devErr:empty { display:none; }
+</style>
+</head>
+<body>
+<button id="abortBtn">✕ Abbrechen</button>
+<script>window.__AC_ROLE__ = 'controller';</script>
+<script src="core/game-registry.js"></script>
+<script>
+  // ---- shell stubs ----
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const VIEWS = [];
+  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  let myHost = q.get('host') !== '0';
+  function updateAbort() { $('abortBtn').style.display = myHost ? 'block' : 'none'; }
+  function startTimer() {}
+  function stopTimer() {}
+  const AirConsole = { SCREEN: 0 };
+  const ac = { message(to, d) { window.fakeScreen(d); } };
+  // Errors are painted into the page, so a headless screenshot shows them too.
+  window.addEventListener('error', (e) => {
+    document.title = 'ERROR: ' + e.message;
+    console.error(e.message, e.filename, e.lineno);
+    const b = $('devErr') || document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'devErr' }));
+    b.textContent += e.message + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+  // freeze=1 also stops CSS animations, so sheets/toasts show in their final state
+  if (q.get('freeze') === '1') document.head.insertAdjacentHTML('beforeend', '<style>*,*::before,*::after{animation:none!important;transition:none!important}</style>');
+</script>
+<script src="games/wauwauwg/meta.js"></script>
+<script src="games/wauwauwg/core.js"></script>
+<script src="games/wauwauwg/dogart.js"></script>
+<script src="games/wauwauwg/controller.js"></script>
+<script>
+  // ---- fake screen: the real rules from core.js, synchronous like the test bus ----
+  const view = q.get('view') || 'home';
+  const PH = { walk: 'walk', find: 'walk', park: 'park', night: 'night' };
+  let dog = null, today = WW.newToday(), phase = PH[view] || 'home', day = 3, dig = 0.4;
+  const toPhone = (d) => window.CONTROLLERS.wauwauwg.onMessage(JSON.parse(JSON.stringify(d)));
+  function demoDog() {
+    const d = WW.newDog({ name: q.get('name') || 'Krümel', breed: q.get('breed') || 'dackel', coat: +(q.get('coat') || 0) });
+    d.uid = 'demo000001'; d.coins = 47; d.love = 96; d.days = 3;
+    d.needs = { food: 58, water: 22, clean: q.get('dirty') ? 14 : 64, mood: 81, energy: 70 };
+    d.inv = { kibble: 4, meat: 1, treat: 5, shampoo: 2 };
+    d.toys = ['ball', 'frisbee', 'stick'];
+    d.finds = { sock: 2, shoe: 1, gem: 1 };
+    d.stats = { walks: 6, fetches: 23, baths: 2, finds: 9 };
+    today.love = 14; today.coins = 9; today.finds = ['sock', 'gem'];
+    return d;
+  }
+  const you = () => toPhone({ t: 'wwYou', dog, today: { love: today.love, coins: today.coins, finds: today.finds.slice() }, level: WW.loveLevel(dog.love) });
+  const ph = () => toPhone({ t: 'wwPhase', phase, day, left: phase === 'night' ? -1 : 42, host: myHost });
+  const ev = (text, kind, item) => toPhone({ t: 'wwEvent', text, kind: kind || 'info', item: item || null });
+  const night = () => toPhone({ t: 'wwNight', host: myHost, rows: [
+    { owner: 'Anna', dog: dog.name, love: 14, coins: 9, finds: ['sock', 'gem'], best: true, you: true },
+    { owner: 'Ben', dog: 'Balu', love: 9, coins: 12, finds: ['shoe'], best: false, you: false },
+    { owner: 'Cleo', dog: 'Luna', love: 6, coins: 4, finds: [], best: false, you: false }] });
+  window.fakeScreen = function (d) {
+    switch (d.t) {
+      case 'wwHello':
+        if (view === 'adopt' || view === 'restore') { toPhone({ t: 'wwAdopt', backup: view === 'restore' ? { name: 'Balu', breed: 'husky', coat: 1 } : null }); ph(); return; }
+        dog = demoDog(); ph(); you();
+        if (phase === 'night') night();
+        if (phase === 'walk') toPhone({ t: 'wwWalk', dig: 1, digP: dig, poop: 0, cat: 0 });
+        if (phase === 'park') toPhone({ t: 'wwPark', ready: 1, tired: 0, toy: null });
+        return;
+      case 'wwAdoptDone': dog = WW.newDog({ name: d.name, breed: d.breed, coat: d.coat }); you(); ph(); return;
+      case 'wwRestore': dog = demoDog(); dog.name = 'Balu'; dog.breed = 'husky'; dog.coat = 1; you(); ph(); return;
+      case 'wwMoveOut': dog = null; toPhone({ t: 'wwAdopt', backup: null }); return;
+      case 'wwCare': {
+        if (!dog) return;
+        const r = WW.care(dog, today, d.act, d.act === 'pet' ? d.zone : d.item);
+        if (r.text) ev(r.text, r.ok ? 'good' : 'bad');
+        you(); return;
+      }
+      case 'wwBuy': { const r = WW.buy(dog, d.item); ev(r.text, r.ok ? 'good' : 'bad'); you(); return; }
+      case 'wwSell': { const r = WW.sell(dog, d.item, today); ev(r.text, r.ok ? 'good' : 'bad'); you(); return; }
+      case 'wwNext': phase = 'home'; day++; today = WW.newToday(); ph(); you(); return;
+      case 'wwDig':
+        dig += 0.2;
+        if (dig >= 1) {
+          dig = 0;
+          const r = WW.giveFind(dog, today, WW.rollFind(), Math.random);
+          ev(r.text, 'find', r.item); you();
+          toPhone({ t: 'wwWalk', dig: 0, digP: 0, poop: 0, cat: 0 });
+          setTimeout(() => { dig = 0; toPhone({ t: 'wwWalk', dig: 1, digP: 0, poop: Math.random() < 0.3 ? 1 : 0, cat: 0 }); }, 2500);
+        } else toPhone({ t: 'wwWalk', dig: 1, digP: dig, poop: 0, cat: 0 });
+        return;
+      case 'wwPoop': ev('💩 Vorbildlich! +2 🪙', 'good'); return;
+      case 'wwHeel': ev('🛑 Brav, bei Fuß! +2 ❤️', 'good'); return;
+      case 'wwThrow':
+        toPhone({ t: 'wwPark', ready: 0, tired: 0, toy: d.toy });
+        setTimeout(() => { toPhone({ t: 'wwPark', ready: 1, tired: 0, toy: null }); ev('🎾 Brav gebracht! +2 ❤️', 'good'); }, 2800);
+        return;
+    }
+  };
+
+  // ---- boot + per-view setup ----
+  updateAbort();
+  window.CONTROLLERS.wauwauwg.activate();
+  const P = window.__wwPhone;
+  if (view === 'shop') $('wwShopBtn').click();
+  if (view === 'bag') $('wwBagBtn').click();
+  if (view === 'menu') $('wwMenuBtn').click();
+  if (view === 'feed') $('wwTool-feed').click();
+  for (let i = 0; i < 3; i++) P.frame();
+  // real gestures through the real handlers (mouse path of bindPad)
+  function mouse(target, type, x, y) {
+    const r = target.getBoundingClientRect();
+    (type === 'mousedown' ? target : window).dispatchEvent(new MouseEvent(type, { clientX: r.left + x, clientY: r.top + y, bubbles: true }));
+  }
+  function rub(target, pts) { mouse(target, 'mousedown', pts[0][0], pts[0][1]); pts.slice(1).forEach(p => { mouse(target, 'mousemove', p[0], p[1]); P.frame(); }); }
+  const L = P.home.L;
+  if (view === 'home' && L) {
+    const pts = [];
+    for (let i = 0; i <= 14; i++) pts.push([L.cx - L.size * 0.22 + i * L.size * 0.03, L.cy - L.size * 0.36 + Math.sin(i / 2) * 6]);
+    rub($('wwHomeCanvas'), pts);
+    P.home.happy = 0.95;
+  }
+  if (view === 'bath' && L) {
+    P.bath(+(q.get('step') || 1), +(q.get('fill') || 0.55));
+    rub($('wwHomeCanvas'), [[L.cx + L.size * 0.1, L.cy - L.size * 0.1], [L.cx + L.size * 0.16, L.cy - L.size * 0.08], [L.cx + L.size * 0.2, L.cy - L.size * 0.12]]);
+  }
+  if (view === 'walk') {
+    const c = $('wwWalkPad'), w = c.clientWidth, h = c.clientHeight;
+    rub(c, [[w * 0.42, h * 0.62], [w * 0.5, h * 0.55], [w * 0.6, h * 0.46], [w * 0.66, h * 0.38]]);
+  }
+  if (view === 'park') {
+    const c = $('wwThrowPad'), w = c.clientWidth, h = c.clientHeight;
+    rub(c, [[w * 0.5, h * 0.86], [w * 0.52, h * 0.78], [w * 0.55, h * 0.7]]);
+  }
+  if (view === 'find') ev('💎 Glitzerstein gefunden!', 'find', 'gem');
+  if (q.get('toast')) ev(q.get('toast'), 'good');
+  for (let i = 0; i < 30; i++) P.frame();
+  // a little past "now", so fade-in hints (bath, tool tips) are fully visible in the still frame
+  if (q.get('freeze') === '1') { const frozen = performance.now() + 700; performance.now = () => frozen; }
+</script>
+</body>
+</html>
