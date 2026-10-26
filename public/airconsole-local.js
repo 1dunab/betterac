@@ -75,6 +75,10 @@
       case 'message':
         this.onMessage(msg.from, msg.data);
         break;
+      case 'viewers':
+        // Screen only: how many "Mitschauen" pages want frames (see view.html)
+        if (this.onViewers) this.onViewers(msg.n | 0);
+        break;
       case 'kicked':
         this._stopped = true; // kein Reconnect — uebernommen oder vom Host entfernt
         if (this._role !== 'screen') {
@@ -98,6 +102,8 @@
   AirConsole.prototype.broadcast = function (data) {
     this._send({ type: 'message', to: null, data: data });
   };
+  // Screen only: one picture (data URL) for every "Mitschauen" viewer
+  AirConsole.prototype.frame = function (data) { this._send({ type: 'frame', data: data }); };
   AirConsole.prototype.getDeviceId = function () { return this.device_id; };
   // Nur der Screen darf kicken (der Server prueft den Absender ebenfalls)
   AirConsole.prototype.kick = function (id) { this._send({ type: 'kick', id: id }); };

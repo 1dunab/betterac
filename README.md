@@ -46,9 +46,9 @@ Players type a name, the first player becomes the host, picks a game and its set
 the lobby, and hits START. Phones reconnect automatically after screen locks or Wi-Fi
 hiccups, and keep their identity.
 
-**Playing online:** no shared Wi-Fi? Host the server on Render, share the screen in a
-Discord / Zoom call and let everyone join from their phone — see
-[Playing online](docs/ONLINE.md).
+**Playing online / second room:** one device runs the screen, everyone else opens
+**👀 Mitschauen** (`/view.html`, a live mirror of the screen) and plays with their phone.
+Host the server on Render for rounds across homes — see [Playing online](docs/ONLINE.md).
 
 ## The games
 

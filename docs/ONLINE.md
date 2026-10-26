@@ -1,10 +1,13 @@
 # Playing online (Render)
 
 Party Hub is built for one room, but the same server works over the internet: host it
-somewhere public, let **one** person open the screen and share it via Discord / Zoom /
-Teams screen sharing, and everybody else joins with their phone through the public URL.
-Cozy and turn-based games (Wauwau-WG, Spion, Stadt Land Fluss, Drawing, Fake Artist)
-handle the stream delay well; twitchy ones (Reaktionsduell, Racer) suffer from it.
+somewhere public, let **one** person open the screen, and everybody else watches it with
+**👀 Mitschauen** (`/view.html`) and plays with their phone through the public URL.
+Mitschauen mirrors the screen's 2D canvas at ~8 frames per second (~150 KB/s per
+viewer), without sound. Cozy and turn-based games (Wauwau-WG, Spion, Stadt Land Fluss,
+Drawing, Fake Artist) feel fine with that; twitchy ones (Reaktionsduell) suffer, and the
+WebGL games (Racer, BREACH split screen) draw on their own canvas and are not mirrored —
+use screen sharing in a video call for those, or BREACH's own online rooms.
 
 ## Deploy on Render (free plan)
 
@@ -31,11 +34,12 @@ switches to `wss://` on HTTPS, and there is no database. A free instance sleeps 
 ## Playing a round from home
 
 1. The host opens `https://<your-app>.onrender.com/` → **📺 Ich bin der Bildschirm**
-   and shares that browser tab in the video call.
-2. Everybody else opens the same URL on their phone → **📱 Mitspielen** (or scans the
-   lobby QR code straight off the shared screen).
-3. Only one screen exists per server: opening the screen on a second device takes it
-   over. That's why `/` is a landing page and not the screen itself.
+   (sound plays only there — talk in a call if you like).
+2. Everybody else opens the same URL on their laptop → **👀 Mitschauen**, and on their
+   phone → **📱 Mitspielen** (or scans the lobby QR code straight off the mirror).
+3. Only one screen exists per server — it runs the game. Opening `screen.html` while one
+   is running asks "👀 Mitschauen" or "Trotzdem übernehmen"; taking over ends the
+   running game for everybody. That's also why `/` is a landing page.
 
 ## Good to know
 

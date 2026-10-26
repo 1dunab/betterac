@@ -25,6 +25,15 @@
 </head>
 <body>
 <button id="fsBtn" title="Vollbild">⛶</button>
+<!-- Ein Bildschirm läuft schon: mitschauen statt ihn (samt Spiel) zu übernehmen -->
+<div id="busy" style="display:none; position:fixed; inset:0; z-index:60; background:rgba(10,10,20,.94); align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+  <div style="max-width:440px; text-align:center; display:flex; flex-direction:column; gap:14px;">
+    <div style="font-size:26px; font-weight:800;">📺 Es läuft schon ein Bildschirm</div>
+    <div style="opacity:.75; line-height:1.45;">Ein zweiter Bildschirm würde ihn übernehmen — das laufende Spiel wäre dann für alle weg.</div>
+    <button id="busyView" style="border:none; border-radius:14px; padding:16px; font-size:19px; font-weight:800; background:#30d158; color:#06250f; cursor:pointer;">👀 Mitschauen</button>
+    <button id="busyTake" style="border:none; border-radius:14px; padding:12px; font-size:15px; font-weight:700; background:#3a3a48; color:#eee; cursor:pointer;">Trotzdem übernehmen</button>
+  </div>
+</div>
 <button id="muteBtn" title="Ton an/aus">🔊</button>
 <div id="wrap">
   <div id="info">Party Hub — öffne <b>/controller.html</b> auf den Handys</div>
@@ -192,7 +201,7 @@
 
   // ===== Events =====
   ac.onKicked = () => {
-    document.getElementById('info').textContent = '⚠️ Ein anderer Screen hat übernommen — dieses Fenster ist inaktiv.';
+    document.getElementById('info').innerHTML = '⚠️ Ein anderer Bildschirm hat übernommen — dieses Fenster ist inaktiv. <a href="view.html" style="color:#9ecbff">👀 Mitschauen</a>';
   };
   ac.onConnect = (id) => {
     // Nach Screen-Reload: bekannte Spieler aus dem Snapshot wiederherstellen
@@ -447,8 +456,36 @@
 <script src="games/wauwauwg/park.js"></script>
 <script src="games/wauwauwg/screen.js"></script>
 <script>
+  // ===== Verbinden: läuft schon ein Bildschirm, erst fragen (mitschauen / übernehmen) =====
+  // Ein Reload dieses Tabs (Lobby-Snapshot vorhanden) übernimmt ohne Frage.
+  (function connectScreen() {
+    let mine = false;
+    try { mine = !!sessionStorage.getItem('shellSnapshot'); } catch (e) {}
+    if (mine || typeof fetch !== 'function') { ac._connect(); return; }
+    const busy = document.getElementById('busy');
+    document.getElementById('busyView').addEventListener('click', () => { location.href = 'view.html'; });
+    document.getElementById('busyTake').addEventListener('click', () => { busy.style.display = 'none'; ac._connect(); });
+    fetch('/info').then(r => r.json()).then(info => {
+      if (info.screen) busy.style.display = 'flex'; else ac._connect();
+    }).catch(() => ac._connect());
+  })();
+
+  // ===== Mitschauen: Bild an die view.html-Zuschauer (nur wenn welche da sind) =====
+  const MIRROR_FPS = 8, MIRROR_W = 720, MIRROR_H = 450;
+  let viewerCount = 0, mirrorAt = 0, mirror = null;
+  ac.onViewers = (n) => { viewerCount = n; };
+  function streamFrame() {
+    const now = performance.now();
+    if (!viewerCount || now - mirrorAt < 1000 / MIRROR_FPS) return;
+    mirrorAt = now;
+    try {
+      if (!mirror) { mirror = document.createElement('canvas'); mirror.width = MIRROR_W; mirror.height = MIRROR_H; }
+      mirror.getContext('2d').drawImage(cv, 0, 0, MIRROR_W, MIRROR_H);
+      ac.frame(mirror.toDataURL('image/jpeg', 0.6));
+    } catch (e) {}
+  }
+
   // ===== Render-Schleife =====
-  ac._connect();
   saveBtn.addEventListener('click', () => { if (active && active.save) active.save(); });
   (function loop() {
     if (active && active.render) active.render();
@@ -461,6 +498,7 @@
     }
     if (active) { ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '13px system-ui,sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom'; ctx.fillText('Host kann am Handy abbrechen ✕', cv.width - 10, cv.height - 6); }
     saveBtn.style.display = (active && active.canSave && active.canSave()) ? 'inline-block' : 'none';
+    streamFrame();
     requestAnimationFrame(loop);
   })();
 </script>

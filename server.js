@@ -19,7 +19,8 @@ const server = http.createServer((req, res) => {
   if (urlPath === '/info') {
     // Für den Lobby-QR-Code: unter welcher LAN-Adresse sind wir erreichbar?
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ port: PORT, ips: lanIPs() }));
+    // screen: a second screen.html asks "mitschauen oder übernehmen?" instead of kicking
+    res.end(JSON.stringify({ port: PORT, ips: lanIPs(), screen: clients.has(0) }));
     return;
   }
   // Landing page instead of the screen: online, a stray click on the bare URL
@@ -45,6 +46,11 @@ server.on('close', () => breach.close());
 const clients = new Map();   // device_id -> ws
 const secrets = new Map();   // device_id -> Resume-Secret (nur dieser Server-Lauf)
 const pendingDisconnects = new Map();
+// Mitschauen: viewers get the screen's picture as JPEG frames. They are no
+// players — no device id, no connect/disconnect events, nothing they send counts.
+const viewers = new Set();
+const MAX_VIEWER_BUFFER = 2e6;   // bytes queued per viewer before frames are dropped
+const sendViewerCount = () => send(clients.get(0), { type: 'viewers', n: viewers.size });
 let nextControllerId = 1;    // Screen ist immer 0, Controller ab 1
 const newSecret = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
@@ -59,6 +65,21 @@ wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+
+    if (ws.viewer) return;
+    if (msg.type === 'register' && msg.role === 'viewer') {
+      ws.viewer = true;
+      viewers.add(ws);
+      send(ws, { type: 'welcome', device_id: -1, code: 'LOCAL', devices: [] });
+      sendViewerCount();
+      return;
+    }
+
+    if (msg.type === 'frame' && ws.deviceId === 0) {
+      const out = JSON.stringify({ type: 'frame', data: String(msg.data || '') });
+      for (const v of viewers) if (v.readyState === v.OPEN && v.bufferedAmount < MAX_VIEWER_BUFFER) v.send(out);
+      return;
+    }
 
     if (msg.type === 'register') {
       let id, silent = false;
@@ -85,6 +106,7 @@ wss.on('connection', (ws) => {
       if (id > 0 && !secrets.has(id)) secrets.set(id, newSecret());
       send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: secrets.get(id) });
       if (!silent) broadcast({ type: 'connect', device_id: id }, id); // andere informieren
+      if (id === 0) sendViewerCount();
       return;
     }
 
@@ -116,6 +138,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    if (ws.viewer) { viewers.delete(ws); sendViewerCount(); return; }
     // Nur aufraeumen, wenn die ID noch zu diesem Socket gehoert — der verspaetete
     // close eines uebernommenen Sockets darf den Nachfolger nicht loeschen.
     if (ws.deviceId !== undefined && clients.get(ws.deviceId) === ws) {
