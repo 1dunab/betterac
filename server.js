@@ -22,7 +22,9 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ port: PORT, ips: lanIPs() }));
     return;
   }
-  if (urlPath === '/') urlPath = '/screen.html';
+  // Landing page instead of the screen: online, a stray click on the bare URL
+  // would otherwise take over the one screen slot.
+  if (urlPath === '/') urlPath = '/index.html';
   const filePath = path.normalize(path.join(PUBLIC, urlPath));
   if (!filePath.startsWith(PUBLIC + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.readFile(filePath, (err, data) => {
