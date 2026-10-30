@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Neonspur Dev</title>
+<!-- Full TV harness: real sim + renderer + glue, human riders on autopilot (bots).
+     ?n=1..4 humans  ?bots=1  ?map=raster|saeulen|terrassen|random  ?camera=split|overview  ?cam=pov|chase
+     ?tempo=chill|normal|fast  ?target=3  ?sim=<ms fast-forward, fake clock>  ?freeze=1  ?extras=0|1 (default 1)  ?quality=high|low  ?seed=<int> (deterministic Math.random)
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
+       --screenshot out.png "http://localhost:3000/dev-neonspur.html?n=2&bots=2&sim=9000&freeze=1&seed=3" -->
+<style>
+  html,body { margin:0; background:#0a0a14; }
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  // ---- shell stubs ----
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = {
+    1: { color: '#ff2d55', name: 'Anna', named: true },
+    2: { color: '#0a84ff', name: 'Ben', named: true },
+    3: { color: '#30d158', name: 'Cleo', named: true },
+    4: { color: '#ffd60a', name: 'Dino', named: true }
+  };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); document.title = 'WINNERS:' + ids; }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  const ac = { message(id, d) { if (d.t === 'nsPhase' || d.t === 'nsInfo') console.log('->', id, JSON.stringify(d)); } };
+
+  function devFail(msg) {
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left';
+    String(msg).match(/.{1,80}/g).forEach((line, i) => ctx.fillText(line, 20, 50 + i * 26));
+    console.error(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+</script>
+<script src="games/neonspur/meta.js"></script>
+<script src="games/neonspur/maps.js"></script>
+<script src="games/neonspur/sim.js"></script>
+<script src="games/neonspur/render.js"></script>
+<script src="games/neonspur/screen.js"></script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script type="module">
+  try {
+    const q = new URLSearchParams(location.search);
+    const N = Math.max(1, Math.min(4, parseInt(q.get('n') || '2', 10)));
+    const simMs = parseInt(q.get('sim') || '0', 10), freeze = q.get('freeze') === '1';
+    if (q.get('seed')) {   // mulberry32 → reproducible screenshots
+      let a = parseInt(q.get('seed'), 10) | 0;
+      Math.random = () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    }
+    let fake = 1000;
+    if (simMs > 0) performance.now = () => fake;
+
+    const ids = [1, 2, 3, 4].slice(0, N);
+    const cfg = {
+      map: q.get('map') || 'raster', bots: parseInt(q.get('bots') || '1', 10), botLevel: q.get('botLevel') || 'normal',
+      tempo: q.get('tempo') || 'normal', target: parseInt(q.get('target') || '3', 10), camera: q.get('camera') || 'split',
+      extras: q.get('extras') === '0' ? 'off' : 'on', quality: q.get('quality') === 'low' ? 'low' : 'high',
+      autopilot: true
+    };
+    const game = window.GAMES.neonspur();
+    window.__game = game;
+    game.start(ids, cfg);
+    if (q.get('cam') === 'chase') ids.forEach((id) => game.onMessage(id, { t: 'nsCam' }));
+
+    const step = () => { fake += 16.7; game.render(); };
+    if (simMs > 0) {
+      for (let t = 0; t < simMs; t += 16.7) step();
+      if (!freeze) (function loop() { step(); requestAnimationFrame(loop); })();
+    } else {
+      (function loop() { game.render(); requestAnimationFrame(loop); })();
+    }
+    if (!document.title.startsWith('LOBBY')) document.title = 'DEV-RUNNING ' + game._debug().phase;
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>

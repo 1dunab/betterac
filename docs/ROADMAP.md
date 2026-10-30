@@ -212,3 +212,6 @@ are data PRs.
 - 🐶 Wauwau-WG, Phase 1 — Nintendogs-style dog care: one in-game day per round (Morgen →
   Gassi → Park → Feierabend), dogs that live on the phones with a TV backup by name
   ([design notes](WAUWAUWG.md)).
+- ⚡ Neonspur — original 3D light-cycle arena: jumps, terraces and ramps, Turbo by grinding,
+  four power-ups, space look with bloom, split-screen with Ego/Verfolger cameras, bots for
+  solo play ([design notes](NEONSPUR.md)).

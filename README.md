@@ -7,8 +7,8 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **19 games** — from social deduction and drawing chains to real-3D racing, co-op
-bullet-hell boss fights, a falling-sand flood war and a flat-share full of dogs.
+and **20 games** — from social deduction and drawing chains to real-3D racing, co-op
+bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs and 3D light-cycle duels.
 
 ## Screenshots
 
@@ -73,6 +73,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 🎆 Himmelszünder | 1+ | Fireworks show with beat targets and sync combos |
 | 🎯 BREACH · Station NEXUS | 1–8 | Original 3D tactical FPS: phone-controlled split-screen, private online rooms, bots, two bomb sites |
 | 🐶 Wauwau-WG | 1+ | Nintendogs-style dog care: pet, bathe, walk and play fetch — your dog lives on your phone |
+| ⚡ Neonspur | 1–4 | 3D light-cycle arena: walls of light, jumps onto terraces, Turbo, power-ups, split-screen, bots |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -159,6 +160,34 @@ and adopt or bring their dog straight into the current scene.
 the real phone UI. `/dev-wauwauwg.html?phase=walk&sim=20000&freeze=1` is the TV harness
 with bot dogs; `/dev-wauwauwg-phone.html?view=home` runs the phone UI against a fake
 screen. See the [Wauwau-WG design notes](docs/WAUWAUWG.md).
+
+## Neonspur
+
+An original 3D light-cycle game: up to four riders race over a neon arena and pull a wall
+of light behind them. Steering is in 90° steps (◀ / ▶ on the phone; tap twice quickly to
+go back one lane over), every wall kills — your own included — and **⤴ SPRUNG** hops over
+walls, onto raised terraces and through gaps (no wall is laid in the air, so every jump
+leaves a hole others can use). Last rider standing wins the round; first to *N* round wins
+takes the match.
+
+**Turbo & Extras** (lobby setting, on by default): grinding close along any wall charges
+the 🚀 TURBO meter — hold the button to ride twice as fast. Power-ups appear on the arena:
+🔋 full Turbo, 🦘 jump ready again, 🛡️ shield (drive through one light wall) and 💥 shock
+wave (erases nearby walls). Set it to *Aus* for the classic game.
+
+The TV shows one 3D view per player (split-screen, everyone switches between 🎥 Ego and
+Verfolger on their phone) or a single overview camera, in a space look with bloom and a
+glossy floor (*Grafik: Sparsam* turns the effects down for weak TV browsers). Empty seats
+are filled with bots (0–3, three strengths — Leicht is meant to be beatable on your first
+evening), so it works solo too. Three arenas: **Raster** (open classic),
+**Säulenhalle** (pillars, small terraces, jump pads) and **Terrassen** (a central plateau
+with ramps). Mitschauen works: the 3D picture is drawn into the shared canvas.
+
+`node test-neonspur.js` checks the rules and the bots (deterministic sim),
+`node test-neonspur-flow.js` plays rounds through the real screen and phone pages.
+`/dev-neonspur.html?n=2&bots=2&sim=9000&freeze=1` is the TV harness with autopilot riders,
+`/dev-neonspur-view.html` previews the renderer, `/dev-neonspur-phone.html?state=live` the
+phone UI. See the [Neonspur design notes](docs/NEONSPUR.md).
 
 ## How it works
 

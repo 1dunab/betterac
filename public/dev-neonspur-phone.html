@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Neonspur Phone Dev</title>
+<!-- Phone dev page: runs the real Neonspur controller.js against a fake screen.
+     ?state=countdown|live|dead|roundOver|final|spectator  jump straight into a state
+     ?extras=0|1 (default 1)  ?boost=0.6  ?shield=1
+     ?host=0 guest   ?color=%23ff2d95   ?panel=1 force the fake-screen panel (hidden when state is set)
+     firefox --headless --no-remote --profile <dir> --window-size=390,844 --screenshot out.png "http://localhost:3000/dev-neonspur-phone.html?state=live" -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+  #devErr { position:fixed; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:8px 10px; background:#b00020; color:#fff;
+            font:12px/1.35 monospace; white-space:pre-wrap; pointer-events:none; }
+  #devErr:empty { display:none; }
+  #phone { position:relative; height:100%; }
+  body.panel { display:flex; }
+  body.panel #phone { width:390px; max-width:100%; height:min(100%, 844px); flex:none; border-right:2px solid #444; }
+  #panel { display:none; flex:1; padding:12px; overflow:auto; touch-action:auto; -webkit-user-select:text; user-select:text; }
+  body.panel #panel { display:block; }
+  #panel h3 { margin:12px 0 6px; font-size:14px; opacity:.7; }
+  #panel .btn { margin:0 6px 6px 0; padding:8px 12px; font-size:14px; }
+  #log { font:12px/1.4 monospace; background:#000; padding:8px; height:180px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<button id="abortBtn">✕ Abbrechen</button>
+<div id="phone"></div>
+<div id="panel">
+  <h3>Bildschirm → Phone</h3>
+  <button class="btn" data-m="info">nsInfo</button>
+  <button class="btn" data-m="spectatorInfo">nsInfo Zuschauer</button>
+  <button class="btn" data-m="c3">Countdown 3</button><button class="btn" data-m="c2">2</button><button class="btn" data-m="c1">1</button>
+  <button class="btn" data-m="live">Live</button>
+  <button class="btn" data-m="jump">Sprung-Cooldown 2500 ms</button>
+  <button class="btn" data-m="ready">jumpIn 0</button>
+  <button class="btn" data-m="dead">Tod durch Anna</button>
+  <button class="btn" data-m="roundOver">Runde vorbei (Anna)</button>
+  <button class="btn" data-m="draw">Unentschieden</button>
+  <button class="btn" data-m="finalHost">Final (Host)</button>
+  <button class="btn" data-m="finalGuest">Final (Gast)</button>
+  <button class="btn" data-m="camIs">nsCamIs chase</button>
+  <h3>Phase 2: Turbo / Extras</h3>
+  <button class="btn" data-m="b0">boost 0</button><button class="btn" data-m="b4">boost 0.4</button><button class="btn" data-m="b1">boost 1</button>
+  <button class="btn" data-m="sh1">Schild an</button><button class="btn" data-m="sh0">Schild aus</button>
+  <button class="btn" data-m="ex1">extras an</button><button class="btn" data-m="ex0">extras aus</button><br>
+  <button class="btn" data-m="i_boost">nsItem boost</button><button class="btn" data-m="i_jump">nsItem jump</button>
+  <button class="btn" data-m="i_shield">nsItem shield</button><button class="btn" data-m="i_blast">nsItem blast</button>
+  <h3>Phone → Bildschirm (Log)</h3>
+  <div id="log"></div>
+</div>
+<script>window.__AC_ROLE__ = 'controller';</script>
+<script src="core/game-registry.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const VIEWS = [];
+  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  let myHost = q.get('host') !== '0';
+  function updateAbort() { $('abortBtn').style.display = myHost ? 'block' : 'none'; }
+  function startTimer() {} function stopTimer() {}
+  const AirConsole = { SCREEN: 0 };
+  const ac = { message(to, d) { window.fakeScreen(d); } };
+  window.addEventListener('error', (e) => {
+    document.title = 'ERROR: ' + e.message;
+    const b = $('devErr') || document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'devErr' }));
+    b.textContent += e.message + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+  // the controller injects its view into <body>; move it into the phone frame afterwards
+</script>
+<script src="games/neonspur/meta.js"></script>
+<script src="games/neonspur/controller.js"></script>
+<script>
+  $('phone').appendChild($('v-neonspur'));
+  const state = q.get('state');
+  if (!state || q.get('panel') === '1') document.body.classList.add('panel');
+  const color = q.get('color') || '#ff2d95';
+  const C = () => window.CONTROLLERS.neonspur;
+  const toPhone = (d) => { logMsg('← ' + JSON.stringify(d)); C().onMessage(JSON.parse(JSON.stringify(d))); };
+  const log = $('log');
+  function logMsg(s) { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; }
+  let cam = 'pov';
+  window.fakeScreen = function (d) {
+    logMsg('→ ' + JSON.stringify(d));
+    if (d.t === 'nsCam') { cam = cam === 'pov' ? 'chase' : 'pov'; toPhone({ t: 'nsCamIs', cam }); }
+  };
+  let extras = q.get('extras') !== '0', boost = parseFloat(q.get('boost')) || 0, shield = q.get('shield') === '1';
+  const info = (rider) => toPhone({ t: 'nsInfo', rider, color, cam, host: myHost, target: 3, extras });
+  const you = () => toPhone({ t: 'nsYou', alive: true, jumpIn: 0, killer: null, boost, shield });
+  const M = {
+    info: () => info(true), spectatorInfo: () => info(false),
+    c3: () => toPhone({ t: 'nsPhase', phase: 'countdown', n: 3, round: 1, wins: 1, winner: null, champion: null, host: myHost }),
+    c2: () => toPhone({ t: 'nsPhase', phase: 'countdown', n: 2, round: 1, wins: 1, host: myHost }),
+    c1: () => toPhone({ t: 'nsPhase', phase: 'countdown', n: 1, round: 1, wins: 1, host: myHost }),
+    live: () => { toPhone({ t: 'nsPhase', phase: 'live', round: 1, wins: 1, host: myHost }); you(); },
+    jump: () => toPhone({ t: 'nsYou', alive: true, jumpIn: 2500, killer: null }),
+    ready: () => toPhone({ t: 'nsYou', alive: true, jumpIn: 0, killer: null }),
+    dead: () => toPhone({ t: 'nsYou', alive: false, jumpIn: 0, killer: 'Anna' }),
+    roundOver: () => toPhone({ t: 'nsPhase', phase: 'roundOver', round: 1, wins: 1, winner: 'Anna', host: myHost }),
+    draw: () => toPhone({ t: 'nsPhase', phase: 'roundOver', round: 1, wins: 1, winner: null, host: myHost }),
+    finalHost: () => toPhone({ t: 'nsPhase', phase: 'final', wins: 3, champion: 'Anna', host: true }),
+    finalGuest: () => toPhone({ t: 'nsPhase', phase: 'final', wins: 1, champion: 'Anna', host: false }),
+    b0: () => { boost = 0; you(); }, b4: () => { boost = 0.4; you(); }, b1: () => { boost = 1; you(); },
+    sh1: () => { shield = true; you(); }, sh0: () => { shield = false; you(); },
+    ex1: () => { extras = true; info(true); }, ex0: () => { extras = false; info(true); },
+    i_boost: () => toPhone({ t: 'nsItem', kind: 'boost' }), i_jump: () => toPhone({ t: 'nsItem', kind: 'jump' }),
+    i_shield: () => toPhone({ t: 'nsItem', kind: 'shield' }), i_blast: () => toPhone({ t: 'nsItem', kind: 'blast' }),
+    camIs: () => toPhone({ t: 'nsCamIs', cam: 'chase' }),
+  };
+  document.querySelectorAll('#panel [data-m]').forEach(b => b.addEventListener('click', () => M[b.dataset.m]()));
+  C().activate(); updateAbort(); logMsg('activate()');
+  if (state) {
+    if (state === 'spectator') M.spectatorInfo();
+    else {
+      info(true);
+      if (state === 'countdown') M.c2();
+      else { M.live(); }
+      if (state === 'dead') M.dead();
+      if (state === 'roundOver') M.roundOver();
+      if (state === 'final') (myHost ? M.finalHost : M.finalGuest)();
+      if (state === 'live' && q.get('charging')) M.jump();
+    }
+  }
+</script>
+</body>
+</html>
