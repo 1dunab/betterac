@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Werwolf Dorf Dev</title>
+<!-- Preview for the village scene + narrator.
+     ?scene=night|dawn|day|vote|tense|end  &n=5..16  &sim=<ms> (fake clock)  &freeze=1 (hide panel, stop animation)
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
+       --screenshot out.png "http://localhost:3000/dev-werwolf-village.html?scene=vote&n=8&sim=3000&freeze=1" -->
+<style>
+  html,body { margin:0; background:#0a0a14; color:#dde; font:14px system-ui,sans-serif; }
+  /* keep identical to the canvas rule in screen.html */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 84px); width:auto; height:auto; display:block; }
+  #wrap { padding:10px; }
+  #panel { margin-top:10px; max-width:940px; }
+  #panel button, #panel select { background:#1d1d3a; color:#fff; border:1px solid #444a80; border-radius:6px; padding:5px 9px; margin:2px; font:inherit; cursor:pointer; }
+  #out { margin:8px 0; padding:8px 12px; background:#14142a; border-radius:8px; min-height:2.6em; font-size:16px; }
+  #keys { display:flex; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="960" height="600"></canvas>
+<div id="panel">
+  <div>
+    Szene:
+    <select id="sc"><option>night</option><option>dawn</option><option>day</option><option>vote</option><option>tense</option><option>end</option></select>
+    Spieler: <select id="nn"></select>
+    Rolle: <select id="rl"><option value="">(keine)</option><option>wolf</option><option>villager</option><option>seer</option><option>guard</option><option>cupid</option><option>witch</option><option>hunter</option></select>
+    <button id="spk">🔊 Sprechen</button> <button id="stp">Stopp</button> <span id="ms"></span>
+  </div>
+  <div id="out">Klicke einen Schlüssel.</div>
+  <div id="keys"></div>
+</div>
+</div>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="games/werwolf/narrator.js"></script>
+<script src="games/werwolf/village.js"></script>
+<script>
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  window.addEventListener('error', (e) => { ctx.fillStyle = '#300'; ctx.fillRect(0, 0, 960, 600); ctx.fillStyle = '#fff'; ctx.font = 'bold 20px monospace'; String(e.message).match(/.{1,70}/g).forEach((l, i) => ctx.fillText(l, 20, 60 + i * 28)); });
+
+  const q = new URLSearchParams(location.search);
+  const freeze = q.get('freeze') === '1';
+  const simMs = parseInt(q.get('sim') || '0', 10);
+  let fake = 1000;
+  if (simMs > 0) performance.now = () => fake;
+  if (freeze) document.getElementById('panel').style.display = 'none';
+
+  const NAMES = ['Anna', 'Ben', 'Cleo', 'Dennis', 'Emilia', 'Finn', 'Greta', 'Hannes', 'Ida', 'Jonathan', 'Kira', 'Lukas', 'Maximilian', 'Nele', 'Oskar', 'Paula'];
+  const COLORS = ['#ff2d55', '#0a84ff', '#30d158', '#ffd60a', '#bf5af2', '#ff9f0a', '#64d2ff', '#ff6482', '#a2f45a', '#5e5ce6', '#ffb340', '#40c8e0', '#ff7aa8', '#8be9a8', '#d0a0ff', '#f0e060'];
+  const ROLES = ['wolf', 'villager', 'seer', 'guard', 'cupid', 'witch', 'hunter', 'villager', 'wolf', 'villager', 'villager', 'wolf', 'villager', 'villager', 'wolf', 'villager'];
+
+  let N = clamp(parseInt(q.get('n') || '8', 10) || 8, 5, 16);
+  let SCENE = q.get('scene') || 'night';
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  const village = new WerwolfVillage({ width: 960, height: 600 });
+  function build() {
+    village.setPlayers(NAMES.slice(0, N).map((nm, i) => ({ id: i + 1, name: nm, color: COLORS[i] })));
+  }
+  build();
+
+  function sceneFor(name, now) {
+    const ids = []; for (let i = 1; i <= N; i++) ids.push(i);
+    const base = { sky: 0, alive: {}, revealed: {}, offline: {}, highlight: [], votes: {}, ready: {}, mood: 'calm' };
+    if (name === 'night') { base.sky = 0; base.offline[2] = true; }
+    if (name === 'dawn') {
+      base.sky = 0.5 + 0.0 * now;
+      base.alive[3] = false; base.revealed[3] = 'seer'; base.highlight = [3];
+    }
+    if (name === 'day') {
+      base.sky = 1;
+      base.alive[3] = false; base.revealed[3] = 'seer';
+      if (N > 5) { base.alive[ids[N - 2]] = false; base.revealed[ids[N - 2]] = 'wolf'; }
+      if (N > 6) { base.alive[ids[N - 1]] = false; }
+      base.offline[1] = true;
+      for (const id of ids) if (base.alive[id] !== false && id % 3 === 0) base.ready[id] = true;
+    }
+    if (name === 'vote') {
+      base.sky = 1;
+      base.alive[ids[N - 1]] = false; base.revealed[ids[N - 1]] = 'hunter';
+      const alive = ids.filter((i) => i !== ids[N - 1]);
+      const target = alive[1], second = alive[Math.floor(alive.length / 2)];
+      alive.forEach((id, k) => { if (id === target) base.votes[id] = second; else if (k % 3 === 0) base.votes[id] = second; else if (k % 5 === 4) base.votes[id] = id; else base.votes[id] = target; });
+      base.highlight = [target];
+    }
+    if (name === 'tense') {
+      base.sky = 0.18; base.mood = 'tense';
+      const alive = ids.slice(0, N - 1);
+      alive.forEach((id, k) => { if (k % 2) base.votes[id] = alive[0]; });
+      base.highlight = [alive[0]];
+    }
+    if (name === 'end') {
+      base.sky = 0.8;
+      for (const id of ids) if (id % 2 === 0) { base.alive[id] = false; base.revealed[id] = ROLES[id - 1]; }
+    }
+    return base;
+  }
+
+  function roster() {
+    return NAMES.slice(0, N).map((nm, i) => ({
+      id: i + 1, name: nm, color: COLORS[i], role: ROLES[i], alive: i % 3 !== 1,
+      winner: ROLES[i] !== 'wolf', lover: i === 0 ? 3 : i === 2 ? 1 : null
+    }));
+  }
+
+  function frame(t) {
+    const sc = sceneFor(SCENE, t);
+    village.draw(ctx, sc, t);
+    if (SCENE === 'end') {
+      ctx.fillStyle = 'rgba(4,6,20,0.72)'; ctx.fillRect(0, 0, 960, 600);
+      ctx.fillStyle = '#ffd23f'; ctx.font = 'bold 34px system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('🏆 Das Dorf gewinnt!', 480, 56);
+      village.drawRoster(ctx, { x: 40, y: 80, w: 880, h: 480 }, roster(), t);
+    }
+  }
+
+  if (simMs > 0) {
+    for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; frame(fake); }
+    if (!freeze) (function loop() { fake += 16.7; frame(fake); requestAnimationFrame(loop); })();
+  } else {
+    (function loop() { frame(performance.now()); requestAnimationFrame(loop); })();
+  }
+
+  // ---- panel ----
+  const sel = document.getElementById('sc'), nn = document.getElementById('nn');
+  for (let i = 5; i <= 16; i++) { const o = document.createElement('option'); o.textContent = i; nn.appendChild(o); }
+  sel.value = SCENE; nn.value = N;
+  sel.onchange = () => { SCENE = sel.value; };
+  nn.onchange = () => { N = +nn.value; build(); };
+
+  const out = document.getElementById('out'), ms = document.getElementById('ms');
+  let current = '';
+  function show(key) {
+    const role = document.getElementById('rl').value || undefined;
+    current = WerwolfNarrator.line(key, { name: 'Anna', role: role || 'seer', n: 2 });
+    if (!role && /^(death|hunterRises)/.test(key)) current = WerwolfNarrator.line(key, { name: 'Anna', n: 2 });
+    out.textContent = key + ': ' + current;
+  }
+  const keysDiv = document.getElementById('keys');
+  for (const k of WerwolfNarrator.keys) { const b = document.createElement('button'); b.textContent = k; b.onclick = () => show(k); keysDiv.appendChild(b); }
+  document.getElementById('spk').onclick = () => { ms.textContent = '≈ ' + WerwolfNarrator.say(current || 'Willkommen in Düsterwald.') + ' ms'; };
+  document.getElementById('stp').onclick = () => WerwolfNarrator.stop();
+  if (!freeze) show(WerwolfNarrator.keys[Math.floor(Math.random() * WerwolfNarrator.keys.length)]);
+  document.title = 'DEV-RUNNING';
+</script>
+</body>
+</html>

@@ -7,8 +7,9 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **20 games** — from social deduction and drawing chains to real-3D racing, co-op
-bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs and 3D light-cycle duels.
+and **21 games** — from social deduction and drawing chains to real-3D racing, co-op
+bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs, 3D light-cycle duels
+and a werewolf night with an automatic narrator.
 
 ## Screenshots
 
@@ -74,6 +75,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 🎯 BREACH · Station NEXUS | 1–8 | Original 3D tactical FPS: phone-controlled split-screen, private online rooms, bots, two bomb sites |
 | 🐶 Wauwau-WG | 1+ | Nintendogs-style dog care: pet, bathe, walk and play fetch — your dog lives on your phone |
 | ⚡ Neonspur | 1–4 | 3D light-cycle arena: walls of light, jumps onto terraces, Turbo, power-ups, split-screen, bots |
+| 🐺 Werwolfnacht | 5–16 | Werewolf with an automatic moderator: secret roles and night actions on the phones, narrated village on the TV |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -188,6 +190,28 @@ with ramps). Mitschauen works: the 3D picture is drawn into the shared canvas.
 `/dev-neonspur.html?n=2&bots=2&sim=9000&freeze=1` is the TV harness with autopilot riders,
 `/dev-neonspur-view.html` previews the renderer, `/dev-neonspur-phone.html?state=live` the
 phone UI. See the [Neonspur design notes](docs/NEONSPUR.md).
+
+## Werwolfnacht
+
+The classic werewolf party game without a game master: the TV is the village and the
+narrator (on-screen text plus optional German browser speech), every phone is a private
+role card. At night **everyone** acts on their phone at the same time — wolves pick a
+victim together and see each other's picks live, the 🔮 Seherin, 🛡️ Beschützer, 🧪 Hexe
+and 💘 Amor do their thing, and everybody else answers a decoy question, so nobody gives
+their role away by tapping. Nights always take about the same time, whatever happens.
+
+By day the village discusses (timer on the TV), then votes on the phones with arrows on the
+TV; ties go to a runoff. The 🏹 Jäger takes someone with him, lovers die together, and dead
+players become ghosts who see every role. Phones that lock or drop out stay in the game and
+pick up where it is. At the end the TV reveals all roles and replays the **Chronik**: who
+did what in every night. Settings: number of wolves, each special role on/off, discussion
+time, reveal roles on death, narrator voice.
+
+`node test-werwolf.js` checks the rules (including 500 random full games),
+`node test-werwolf-flow.js` plays full games through the real screen and phone pages.
+`/dev-werwolf.html?n=8&fast=0.1` runs the TV with bot players, `/dev-werwolf-village.html`
+previews the village and the narrator, `/dev-werwolf-phone.html?state=wolf` the phone. See
+the [Werwolfnacht design notes](docs/WERWOLF.md).
 
 ## How it works
 

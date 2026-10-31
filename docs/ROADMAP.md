@@ -215,3 +215,5 @@ are data PRs.
 - ⚡ Neonspur — original 3D light-cycle arena: jumps, terraces and ramps, Turbo by grinding,
   four power-ups, space look with bloom, split-screen with Ego/Verfolger cameras, bots for
   solo play ([design notes](NEONSPUR.md)).
+- 🐺 Werwolfnacht — werewolf with an automatic narrator: seven roles incl. lovers, simultaneous
+  night actions with decoys, ghosts, reconnect-safe, end-of-game Chronik ([design notes](WERWOLF.md)).

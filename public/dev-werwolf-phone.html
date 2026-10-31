@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Werwolf Phone Dev</title>
+<!-- Phone dev page: runs the real Werwolf controller.js against a fake screen.
+     ?state=role|wolf|seer|witch|cupid|suspect|guard|day|vote|runoff|ghost|hunter|end|dawn   jump into a state (hides the panel)
+     ?host=0|1 (default 1)  ?won=0|1  ?panel=1 force the panel
+     firefox --headless --no-remote --profile <dir> --window-size=390,844 --screenshot out.png "http://localhost:3000/dev-werwolf-phone.html?state=wolf" -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+  #devErr { position:fixed; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:8px 10px; background:#b00020; color:#fff;
+            font:12px/1.35 monospace; white-space:pre-wrap; pointer-events:none; }
+  #devErr:empty { display:none; }
+  #phone { position:relative; height:100%; }
+  body.panel { display:flex; }
+  body.panel #phone { width:390px; max-width:100%; height:min(100%, 844px); flex:none; border-right:2px solid #444; }
+  #panel { display:none; flex:1; padding:12px; overflow:auto; touch-action:auto; -webkit-user-select:text; user-select:text; }
+  body.panel #panel { display:block; }
+  #panel h3 { margin:12px 0 6px; font-size:14px; opacity:.7; }
+  #panel .btn { margin:0 6px 6px 0; padding:8px 12px; font-size:14px; }
+  #log { font:12px/1.4 monospace; background:#000; padding:8px; height:220px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<button id="abortBtn">✕ Abbrechen</button>
+<div id="phone"></div>
+<div id="panel">
+  <h3>Bildschirm → Phone</h3>
+  <button class="btn" data-m="role">wwRole (Dorf)</button><button class="btn" data-m="roleWolf">wwRole (Wolf)</button>
+  <button class="btn" data-m="phase_roles">Phase roles</button><button class="btn" data-m="phase_night">Phase night</button>
+  <button class="btn" data-m="phase_dawn">dawn</button><button class="btn" data-m="phase_day">day</button>
+  <button class="btn" data-m="phase_vote">vote</button><button class="btn" data-m="phase_verdict">verdict</button>
+  <h3>Nacht-Aufgaben</h3>
+  <button class="btn" data-m="t_wolf">wolf</button><button class="btn" data-m="pack">wwPack</button>
+  <button class="btn" data-m="t_seer">seer</button><button class="btn" data-m="seen">wwSeen</button>
+  <button class="btn" data-m="t_guard">guard</button><button class="btn" data-m="t_cupid">cupid</button>
+  <button class="btn" data-m="t_witch">witch</button><button class="btn" data-m="t_witch0">witch (kein Opfer)</button>
+  <button class="btn" data-m="t_suspect">suspect</button><button class="btn" data-m="t_trust">trust</button>
+  <button class="btn" data-m="lover">wwLover</button>
+  <h3>Tod / Geist / Jäger</h3>
+  <button class="btn" data-m="dead_wolves">Tod: Wölfe</button><button class="btn" data-m="dead_poison">Gift</button>
+  <button class="btn" data-m="dead_grief">Gram</button><button class="btn" data-m="dead_vote">Votum</button>
+  <button class="btn" data-m="ghost">wwGhost</button><button class="btn" data-m="hunter">wwShootTask</button>
+  <h3>Abstimmung / Ende</h3>
+  <button class="btn" data-m="ballot">wwBallot</button><button class="btn" data-m="runoff">Stichwahl</button>
+  <button class="btn" data-m="endWon">wwEnd gewonnen</button><button class="btn" data-m="endLost">wwEnd verloren</button>
+  <h3>Phone → Bildschirm (Log)</h3>
+  <div id="log"></div>
+</div>
+<script>window.__AC_ROLE__ = 'controller';</script>
+<script src="core/game-registry.js"></script>
+<script>
+  const q = new URLSearchParams(location.search);
+  const $ = (id) => document.getElementById(id);
+  const VIEWS = [];
+  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  let myHost = q.get('host') !== '0';
+  function updateAbort() { $('abortBtn').style.display = myHost ? 'block' : 'none'; }
+  function startTimer() {} function stopTimer() {}
+  const AirConsole = { SCREEN: 0 };
+  const ac = { message(to, d) { window.fakeScreen(d); } };
+  window.addEventListener('error', (e) => {
+    document.title = 'ERROR: ' + e.message;
+    const b = $('devErr') || document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'devErr' }));
+    b.textContent += e.message + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+</script>
+<script src="games/werwolf/meta.js"></script>
+<script src="games/werwolf/controller.js"></script>
+<script>
+  $('phone').appendChild($('v-werwolf'));
+  const state = q.get('state');
+  if (!state || q.get('panel') === '1') document.body.classList.add('panel');
+  const C = () => window.CONTROLLERS.werwolf;
+  const log = $('log');
+  function logMsg(s) { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; }
+  const toPhone = (d) => { logMsg('← ' + JSON.stringify(d)); C().onMessage(JSON.parse(JSON.stringify(d))); };
+  window.fakeScreen = (d) => logMsg('→ ' + JSON.stringify(d));
+
+  const P = [
+    { id: 1, name: 'Anna', color: '#ff453a' }, { id: 2, name: 'Ben', color: '#0a84ff' }, { id: 3, name: 'Cleo', color: '#30d158' },
+    { id: 4, name: 'Dario', color: '#ffd60a' }, { id: 5, name: 'Emma', color: '#bf5af2' }, { id: 6, name: 'Fynn', color: '#ff9f0a' },
+    { id: 7, name: 'Greta', color: '#64d2ff' }, { id: 8, name: 'Hannibal-Lukas', color: '#ff2d95' }
+  ];
+  const ROLE = { 1: 'villager', 2: 'wolf', 3: 'witch', 4: 'seer', 5: 'wolf', 6: 'hunter', 7: 'guard', 8: 'cupid' };
+  const roster = (dead) => P.map(p => Object.assign({}, p, { role: ROLE[p.id], alive: !(dead || []).includes(p.id) }));
+  const others = (...ex) => P.filter(p => !ex.includes(p.id));
+  const phase = (ph, extra) => toPhone(Object.assign({ t: 'wwPhase', phase: ph, night: 2, day: 2, secs: 0, alive: true, host: myHost }, extra));
+  const task = (kind, extra) => toPhone(Object.assign({ t: 'wwTask', step: 'A', kind, options: others(1), pick: 1 }, extra));
+  const dead = (cause) => { phase('dawn', { alive: false }); toPhone({ t: 'wwDead', cause }); ghost(); };
+  const ghost = () => toPhone({ t: 'wwGhost', roster: roster([2, 6]), night: ['🐺 Ben & Emma wollen Cleo', '🔮 Dario prüft Emma', '🛡️ Greta schützt Cleo', '🧪 Cleo vergiftet Fynn'] });
+  const M = {
+    role: () => toPhone({ t: 'wwRole', role: 'villager', pack: [], host: myHost }),
+    roleWolf: () => toPhone({ t: 'wwRole', role: 'wolf', pack: [P[1], P[4]], host: myHost }),
+    phase_roles: () => phase('roles', { secs: 40 }), phase_night: () => phase('night'), phase_dawn: () => phase('dawn'),
+    phase_day: () => phase('day', { secs: 95 }), phase_vote: () => phase('vote', { secs: 25 }), phase_verdict: () => phase('verdict'),
+    t_wolf: () => task('wolf', { options: others(2, 5) }),
+    pack: () => toPhone({ t: 'wwPack', picks: { 2: 3, 5: 4 } }),
+    t_seer: () => task('seer', { options: others(4) }),
+    seen: () => toPhone({ t: 'wwSeen', target: P[2], role: 'witch' }),
+    t_guard: () => task('guard', { options: P }),
+    t_cupid: () => task('cupid', { options: P, pick: 2 }),
+    t_witch: () => task('witch', { step: 'B', options: others(3), victim: P[0], canHeal: true, canPoison: true }),
+    t_witch0: () => task('witch', { step: 'B', options: others(3), victim: null, canHeal: false, canPoison: true }),
+    t_suspect: () => task('suspect', { options: others(1) }), t_trust: () => task('trust', { step: 'B', options: others(1) }),
+    lover: () => toPhone({ t: 'wwLover', partner: P[2] }),
+    dead_wolves: () => dead('wolves'), dead_poison: () => dead('poison'), dead_grief: () => dead('grief'), dead_vote: () => dead('vote'),
+    ghost, hunter: () => { phase('hunter', { alive: false, secs: 15 }); toPhone({ t: 'wwShootTask', options: others(6), secs: 15 }); },
+    ballot: () => { phase('vote', { secs: 25 }); toPhone({ t: 'wwBallot', options: others(1), runoff: false, secs: 25 }); },
+    runoff: () => { phase('runoff', { secs: 20 }); toPhone({ t: 'wwBallot', options: [P[1], P[4]], runoff: true, secs: 20 }); },
+    endWon: () => toPhone({ t: 'wwEnd', winner: 'village', won: true, roster: roster([2, 5, 6]), host: myHost }),
+    endLost: () => toPhone({ t: 'wwEnd', winner: 'wolves', won: false, roster: roster([1, 3, 6]), host: myHost })
+  };
+  document.querySelectorAll('#panel [data-m]').forEach(b => b.addEventListener('click', () => M[b.dataset.m]()));
+  C().activate(); updateAbort(); logMsg('activate()');
+  const S = {
+    role: () => { M.role(); phase('roles', { secs: 40 }); },
+    wolf: () => { M.roleWolf(); phase('night'); M.t_wolf(); M.pack(); },
+    seer: () => { M.role(); phase('night'); M.t_seer(); },
+    guard: () => { M.role(); phase('night'); M.t_guard(); },
+    witch: () => { M.role(); phase('night'); M.t_witch(); },
+    cupid: () => { M.role(); phase('night'); M.t_cupid(); },
+    suspect: () => { M.role(); phase('night'); M.t_suspect(); },
+    dawn: () => { M.role(); M.lover(); phase('dawn'); },
+    day: () => { M.role(); M.lover(); phase('day', { secs: 95 }); },
+    vote: () => { M.role(); M.ballot(); }, runoff: () => { M.role(); M.runoff(); },
+    ghost: () => { M.role(); M.phase_day(); M.dead_wolves(); phase('day', { alive: false, secs: 95 }); },
+    hunter: () => { M.role(); M.hunter(); },
+    end: () => { M.role(); (q.get('won') === '0' ? M.endLost : M.endWon)(); }
+  };
+  if (state && S[state]) S[state]();
+  // optional: &sel=3 / &hold=role preselects for screenshots
+  if (q.get('click')) q.get('click').split(',').forEach(id => { const el = document.querySelector('[data-a][data-id="' + id + '"]'); if (el) el.click(); });
+  if (q.get('hold')) { const el = document.querySelector('[data-hold="' + q.get('hold') + '"]'); if (el) el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); }
+</script>
+</body>
+</html>
