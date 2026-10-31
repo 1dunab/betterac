@@ -217,3 +217,6 @@ are data PRs.
   solo play ([design notes](NEONSPUR.md)).
 - 🐺 Werwolfnacht — werewolf with an automatic narrator: seven roles incl. lovers, simultaneous
   night actions with decoys, ghosts, reconnect-safe, end-of-game Chronik ([design notes](WERWOLF.md)).
+- 🎈 Skyfarers — co-op 3D airship game: harvest, build and defend a floating island through
+  storms and dragons over one day, context-button cockpit, co-op bots, day/night and weather,
+  fauna and inhabitants, Auto graphics quality ([design notes](SKYFARERS.md)).

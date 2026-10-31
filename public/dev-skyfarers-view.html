@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Skyfarers View Dev</title>
+<!-- Renderer preview for games/skyfarers/render.js (+ fx.js when it is more than the stub). Works without glue/phones.
+     ?src=fake|sim      fake = scripted state in the exact sim.state shape (default); sim = real SkyfarersSim with bot captains
+     fake:  ?dayT=0.35 ?event=none|sturm|drachen|nacht ?ships=6 ?shield=1 ?herz=100 ?auto=1 (dayT advances) ?anim=1 (build progress animates)
+     sim:   ?bots=4 ?dauer=kurz|normal|lang ?schwierigkeit=leicht|normal|heftig ?seed=7
+     both:  ?quality=high|low ?t=<s> (fast-forward sim/fake time, then freeze unless live=1) ?w=1280 ?h=800 ?intro=1 (play the fly-in)
+            ?pause=1 ?ui=0 (hide the bar) ?bench=N (render N frames as fast as possible after warm-up, print ms/calls/tris)
+            ?fire=unload,strike,... (fire those events once after warm-up)  ?events=1 (fake mode: run the scripted fx events, default on)
+     headless:  firefox --headless --no-remote --profile /tmp/p --window-size=1600,1000 --screenshot out.png \
+                  "http://localhost:3000/dev-skyfarers-view.html?dayT=0.62&event=sturm&t=20&ui=0"  -->
+<style>
+  html,body { margin:0; background:#0c1020; color:#cfe3ff; font:13px/1.3 system-ui,sans-serif; }
+  #bar { display:flex; flex-wrap:wrap; gap:5px 8px; align-items:center; padding:5px 8px; background:#151d36; }
+  #bar button, #bar select { font:inherit; background:#26365c; color:#e8f1ff; border:1px solid #435a8f; border-radius:5px; padding:2px 7px; cursor:pointer; }
+  #bar button.on { background:#4a78c9; }
+  #bar label { display:flex; gap:4px; align-items:center; }
+  #fxbar { display:flex; flex-wrap:wrap; gap:4px; padding:3px 8px 5px; background:#101830; }
+  #fxbar button { font:11px system-ui; background:#1e2c50; color:#cfe3ff; border:1px solid #38497a; border-radius:4px; padding:1px 6px; cursor:pointer; }
+  canvas#c { display:block; max-width:100vw; height:auto; background:#000; }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="fxbar"></div>
+<canvas id="c" width="1280" height="800"></canvas>
+<script src="games/skyfarers/art.js"></script>
+<script src="games/skyfarers/world.js"></script>
+<script src="games/skyfarers/sim.js"></script>
+<script src="games/skyfarers/fx.js"></script>
+<script src="games/skyfarers/render.js"></script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script type="module">
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+function devFail(msg) {
+  ctx.fillStyle = '#400'; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 18px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  String(msg).split('\n').forEach((ln, i) => (ln.match(/.{1,120}/g) || ['']).forEach((l2, j) => ctx.fillText(l2, 16, 40 + (i * 2 + j) * 22)));
+  console.error(msg);
+}
+const fxWarn = []; { const ow = console.warn; console.warn = (...a) => { fxWarn.push(a.map((x) => (x && x.stack ? (x.message || '') + ' ' + x.stack : String(x))).join(' ')); ow.apply(console, a); }; }   // shown in the HUD (fx errors are swallowed by the view)
+window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message + '\n' + (e.error && e.error.stack || '')));
+try {
+  const q = new URLSearchParams(location.search), P = (k, d) => (q.has(k) ? q.get(k) : d);
+  const World = window.SkyfarersWorld, Sim = window.SkyfarersSim;
+  const SRC = P('src', 'fake') === 'sim' ? 'sim' : 'fake';
+  const W = parseInt(P('w', '1280'), 10), H = parseInt(P('h', '800'), 10);
+  const DT = 1 / 30;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t, sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const fract = (x) => x - Math.floor(x), hash = (n) => fract(Math.sin(n * 127.1 + 311.7) * 43758.5453);
+  const COLORS = ['#ff3b5c', '#2d8cff', '#ffd23f', '#3ddc84', '#b266ff', '#ff8c1a', '#18c7b8', '#ff5fb4'];
+  const seed = parseInt(P('seed', '7'), 10) | 0;
+  const world = World.make(seed);
+  const O = { dayT: parseFloat(P('dayT', '0.35')), event: P('event', 'none'), shield: P('shield', '0') === '1', herz: parseFloat(P('herz', '100')), evT0: 0, auto: P('auto', '0') === '1', anim: P('anim', '0') === '1', sink: false };
+
+  // =====================================================================
+  // fake state: exactly the sim.state shape, a pure function of the tick (plus the UI options)
+  // =====================================================================
+  const NSHIPS = clamp(parseInt(P('ships', '6'), 10) | 0, 1, 8);
+  const lemn = (T, a, cx, cy, w, ph) => { const u = w * T + ph, d = 1 + Math.sin(u) ** 2; return [cx + a * Math.cos(u) / d, cy + a * 0.8 * Math.sin(u) * Math.cos(u) / d]; };
+  const LOOPS = [null, null, [48, 22, 20, 0.45, 0], [-48, -22, 20, 0.5, 1.5], [-48, 24, 19, 0.38, 3], [48, -24, 19, 0.42, 4.5], [0, 36, 16, 0.5, 2], [0, -36, 16, 0.5, 5]];
+  function shipPos(i, T) {
+    if (i === 0) { const il = world.islets[0], p = World.isletPos(il, T), a = 0.35 * T; return [p.x + Math.cos(a) * 8.5, p.y + Math.sin(a) * 8.5]; }   // circling a crystal rock (harvesting)
+    if (i === 1) {   // dock cycle: approach, sit docked, depart
+      const u = (T % 22) / 22, a = [-34, 36], b = [3, 20.4];
+      if (u < 0.4) { const k = sstep(0, 0.4, u); return [lerp(a[0], b[0], k), lerp(a[1], b[1], k)]; }
+      if (u < 0.72) return [b[0] + Math.sin(T * 0.7) * 0.3, b[1] + Math.cos(T * 0.6) * 0.2];
+      const k = sstep(0.72, 1, u); return [lerp(b[0], 36, k), lerp(b[1], 38, k)];
+    }
+    const L = LOOPS[i]; return lemn(T, L[2], L[0], L[1], L[3], L[4]);
+  }
+  const memoH = {}, memoPH = {};
+  function shipHeading(i, T) {
+    const a = shipPos(i, T - 0.02), b = shipPos(i, T + 0.02), sp = Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.04;
+    let raw = sp > 0.6 ? Math.atan2(b[1] - a[1], b[0] - a[0]) : (memoH[i] != null ? memoH[i] : 1.5);
+    const last = memoH[i] != null ? memoH[i] : raw;
+    return raw + Math.PI * 2 * Math.round((last - raw) / (Math.PI * 2));
+  }
+  const dragonPos = (i, T, n) => {   // circle at r 18..24, entering from the left edge during the first seconds
+    const r = 18 + (i % 3) * 3, a = 0.4 * (T - O.evT0) + i * (Math.PI * 2 / n) + 0.5, es = T - O.evT0;
+    let x = Math.cos(a) * r, y = Math.sin(a) * r * 0.9, h = a + Math.PI / 2, st = 'circle';
+    if (es < 6) { const k = sstep(0, 6, es); x = lerp(-95 + i * 6, x, k); y = lerp(-10 + i * 14, y, k); h = lerp(0.1, h, k * k); st = 'approach'; }
+    if (i === 2 && es > 16) { const k = es - 16; x = x + k * k * 1.6 + k * 8; y = y - k * 3; h = 0.1; st = 'flee'; }
+    return { x, y, h, st };
+  };
+  function slotsFake(T) {
+    const mk = (i, kind, stage, build, hp, fire, ruined) => ({ i, kind, stage, build, hp, fire, ruined });
+    const B = World.BUILDINGS, bp = O.anim ? 0.2 + 0.6 * (0.5 + 0.5 * Math.sin(T * 0.4)) : 0.5;
+    return [
+      mk(0, 'sternwarte', 2, 1, 120, 0, false), mk(1, 'windrad', 1, 1, B.windrad.hp, 0, false), mk(2, 'kanone', 1, bp, B.kanone.hp, 0, false),
+      mk(3, 'zisterne', 1, 1, 40, 0.7 + 0.2 * Math.sin(T * 2), false), mk(4, 'werkstatt', 1, 1, 0, 0, true), mk(5, 'kanone', 1, 1, B.kanone.hp, 0, false), mk(6, 'windrad', 1, 1, 24, 0, false)
+    ];
+  }
+  function fakeState(tick) {
+    const T = tick * DT, ev = O.event !== 'none', storm = O.event === 'sturm' || O.event === 'nacht', dr = O.event === 'drachen' || O.event === 'nacht';
+    const st = { t: T, dayT: O.dayT, over: O.sink, survived: false, stars: 0, herz: O.sink ? 0 : O.herz, energy: 62, shieldOn: O.shield, stock: { holz: 7, kristall: 3 }, wind: storm ? { x: 7, y: 3 } : { x: 0, y: 0 },
+      event: ev ? { kind: O.event, until: T + 40, strength: 1 } : null, next: ev ? null : { kind: 'sturm', at: T + 30 },
+      ships: [], slots: slotsFake(T), islets: [], clouds: [], gusts: [], drops: [], dragons: [], strikes: [] };
+    for (let i = 0; i < NSHIPS; i++) {
+      const p = shipPos(i, T), pp = shipPos(i, T - DT), v = [(p[0] - pp[0]) / DT, (p[1] - pp[1]) / DT];
+      const h = shipHeading(i, T), ph = memoPH[i] != null ? memoPH[i] : h; memoH[i] = h; memoPH[i] = h;
+      const docked = i === 1 && Math.hypot(p[0], p[1]) < 21.5 && Math.hypot(v[0], v[1]) < 2;
+      const stunned = i === 4 ? Math.max(0, 2.5 - (T % 14)) : 0;
+      const cargo = [{ holz: 0, kristall: 3 }, { holz: docked ? 0 : 2, kristall: docked ? 0 : 3 }, { holz: 3, kristall: 0 }, { holz: 2, kristall: 2 }, { holz: 0, kristall: 0 }, { holz: 1, kristall: 0 }, { holz: 0, kristall: 0 }, { holz: 2, kristall: 0 }][i];
+      st.ships.push({ pid: i + 1, bot: i > 3, x: p[0], y: p[1], px: pp[0], py: pp[1], vx: v[0], vy: v[1], h, ph, boost: 0.7, boosting: i === 3 && (T % 10) < 3, boostT: 0, cargo, cap: 6, water: i === 5 ? 2 : 0,
+        act: i === 0 ? 'harvest' : 'horn', acting: i === 0, docked, stunned, score: 0, stats: { delivered: 0, built: 0, fires: 0, dragonHits: 0, repairs: 0 } });
+    }
+    for (const il of world.islets) {
+      const p = World.isletPos(il, T), pp = World.isletPos(il, T - DT), max = il.kind === 'kristall' ? 8 : 10;
+      st.islets.push({ id: il.id, kind: il.kind, x: p.x, y: p.y, px: pp.x, py: pp.y, amount: Math.max(1, Math.round(max * (0.45 + 0.55 * Math.abs(Math.sin(T * 0.05 + il.id))))), max });
+    }
+    const nc = storm ? 5 : world.clouds.length;
+    for (let k = 0; k < nc; k++) {
+      const c = world.clouds[k % world.clouds.length], wrap = (v) => ((v + 100) % 200 + 200) % 200 - 100;
+      const x = wrap(c.x + (k >= world.clouds.length ? 41 * k : 0) + T * 1.7), x0 = wrap(c.x + (k >= world.clouds.length ? 41 * k : 0) + (T - DT) * 1.7);
+      const y = c.y * (k >= world.clouds.length ? -0.6 : 1) + (k >= world.clouds.length ? 6 * k : 0);
+      st.clouds.push({ id: k, x: clamp(x, -90, 90), y, px: clamp(x0, -90, 90), py: y, r: c.r });
+    }
+    const gp = storm ? 3 : 6;
+    for (let k = Math.max(0, Math.floor(T / gp) - 2); k <= Math.floor(T / gp); k++) {
+      const age = T - k * gp; if (age > 5 || age < 0) continue;
+      const a = (storm ? 0.4 : hash(k) * Math.PI * 2), cx = (hash(k * 3.1) * 2 - 1) * 45, cy = (hash(k * 5.7) * 2 - 1) * 28;
+      st.gusts.push({ id: k, x1: cx - Math.cos(a) * 10, y1: cy - Math.sin(a) * 10, x2: cx + Math.cos(a) * 10, y2: cy + Math.sin(a) * 10, age, life: 5 });
+    }
+    [[1, -28, -34, 3, 0], [2, 22, 40, 0, 2], [3, 60, -8, 1, 1]].forEach(([id, x, y, holz, kr]) => st.drops.push({ id, x, y, holz, kristall: kr, age: (T + id * 9) % 30 }));
+    if (dr) {
+      const n = O.event === 'nacht' ? 2 : 3;
+      for (let i = 0; i < (n === 2 ? 2 : 3); i++) {
+        const a = dragonPos(i, T, n), b = dragonPos(i, T - DT, n);
+        st.dragons.push({ id: i + 1, x: a.x, y: a.y, px: b.x, py: b.y, h: a.h, ph: b.h, hp: 6, state: a.st });
+      }
+    }
+    if (storm) {
+      for (let k = Math.floor(T / 2.5); k >= Math.max(0, Math.floor(T / 2.5) - 1); k--) {
+        const warn = k * 2.5, at = warn + 0.8; if (T < warn || T >= at) continue;
+        st.strikes.push(strikeOf(k, T, at));
+      }
+    }
+    return st;
+  }
+  function strikeOf(k, T, at) {
+    const kind = k % 3, sl = world.home.slots[1 + (k % 6)];
+    if (kind === 0) return { id: k, x: sl.x, y: sl.y, at, target: 'slot', slot: 1 + (k % 6) };
+    if (kind === 1) { const p = shipPos(Math.min(NSHIPS - 1, 3), at); return { id: k, x: p[0], y: p[1], at, target: 'ship', pid: Math.min(NSHIPS, 4) }; }
+    return { id: k, x: (hash(k) * 2 - 1) * 60, y: (hash(k * 2) * 2 - 1) * 35, at, target: 'sky' };
+  }
+  // scripted fake events (everything fx.js reacts to), by crossing time thresholds
+  const every = (p, off, T0, T1) => Math.floor((T1 - off) / p) !== Math.floor((T0 - off) / p) && T1 >= off;
+  function fakeEvents(tick) {
+    const T = tick * DT, T0 = T - DT, out = [], st = lastFake;
+    if (!st || P('events', '1') === '0') return out;
+    const sh = (i) => st.ships[Math.min(i, st.ships.length - 1)];
+    if (every(7, 1, T0, T)) out.push({ t: 'harvest', pid: 1, res: 'kristall', islet: 0 });
+    if (every(9, 3, T0, T)) out.push({ t: 'unload', pid: 2, res: 'holz' });
+    if (every(14, 5, T0, T)) out.push({ t: 'horn', pid: Math.min(6, st.ships.length) });
+    if (every(22, 6, T0, T)) out.push({ t: 'buildDone', slot: 2, kind: 'kanone', stage: 1 });
+    if (every(5, 2, T0, T)) out.push({ t: 'spray', pid: Math.min(6, st.ships.length), slot: 3 });
+    if (every(14, 2.5, T0, T) && NSHIPS > 4) out.push({ t: 'stun', pid: 5, by: 'strike' });
+    if (every(22, 0.2, T0, T)) out.push({ t: 'dock', pid: 2 });
+    if (every(22, 15.8, T0, T)) out.push({ t: 'undock', pid: 2 });
+    if (O.event === 'sturm' || O.event === 'nacht') {
+      const k0 = Math.floor(T0 / 2.5), k1 = Math.floor(T / 2.5);
+      if (k1 !== k0 && T >= 0) { const s = strikeOf(k1, T, k1 * 2.5 + 0.8); out.push({ t: 'strikeWarn', id: s.id, x: s.x, y: s.y }); }
+      const j0 = Math.floor((T0 - 0.8) / 2.5), j1 = Math.floor((T - 0.8) / 2.5);
+      if (j1 !== j0 && j1 >= 0) { const s = strikeOf(j1, T, 0); out.push({ t: 'strike', id: s.id, x: s.x, y: s.y, target: s.target, slot: s.slot, pid: s.pid, absorbed: O.shield && s.target !== 'sky' }); }
+    }
+    if (st.dragons.length) {
+      if (every(4, 1, T0, T)) out.push({ t: 'dragonFire', id: 1, slot: 3, absorbed: O.shield });
+      if (every(3, 0.5, T0, T)) out.push({ t: 'cannon', slot: 5, dragon: 1 });
+      if (every(2.4, 0.3, T0, T)) out.push({ t: 'harpoon', pid: 3, dragon: 2, hit: Math.floor(T / 2.4) % 2 === 0 });
+    }
+    return out;
+  }
+  // buttons for the fx agent: each builds a plausible event from the latest state
+  function manualEvent(name, st) {
+    const s1 = st.ships[0], s2 = st.ships[Math.min(1, st.ships.length - 1)], dr = st.dragons[0] || { id: 1, x: 20, y: 0 }, sk = strikeOf(Math.floor(st.t / 2.5), st.t, st.t + 0.8);
+    const M = {
+      unload: { t: 'unload', pid: s2.pid, res: 'kristall' }, harvest: { t: 'harvest', pid: s1.pid, res: 'holz', islet: 0 }, spray: { t: 'spray', pid: s2.pid, slot: 3 },
+      strikeWarn: { t: 'strikeWarn', id: sk.id, x: sk.x, y: sk.y }, strike: { t: 'strike', id: sk.id, x: sk.x, y: sk.y, target: sk.target, slot: sk.slot, pid: sk.pid, absorbed: !!st.shieldOn },
+      stun: { t: 'stun', pid: s2.pid, by: 'dragon' }, shieldOn: { t: 'shieldOn' }, shieldOff: { t: 'shieldOff' }, dragonFire: { t: 'dragonFire', id: dr.id, slot: 3, absorbed: !!st.shieldOn },
+      harpoon: { t: 'harpoon', pid: s1.pid, dragon: dr.id, hit: true }, cannon: { t: 'cannon', slot: 5, dragon: dr.id }, buildDone: { t: 'buildDone', slot: 2, kind: 'kanone', stage: 1 },
+      horn: { t: 'horn', pid: s1.pid }, sink: { t: 'sink' }, dock: { t: 'dock', pid: s2.pid }, undock: { t: 'undock', pid: s2.pid }, drop: { t: 'drop', id: 1, x: -28, y: -34 }, pickup: { t: 'pickup', pid: s1.pid, id: 1 },
+      fireStart: { t: 'fireStart', slot: 3 }, fireOut: { t: 'fireOut', slot: 3, pid: s1.pid }, ruined: { t: 'ruined', slot: 4 }, repair: { t: 'repair', pid: s1.pid, slot: 6 }, gust: { t: 'gust', pid: s1.pid },
+      herzLow: { t: 'herzLow' }, dragonSpawn: { t: 'dragonSpawn', id: dr.id }, dragonHit: { t: 'dragonHit', id: dr.id, by: s1.pid }, dragonFlee: { t: 'dragonFlee', id: dr.id },
+      warn: { t: 'warn', kind: 'sturm', in: 15 }, eventStart: { t: 'eventStart', kind: O.event === 'none' ? 'sturm' : O.event }, eventEnd: { t: 'eventEnd', kind: O.event }, buildStart: { t: 'buildStart', slot: 2, kind: 'kanone', stage: 1, pid: s1.pid }
+    };
+    return M[name];
+  }
+
+  // =====================================================================
+  // sources
+  // =====================================================================
+  const look = {};
+  let sim = null, lastFake = null, tick = 0, simEvents = [];
+  if (SRC === 'sim') {
+    const bots = clamp(parseInt(P('bots', '4'), 10) | 0, 1, 8), caps = [];
+    for (let i = 0; i < bots; i++) { caps.push({ pid: -1 - i, bot: true }); look[-1 - i] = { color: COLORS[i % COLORS.length], name: 'Bot ' + (i + 1) }; }
+    sim = Sim.create({ seed, world, dauer: P('dauer', 'normal'), schwierigkeit: P('schwierigkeit', 'normal'), captains: caps });
+  } else {
+    for (let i = 0; i < NSHIPS; i++) look[i + 1] = { color: COLORS[i % COLORS.length], name: 'Schiff ' + (i + 1) };
+  }
+  const stateNow = () => (SRC === 'sim' ? sim.state : lastFake);
+
+  // =====================================================================
+  // view
+  // =====================================================================
+  let quality = P('quality', 'high') === 'low' ? 'low' : 'high';
+  const view = new window.SkyfarersView(window.THREE, { width: W, height: H, quality });
+  window.__view = view;
+  if (P('nofx', '0') === '1' && view.fx) { view.fx.dispose(); view.fx = null; }   // bench baseline without fx
+  view.setWorld(world, look);
+  cv.width = view.W; cv.height = view.H;
+  let vnow = 1000, introT0 = P('intro', '0') === '1' ? vnow : -1e9, paused = P('pause', '0') === '1', frames = 0;
+  const gl = view.renderer.getContext();
+  function advance() {   // one fixed step of whichever source
+    tick++;
+    if (SRC === 'sim') simEvents = sim.step();
+    else { lastFake = fakeState(tick); simEvents = fakeEvents(tick); }
+    return simEvents;
+  }
+  if (SRC === 'fake') lastFake = fakeState(0);
+  function drawFrame(alpha, dtMs, snap) {
+    const st = stateNow(), intro = P('introp', '') !== '' ? parseFloat(P('introp', '1')) : clamp((vnow - introT0) / 4000, 0, 1);
+    const t0 = performance.now();
+    view.render(st, alpha, { now: vnow, dt: dtMs / 1000, intro, snap });
+    ctx.drawImage(view.canvas, 0, 0);
+    frames++;
+    return performance.now() - t0;
+  }
+  function hud(extra) {
+    const st = stateNow();
+    ctx.save(); ctx.font = '12px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    const line = `${SRC} ${quality} ${view.W}x${view.H} dayT ${st.dayT.toFixed(2)} ${st.event ? st.event.kind : '-'} calls ${view.drawCalls} tris ${(view.triangles / 1000).toFixed(1)}k cpu ${view.lastMs.toFixed(1)}ms${extra ? ' ' + extra : ''}`;
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(4, 4, ctx.measureText(line).width + 10, 18);
+    ctx.fillStyle = '#9fe'; ctx.fillText(line, 9, 8);
+    if (P('labels', '0') === '1') {   // view.project() check: tag under every ship
+      ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+      for (const sh of st.ships) { const pr = view.project(sh.x, sh.y, 5); if (pr.visible) { ctx.fillStyle = '#fff'; ctx.fillText('P' + sh.pid, pr.x, pr.y + 20); ctx.strokeStyle = '#fff'; ctx.strokeRect(pr.x - 2, pr.y - 2, 4, 4); } }
+      ctx.textAlign = 'left';
+    }
+    if (P('dbg', '0') === '1') {   // draw-call breakdown of the art actors (visible meshes, before shadow passes)
+      const A = window.SkyfarersArt, sum = (os) => os.reduce((a, o) => { if (!o) return a; const s2 = A.stats(o.group); return [a[0] + s2.calls, a[1] + s2.tris]; }, [0, 0]);
+      const rows = { island: sum([view.island]), ships: sum(st.ships.map((s) => view.shipObj(s.pid))), buildings: sum(st.slots.map((_, i) => view.buildingObj(i))), islets: sum(world.islets.map((i) => view.isletObj(i.id))), dragons: sum(st.dragons.map((d) => view.dragonObj(d.id))) };
+      const txt = Object.entries(rows).map(([k, v]) => `${k} ${v[0]}c/${(v[1] / 1000).toFixed(1)}k`).join('  ');
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(4, 24, ctx.measureText(txt).width + 10, 18); ctx.fillStyle = '#fd9'; ctx.fillText(txt, 9, 28);
+    }
+    if (fxWarn.length) { ctx.font = '12px monospace'; fxWarn.slice(0, 2).forEach((w, i) => { const l = w.replace(/\s+/g, ' ').slice(0, 190); ctx.fillStyle = 'rgba(120,0,0,.8)'; ctx.fillRect(4, 46 + i * 16, ctx.measureText(l).width + 10, 16); ctx.fillStyle = '#fff'; ctx.fillText(l, 9, 48 + i * 16); }); }
+    ctx.restore();
+  }
+
+  // ---- UI ----
+  const bar = document.getElementById('bar'), fxbar = document.getElementById('fxbar');
+  if (P('ui', '1') === '0') { bar.style.display = 'none'; fxbar.style.display = 'none'; }
+  const mkBtn = (txt, fn, parent, cls) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = fn; if (cls) b.className = cls; (parent || bar).appendChild(b); return b; };
+  const sl = document.createElement('input'); sl.type = 'range'; sl.min = 0; sl.max = 1; sl.step = 0.005; sl.value = O.dayT; sl.style.width = '180px';
+  const lbl = document.createElement('label'); lbl.append('dayT ', sl); const dv = document.createElement('span'); lbl.append(dv); bar.appendChild(lbl);
+  const showDay = () => { dv.textContent = O.dayT.toFixed(2); sl.value = O.dayT; }; showDay();
+  sl.oninput = () => { O.dayT = parseFloat(sl.value); showDay(); };
+  const evBtns = {};
+  for (const e of ['none', 'sturm', 'drachen', 'nacht']) evBtns[e] = mkBtn(e, () => { O.event = e; O.evT0 = tick * DT; for (const k in evBtns) evBtns[k].classList.toggle('on', k === e); }, bar, e === O.event ? 'on' : '');
+  const bShield = mkBtn('Schild', () => { O.shield = !O.shield; bShield.classList.toggle('on', O.shield); if (O.shield) view.event({ t: 'shieldOn' }, stateNow()); }, bar, O.shield ? 'on' : '');
+  const bQ = mkBtn('Qualität: ' + quality, () => { quality = quality === 'high' ? 'low' : 'high'; view.setQuality(quality); cv.width = view.W; cv.height = view.H; bQ.textContent = 'Qualität: ' + quality; }, bar);
+  mkBtn('Intro', () => { introT0 = vnow; O.sink = false; view.sinkT0 = null; });
+  const bP = mkBtn('Pause', () => { paused = !paused; bP.classList.toggle('on', paused); }, bar, paused ? 'on' : '');
+  const hz = document.createElement('input'); hz.type = 'range'; hz.min = 0; hz.max = 100; hz.value = O.herz; hz.style.width = '90px'; hz.oninput = () => { O.herz = parseFloat(hz.value); };
+  const hl = document.createElement('label'); hl.append('Herz ', hz); bar.appendChild(hl);
+  const bA = mkBtn('Tag läuft', () => { O.auto = !O.auto; bA.classList.toggle('on', O.auto); }, bar, O.auto ? 'on' : '');
+  if (SRC === 'sim') { sl.disabled = hz.disabled = true; for (const k in evBtns) evBtns[k].disabled = true; }
+  const NAMES = ['unload', 'harvest', 'spray', 'strikeWarn', 'strike', 'stun', 'shieldOn', 'shieldOff', 'dragonFire', 'harpoon', 'cannon', 'buildDone', 'horn', 'sink', 'dock', 'undock', 'drop', 'pickup', 'fireStart', 'fireOut', 'ruined', 'repair', 'gust', 'herzLow', 'dragonSpawn', 'dragonHit', 'dragonFlee', 'warn', 'eventStart', 'eventEnd', 'buildStart'];
+  for (const n of NAMES) mkBtn(n, () => { const e = manualEvent(n, stateNow()); if (e) { if (n === 'sink') { O.sink = true; } view.event(e, stateNow()); } }, fxbar);
+
+  // ---- run ----
+  const target = parseFloat(P('t', '0')), bench = parseInt(P('bench', '0'), 10) | 0;
+  const fireList = P('fire', '').split(',').filter(Boolean);
+  const fireNow = () => { for (const n of fireList) { if (n === 'dispose') { view.dispose(); document.title = 'DISPOSED'; throw new Error('disposed ok (expected stop)'); }
+    if (n === 'qswitch') { quality = quality === 'high' ? 'low' : 'high'; view.setQuality(quality); cv.width = view.W; cv.height = view.H; continue; } const e = manualEvent(n, stateNow()); if (e) { if (n === 'sink') O.sink = true; view.event(e, stateNow()); } } };
+  if (target > 0 || bench > 0) {
+    // virtual-clock fast-forward: step the source, only render the last second or so
+    const N = Math.round(target * 30), RENDER_FROM = Math.max(0, N - 45);
+    for (let i = 0; i < N; i++) {
+      const evs = advance(); vnow += 1000 / 30;
+      if (i >= RENDER_FROM - 30) for (const e of evs) view.event(e, stateNow());
+      if (i >= RENDER_FROM) drawFrame(1, 1000 / 30, i === RENDER_FROM);
+    }
+    if (N === 0 || RENDER_FROM === N) drawFrame(1, 33, true);
+    fireNow();
+    if (fireList.length) for (let k = 0; k < parseInt(P('fireframes', '20'), 10); k++) { advance(); vnow += 1000 / 30; drawFrame(1, 1000 / 30, false); }
+    if (bench > 0) {
+      for (let k = 0; k < 20; k++) { advance(); vnow += 1000 / 30; drawFrame(1, 1000 / 30, false); }
+      const ts = []; let calls = 0, tris = 0, cpu = [];
+      for (let k = 0; k < bench; k++) {
+        const evs = advance(); vnow += 1000 / 30; for (const e of evs) view.event(e, stateNow());
+        const t0 = performance.now(); drawFrame(1, 1000 / 30, false); gl.finish(); ts.push(performance.now() - t0); calls = Math.max(calls, view.drawCalls); tris = Math.max(tris, view.triangles); cpu.push(view.lastMs);
+      }
+      const avg = ts.reduce((a, b) => a + b, 0) / ts.length, mx = Math.max(...ts), c = cpu.reduce((a, b) => a + b, 0) / cpu.length;
+      hud(); ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(4, 26, 520, 20); ctx.fillStyle = '#ff9'; ctx.font = '13px monospace'; ctx.textBaseline = 'top';
+      const msg = `BENCH ${quality} n=${bench} avg ${avg.toFixed(1)}ms max ${mx.toFixed(0)}ms (cpu ${c.toFixed(1)}) calls ${calls} tris ${tris}`;
+      ctx.fillText(msg, 9, 30); console.log(msg); document.title = msg;
+    } else { hud(); document.title = 'SKVIEW-READY'; }
+    if (P('live', '0') === '1' && bench === 0) loop();
+  } else {
+    drawFrame(1, 33, true); fireNow(); loop();
+    document.title = 'SKVIEW-RUNNING';
+  }
+  function loop() {
+    let last = performance.now(), acc = 0;
+    (function f() {
+      const n = performance.now(), dt = Math.min(100, n - last); last = n;
+      if (!paused) {
+        vnow += dt; acc += dt / 1000;
+        if (O.auto && SRC === 'fake') { O.dayT = (O.dayT + dt / 60000) % 1; showDay(); }
+        let steps = 0;
+        while (acc >= DT && steps++ < 6) { acc -= DT; for (const e of advance()) view.event(e, stateNow()); }
+        if (acc > DT * 3) acc = 0;
+      }
+      drawFrame(clamp(acc / DT, 0, 1), paused ? 0 : dt, false);
+      hud();
+      requestAnimationFrame(f);
+    })();
+  }
+} catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>

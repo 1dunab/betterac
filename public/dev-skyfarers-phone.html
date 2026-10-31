@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Skyfarers Phone Dev</title>
+<!-- Phone dev page: runs the real Skyfarers controller.js against a fake screen.
+     The page has two modes. The top page shows the fake-screen panel and an iframe sized like a phone;
+     the iframe (same file with ?phone=1) is the phone itself, so orientation media queries are real.
+     ?w=390&h=844 portrait (default) | ?w=844&h=390 landscape
+     ?state=live|docked|intro|end|endlose|spectator|stunned|cargo   preselect a state (hides the panel unless panel=1)
+     ?alert=sturm|drachen|nacht   show an alert banner    ?event=sturm   running event chip
+     ?act=harvest|harvestholz|shield|...   ?host=0 guest   ?color=%23ff2d95   ?autotest=1 run the stick throttle test
+     firefox --headless --no-remote --profile <dir> --window-size=900,900 --screenshot out.png "http://localhost:3994/dev-skyfarers-phone.html?state=docked" -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:20px; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:fixed; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+  #devErr { position:fixed; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:8px 10px; background:#b00020; color:#fff;
+            font:12px/1.35 monospace; white-space:pre-wrap; pointer-events:none; }
+  #devErr:empty { display:none; }
+  /* top page */
+  body.top { display:flex; gap:12px; padding:10px; box-sizing:border-box; align-items:flex-start; overflow:hidden; }
+  #frameWrap { flex:none; border:3px solid #444; border-radius:18px; overflow:hidden; background:#000; }
+  #frameWrap iframe { display:block; border:0; }
+  #panel { flex:1; min-width:260px; height:100%; overflow:auto; touch-action:auto; -webkit-user-select:text; user-select:text; font-size:14px; }
+  body.nopanel #panel { display:none; } body.nopanel { justify-content:center; }
+  #panel h3 { margin:10px 0 5px; font-size:13px; opacity:.7; }
+  #panel .btn { margin:0 5px 5px 0; padding:7px 10px; font-size:13px; }
+  #panel .btn.on { background:#0a84ff; }
+  #log { font:11px/1.35 monospace; background:#000; padding:6px; height:200px; overflow:auto; white-space:pre-wrap; }
+  #statline { font:12px monospace; color:#7fe3ff; margin-top:4px; }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const IS_PHONE = q.get('phone') === '1';
+  document.body.classList.add(IS_PHONE ? 'phone' : 'top');
+  const W = Math.max(200, Math.min(2000, +q.get('w') || 390)), H = Math.max(200, Math.min(2000, +q.get('h') || 844));
+// ========== phone mode: shell globals the controller expects ==========
+if (IS_PHONE) {
+  if (q.get('still') === '1') document.head.insertAdjacentHTML('beforeend', '<style>*{transition:none!important;animation-duration:0s!important;animation-delay:0s!important}</style>');
+  document.body.insertAdjacentHTML('afterbegin', '<button id="abortBtn">✕ Abbrechen</button>');
+  const $ = (id) => document.getElementById(id);
+  window.$ = $;
+  window.VIEWS = [];
+  window.showView = (v) => VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v));
+  window.myHost = q.get('host') !== '0';
+  window.updateAbort = () => { $('abortBtn').style.display = myHost ? 'block' : 'none'; };
+  window.AirConsole = { SCREEN: 0 };
+  window.ac = { message(to, d) { try { parent.devFromPhone(JSON.parse(JSON.stringify(d))); } catch (e) {} } };
+  window.devActivate = () => { window.CONTROLLERS.skyfarers.activate(); updateAbort(); };
+  window.devToPhone = (d) => window.CONTROLLERS.skyfarers.onMessage(d);
+  window.addEventListener('error', (e) => {
+    document.title = 'ERROR: ' + e.message;
+    const b = $('devErr') || document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'devErr' }));
+    b.textContent += e.message + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+}
+
+  // load order matters: write the tags synchronously (shell globals above, then registry, meta, controller)
+  if (IS_PHONE) document.write('<script src="core/game-registry.js"><\/script><script src="games/skyfarers/meta.js"><\/script><script src="games/skyfarers/controller.js"><\/script>');
+  else document.write('<script src="core/sfx.js"><\/script><script src="games/skyfarers/sound.js"><\/script>');
+</script>
+
+<!-- ========== top mode: panel + iframe ========== -->
+<div id="frameWrap" style="display:none"></div>
+<div id="panel">
+  <h3>Bildschirm → Phone</h3>
+  <button class="btn" data-m="reload">⟲ Phone neu laden</button>
+  <button class="btn" data-m="infoHost">skInfo Host</button><button class="btn" data-m="infoGuest">skInfo Gast</button>
+  <button class="btn" data-m="infoSpec">skInfo Zuschauer</button>
+  <br>
+  <button class="btn" data-m="intro">skPhase intro</button><button class="btn" data-m="live">live</button>
+  <button class="btn" data-m="end">end (gewonnen)</button><button class="btn" data-m="endLose">end (verloren)</button>
+  <h3>skYou</h3>
+  <button class="btn" data-m="actNext">act ▶ nächste</button>
+  <button class="btn" data-a="horn">horn</button><button class="btn" data-a="shield">shield</button><button class="btn" data-a="extinguish">extinguish</button>
+  <button class="btn" data-a="shoot">shoot</button><button class="btn" data-a="harvest">harvest 💎</button><button class="btn" data-a="harvestHolz">harvest 🪵</button>
+  <button class="btn" data-a="repair">repair</button><br>
+  <button class="btn" data-m="cargo+">Fracht +1</button><button class="btn" data-m="cargo0">Fracht leer</button><button class="btn" data-m="cargoFull">Fracht voll</button>
+  <button class="btn" data-m="water+">Wasser +1</button><button class="btn" data-m="water-">Wasser −1</button>
+  <button class="btn" data-m="boost+">Boost +0.2</button><button class="btn" data-m="boost-">Boost −0.2</button>
+  <button class="btn" data-m="stunTog">Betäubt an/aus</button><br>
+  <button class="btn" data-m="dock">Andocken (skBase)</button><button class="btn" data-m="undock">Ablegen</button>
+  <button class="btn" data-m="baseRich">Lager reich</button><button class="btn" data-m="basePoor">Lager arm</button>
+  <button class="btn" data-m="baseFull">Plätze voll</button><button class="btn" data-m="stern2">Sternwarte Stufe 2</button>
+  <h3>Alarm / Events / Toasts</h3>
+  <button class="btn" data-m="alert:sturm">skAlert Sturm 15</button><button class="btn" data-m="alert:drachen">Drachen</button><button class="btn" data-m="alert:nacht">Sturmnacht</button>
+  <button class="btn" data-m="ev:sturm:1">skEvent Sturm an</button><button class="btn" data-m="ev:sturm:0">aus</button>
+  <button class="btn" data-m="ev:drachen:1">Drachen an</button><button class="btn" data-m="ev:nacht:1">Nacht an</button><button class="btn" data-m="ev:nacht:0">Nacht aus</button>
+  <button class="btn" data-m="toast">skToast</button><button class="btn" data-m="toast2">skToast 2</button>
+  <h3>🔊 TV-Sounds (sound.js)</h3>
+  <div id="snd"></div>
+  <button class="btn" data-eng="0">Motor aus</button><button class="btn" data-eng="0.3">Motor 0.3</button><button class="btn" data-eng="0.7">0.7</button><button class="btn" data-eng="1.2">1.2 (Boost)</button><br>
+  <button class="btn" data-amb="calm">calm</button><button class="btn" data-amb="storm">storm</button><button class="btn" data-amb="night">night</button><button class="btn" data-amb="">aus</button>
+  <label style="margin-left:8px"><input type="checkbox" id="mute"> stumm (sfx.muted)</label>
+  <h3>Phone → Bildschirm (Log, Δ = ms seit letzter Nachricht)</h3>
+  <button class="btn" id="stickTest">🧪 Stick-Test (500 ms Mausdrag, 4 ms Takt)</button><button class="btn" id="clearLog">Log leeren</button>
+  <div id="statline"></div>
+  <div id="log"></div>
+</div>
+
+<script>
+if (!IS_PHONE) {
+  const $ = (id) => document.getElementById(id);
+  const color = q.get('color') || '#ff8a3d';
+  const state = q.get('state');
+  const hasPreset = !!(state || q.get('alert') || q.get('event') || q.get('act'));
+  if (hasPreset && q.get('panel') !== '1') document.body.classList.add('nopanel');
+  const wrap = $('frameWrap'); wrap.style.display = 'block';
+  const log = $('log'), t0 = performance.now();
+  let lastAt = 0, lastStickAt = 0, minGap = 1e9, nStick = 0, nAll = 0;
+  function logLine(s) { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; }
+  window.devFromPhone = function (d) {
+    const now = performance.now(); nAll++;
+    let extra = '';
+    if (d.t === 'skStick') {
+      nStick++;
+      if (lastStickAt) { const g = now - lastStickAt; minGap = Math.min(minGap, g); extra = ' (Stick-Δ ' + g.toFixed(0) + ')'; }
+      lastStickAt = now;
+      $('statline').textContent = 'skStick: ' + nStick + ' Nachrichten, kleinster Abstand ' + (minGap < 1e9 ? minGap.toFixed(1) + ' ms' : '–') + (minGap < 49 ? '  ⚠ unter 50 ms!' : '  ✓');
+    }
+    logLine(((now - t0) / 1000).toFixed(3).padStart(8) + 's Δ' + (now - lastAt).toFixed(0).padStart(5) + 'ms → ' + JSON.stringify(d) + extra);
+    lastAt = now;
+  };
+  $('clearLog').onclick = () => { log.textContent = ''; $('statline').textContent = ''; minGap = 1e9; nStick = 0; lastStickAt = 0; };
+
+  // --- the fake screen's truth ---
+  const ACTS = ['horn', 'shield', 'extinguish', 'shoot', 'harvest', 'repair'];
+  let host = q.get('host') !== '0';
+  let you = { cargo: { kristall: 2, holz: 3 }, cap: 6, water: 2, waterCap: 3, boost: 0.7, act: 'horn', docked: false, stunned: false };
+  let res = 'kristall';
+  let base = { stock: { holz: 5, kristall: 3 }, energy: 55, herz: 82, slots: [], canBuild: {} };
+  let preset = 'normal';
+  const NEED = { windrad: [2, 1], kanone: [3, 2], zisterne: [3, 0], werkstatt: [2, 2], sternwarte: [4, 4] };
+  function deriveCanBuild() {
+    const s = base.stock, out = {}; let ring = 0;
+    base.slots.forEach(x => { if (x && x.kind && x.kind !== 'sternwarte') ring++; });
+    const sw = base.slots.find(x => x && x.kind === 'sternwarte');
+    for (const k in NEED) {
+      if (k === 'sternwarte') out[k] = sw && (sw.build < 1 || sw.stage >= 3) ? 'stage' : (s.holz >= 4 && s.kristall >= 4 ? true : 'cost');
+      else out[k] = ring >= 6 ? 'noSlot' : (s.holz >= NEED[k][0] && s.kristall >= NEED[k][1] ? true : 'cost');
+    }
+    base.canBuild = out;
+  }
+  const ph = () => $('phoneFrame') && $('phoneFrame').contentWindow;
+  function toPhone(d) {
+    const w = ph(); if (!w || !w.devToPhone) return;
+    logLine(((performance.now() - t0) / 1000).toFixed(3).padStart(8) + 's ← ' + JSON.stringify(d).slice(0, 150));
+    w.devToPhone(JSON.parse(JSON.stringify(d)));
+  }
+  const sendInfo = (ship) => toPhone({ t: 'skInfo', ship, color, host, dauer: 'normal' });
+  const sendYou = () => toPhone({ t: 'skYou', ...you, ...(you.act === 'harvest' ? { res } : {}) });
+  const sendBase = () => { deriveCanBuild(); toPhone({ t: 'skBase', ...base }); };
+  const RESULT = { survived: true, stars: 2, mvp: { name: 'Anna' }, you: { score: 47, stats: { delivered: 18, built: 4, fires: 12, dragonHits: 3, repairs: 2 } } };
+  const setAct = (a) => { if (a === 'harvestHolz' || a === 'harvestholz') { you.act = 'harvest'; res = 'holz'; } else { you.act = a; res = 'kristall'; } sendYou(); };
+  const M = {
+    reload: () => { build(); },
+    infoHost: () => { host = true; sendInfo(true); }, infoGuest: () => { host = false; sendInfo(true); }, infoSpec: () => sendInfo(false),
+    intro: () => toPhone({ t: 'skPhase', phase: 'intro' }), live: () => toPhone({ t: 'skPhase', phase: 'live' }),
+    end: () => toPhone({ t: 'skPhase', phase: 'end', result: RESULT }),
+    endLose: () => toPhone({ t: 'skPhase', phase: 'end', result: { survived: false, stars: 0, mvp: { name: 'Lena', you: true }, you: { score: 12, stats: { delivered: 5, built: 1, fires: 3, dragonHits: 0, repairs: 0 } } } }),
+    actNext: () => { you.act = ACTS[(ACTS.indexOf(you.act) + 1) % ACTS.length]; res = res === 'kristall' ? 'holz' : 'kristall'; sendYou(); },
+    'cargo+': () => { const t = you.cargo.kristall + you.cargo.holz; if (t < you.cap) { if (t % 2) you.cargo.holz++; else you.cargo.kristall++; } sendYou(); },
+    cargo0: () => { you.cargo = { kristall: 0, holz: 0 }; sendYou(); }, cargoFull: () => { you.cargo = { kristall: 3, holz: 3 }; sendYou(); },
+    'water+': () => { you.water = Math.min(you.waterCap, you.water + 1); sendYou(); }, 'water-': () => { you.water = Math.max(0, you.water - 1); sendYou(); },
+    'boost+': () => { you.boost = Math.min(1, +(you.boost + 0.2).toFixed(2)); sendYou(); }, 'boost-': () => { you.boost = Math.max(0, +(you.boost - 0.2).toFixed(2)); sendYou(); },
+    stunTog: () => { you.stunned = you.stunned ? false : 2.5; sendYou(); },
+    dock: () => { you.docked = true; sendYou(); sendBase(); }, undock: () => { you.docked = false; sendYou(); },
+    baseRich: () => { base.stock = { holz: 12, kristall: 9 }; sendBase(); }, basePoor: () => { base.stock = { holz: 1, kristall: 0 }; sendBase(); },
+    baseFull: () => { base.slots = [1, 2, 3, 4, 5, 6].map(i => ({ i, kind: 'windrad', stage: 1, build: 1, hp: 60, fire: 0, ruined: false })); sendBase(); },
+    stern2: () => { base.slots = [{ i: 0, kind: 'sternwarte', stage: 2, build: 1, hp: 120, fire: 0, ruined: false }, { i: 1, kind: 'windrad', stage: 1, build: 1, hp: 60, fire: 0, ruined: false }, { i: 2, kind: 'zisterne', stage: 1, build: 1, hp: 0, fire: 0, ruined: true }]; sendBase(); },
+    toast: () => toPhone({ t: 'skToast', text: '🔭 Sternwarte Stufe 2 fertig!' }), toast2: () => toPhone({ t: 'skToast', text: '❌ Zu wenig Holz' })
+  };
+  function run(m) {
+    if (M[m]) return M[m]();
+    const p = m.split(':');
+    if (p[0] === 'alert') toPhone({ t: 'skAlert', kind: p[1], in: 15 });
+    if (p[0] === 'ev') toPhone({ t: 'skEvent', kind: p[1], on: p[2] === '1' });
+  }
+  document.querySelectorAll('#panel [data-m]').forEach(b => b.addEventListener('click', () => run(b.dataset.m)));
+  document.querySelectorAll('#panel [data-a]').forEach(b => b.addEventListener('click', () => setAct(b.dataset.a)));
+
+  // --- sounds ---
+  const S = window.SkyfarersSound;
+  if (S) {
+    S.names.forEach(n => { const b = document.createElement('button'); b.className = 'btn'; b.textContent = '▶ ' + n; b.onclick = () => S.play(n); $('snd').appendChild(b); });
+    document.querySelectorAll('[data-eng]').forEach(b => b.onclick = () => S.engine(+b.dataset.eng));
+    document.querySelectorAll('[data-amb]').forEach(b => b.onclick = () => S.ambience(b.dataset.amb || null));
+    $('mute').onchange = (e) => { if (window.sfx && sfx.setMuted) sfx.setMuted(e.target.checked); };
+    if (window.sfx) $('mute').checked = !!sfx.muted;
+  }
+
+  // --- phone iframe ---
+  function build() {
+    wrap.innerHTML = '';
+    wrap.style.width = W + 'px'; wrap.style.height = H + 'px';
+    const f = document.createElement('iframe'); f.id = 'phoneFrame'; f.width = W; f.height = H;
+    f.src = 'dev-skyfarers-phone.html?phone=1&host=' + (host ? 1 : 0) + (hasPreset ? '&still=1' : '');
+    f.onload = () => { start(); };
+    wrap.appendChild(f);
+  }
+  function start() {
+    const w = ph();
+    if (!w.devToPhone) { setTimeout(start, 50); return; }
+    you = { cargo: { kristall: 2, holz: 3 }, cap: 6, water: 2, waterCap: 3, boost: 0.7, act: 'horn', docked: false, stunned: false };
+    base.slots = []; base.stock = { holz: 5, kristall: 3 };
+    logLine('activate()');
+    w.devActivate();
+    const s = state || 'live', a = q.get('act');
+    if (s === 'spectator') { sendInfo(false); toPhone({ t: 'skPhase', phase: 'live' }); return; }
+    sendInfo(true);
+    if (s === 'intro') { toPhone({ t: 'skPhase', phase: 'intro' }); sendYou(); return; }
+    toPhone({ t: 'skPhase', phase: 'live' });
+    if (s === 'cargo') { you.cargo = { kristall: 3, holz: 3 }; you.act = 'harvest'; }
+    if (s === 'stunned') { you.stunned = 2.5; you.act = 'horn'; }
+    if (a) setAct(a);
+    else if (s === 'live' || s === 'cargo') { if (!you.stunned && you.act === 'horn') you.act = 'harvest'; }
+    sendYou();
+    if (s === 'docked') { base.stock = { holz: 3, kristall: 2 }; you.docked = true; you.act = a || 'repair'; M.stern2(); sendYou(); }
+    if (s === 'end') M.end();
+    if (s === 'endlose') M.endLose();
+    if (q.get('event')) toPhone({ t: 'skEvent', kind: q.get('event'), on: true });
+    if (q.get('alert')) toPhone({ t: 'skAlert', kind: q.get('alert'), in: 12 });
+    if (q.get('autotest') === '1') setTimeout(stickTest, 300);
+  }
+  // Drag the stick with synthetic mouse events every 4 ms for 500 ms; the log must show >= 50 ms between skStick messages
+  function stickTest() {
+    const w = ph(), el = w.document.getElementById('skStick');
+    const r = el.getBoundingClientRect();
+    const cx = r.left + 80, cy = r.top + r.height - 90;
+    const ev = (type, x, y, target) => (target || w).dispatchEvent(new w.MouseEvent(type, { clientX: x, clientY: y, bubbles: true }));
+    logLine('--- Stick-Test ---');
+    ev('mousedown', cx, cy, el);
+    const start = performance.now(); let n = 0;
+    const iv = setInterval(() => {
+      const ph0 = (performance.now() - start) / 500 * Math.PI * 4;
+      ev('mousemove', cx + Math.cos(ph0) * 60, cy + Math.sin(ph0) * 60); n++;
+      if (performance.now() - start > 500) { clearInterval(iv); ev('mouseup', cx, cy); logLine('--- Test Ende: ' + n + ' mousemoves ---'); }
+    }, 4);
+  }
+  $('stickTest').onclick = stickTest;
+  build();
+}
+</script>
+<script>
+  if (IS_PHONE) { document.getElementById('panel').remove(); document.getElementById('frameWrap').remove(); }
+</script>
+</body>
+</html>

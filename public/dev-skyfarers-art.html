@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Skyfarers Art Gallery</title>
+<!-- Model gallery for games/skyfarers/art.js: every model on a slow turntable, tris + draw calls per model.
+     ?model=all|buildings|lifecycle|ship|dragon|home|kristall|holz|windrad|kanone|zisterne|werkstatt|sternwarte|person|crate|harpoon
+     ?stage=1..3 (sternwarte)  ?build=0..1  ?hp=0..1  ?ruined=1  ?night=1  ?quality=low  ?kind=<building> (lifecycle)
+     ?t=<seconds> (animation clock offset)  ?spin=0  ?freeze=1  ?boost=1  ?breath=1  ?el=<elevation deg>  ?zoom=<factor>
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=1600,1000 --screenshot out.png \
+       "http://localhost:3000/dev-skyfarers-art.html?model=all" -->
+<style>
+  html,body { margin:0; background:#0d1626; color:#cfe3ff; font:13px/1.3 system-ui,sans-serif; }
+  #bar { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; padding:6px 10px; background:#14213a; }
+  #bar select, #bar button, #bar input[type=number] { font:inherit; background:#233556; color:#e8f1ff; border:1px solid #3d5483; border-radius:5px; padding:2px 6px; }
+  #bar button.on { background:#4a78c9; }
+  #bar label { display:flex; gap:4px; align-items:center; }
+  canvas#view { display:block; width:100vw; max-width:100%; height:auto; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <label>Modell <select id="selModel"></select></label>
+  <label>Stufe <select id="selStage"><option>1</option><option>2</option><option>3</option></select></label>
+  <label>Bau <input id="rngBuild" type="range" min="0" max="1" step="0.01" value="1"></label>
+  <label>HP <input id="rngHp" type="range" min="0" max="1" step="0.01" value="1"></label>
+  <button id="btnRuin">Ruine</button><button id="btnNight">Nacht</button><button id="btnLow">low</button><button id="btnBoost">Boost</button><button id="btnBreath">Feuer</button><button id="btnSpin">Drehen</button>
+</div>
+<canvas id="view" width="1600" height="1000"></canvas>
+<script src="games/skyfarers/art.js"></script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script type="module">
+const cv = document.getElementById('view'), ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+function devFail(msg) {
+  ctx.fillStyle = '#400'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'left';
+  String(msg).split('\n').forEach((ln, i) => (ln.match(/.{1,110}/g) || ['']).forEach((l2, j) => ctx.fillText(l2, 20, 50 + (i * 3 + j) * 26)));
+  console.error(msg);
+}
+window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message + '\n' + (e.error && e.error.stack || '')));
+try {
+  const q = new URLSearchParams(location.search), A = window.SkyfarersArt;
+  const S = {
+    model: q.get('model') || 'all', stage: parseInt(q.get('stage') || '1', 10), build: parseFloat(q.get('build') || '1'),
+    hp: parseFloat(q.get('hp') || '1'), ruined: q.get('ruined') === '1', night: q.get('night') === '1', quality: q.get('quality') === 'low' ? 'low' : 'high',
+    t0: parseFloat(q.get('t') || '0'), spin: q.get('spin') !== '0', freeze: q.get('freeze') === '1', boost: q.get('boost') === '1', breath: q.get('breath') === '1',
+    el: parseFloat(q.get('el') || '36'), zoom: parseFloat(q.get('zoom') || '1'), kind: q.get('kind') || 'windrad'
+  };
+  const T = window.THREE;
+  const gl = new T.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  gl.setPixelRatio(1); gl.setSize(W, H, false); gl.setScissorTest(true);
+  gl.toneMapping = T.ACESFilmicToneMapping; gl.toneMappingExposure = 1.0;
+  const scene = new T.Scene();
+  const sun = new T.DirectionalLight('#fff1d6', 3.0), hemi = new T.HemisphereLight('#bfe0ff', '#8a7a5c', 1.15);
+  sun.position.set(-6, 10, 7); scene.add(sun, sun.target, hemi);
+  const cam = new T.PerspectiveCamera(32, 1, 0.05, 400);
+  const home = { r: 16, dockR: 21, slots: Array.from({ length: 7 }, (_, i) => ({ i, x: i ? 10 * Math.cos((i - 1) * Math.PI / 3) : 0, y: i ? 10 * Math.sin((i - 1) * Math.PI / 3) : 0, angle: (i - 1) * Math.PI / 3 })) };
+  const BUILD_FIT = { windrad: [4.2, 2.6], kanone: [3.6, 1.8], zisterne: [3.6, 1.9], werkstatt: [3.8, 1.6] };
+  const mkBuilding = (kind, o) => () => {
+    const b = A.building(T, kind, { stage: o.stage || S.stage, quality: S.quality });
+    b.setBuild(o.build != null ? o.build : S.build); b.setDamage(o.hp != null ? o.hp : S.hp, o.ruined != null ? o.ruined : S.ruined);
+    const st = o.stage || S.stage, fit = kind === 'sternwarte' ? [st === 3 ? 5.8 : st === 2 ? 4.6 : 3.8, st === 3 ? 3.5 : st === 2 ? 2.4 : 1.7] : BUILD_FIT[kind];
+    return { obj: b, group: b.group, fit, update: (t) => b.animate(t, { working: o.working !== false, building: (o.build != null ? o.build : S.build) < 1, night: S.night ? 1 : 0 }) };
+  };
+  const DEF = {
+    ship: () => { const s = A.ship(T, { color: '#ff2d55', quality: S.quality }); return { obj: s, group: s.group, fit: [2.6, 1.2], update: (t) => A.animateShip(s, { t, speed: 7, bank: Math.sin(t * 0.8) * 0.9, boosting: S.boost, night: S.night ? 1 : 0 }) }; },
+    dragon: () => { const d = A.dragon(T, { quality: S.quality }); return { obj: d, group: d.group, fit: [6.2, 0.3], update: (t) => d.animate(t, { flap: 1, breathing: S.breath, night: S.night ? 1 : 0 }) }; },
+    home: () => { const h = A.homeIsland(T, home, { quality: S.quality }); return { obj: h, group: h.group, fit: [19, -5.5], update: (t) => { h.heart.scale.setScalar(1 + 0.04 * Math.sin(t * 2)); A.setNight(S.night ? 1 : 0); } }; },
+    kristall: () => { const i = A.islet(T, { kind: 'kristall', r: 6, id: 2 }, { quality: S.quality }); i.setAmount(S.build); return { obj: i, group: i.group, fit: [7.5, -2.4], update: () => A.setNight(S.night ? 1 : 0) }; },
+    holz: () => { const i = A.islet(T, { kind: 'holz', r: 6, id: 3 }, { quality: S.quality }); i.setAmount(S.build); return { obj: i, group: i.group, fit: [7.5, -1.8], update: () => A.setNight(S.night ? 1 : 0) }; },
+    windrad: mkBuilding('windrad', {}), kanone: mkBuilding('kanone', {}), zisterne: mkBuilding('zisterne', {}), werkstatt: mkBuilding('werkstatt', {}), sternwarte: mkBuilding('sternwarte', {}),
+    person: () => { const p = A.person(T, { color: '#4a90d9', quality: S.quality }); return { obj: p, group: p.group, fit: [0.9, 0.25], update: (t) => p.animate(t, { walk: 1 }) }; },
+    cheer: () => { const p = A.person(T, { color: '#d94a6a', quality: S.quality }); return { obj: p, group: p.group, fit: [0.9, 0.25], update: (t) => p.animate(t, { cheer: 1 }) }; },
+    carry: () => { const p = A.person(T, { color: '#4ab36a', quality: S.quality }); return { obj: p, group: p.group, fit: [0.9, 0.25], update: (t) => p.animate(t, { walk: 1, carry: 1 }) }; },
+    crate: () => { const g = new T.Group(), a = A.crate(T, 'holz', { quality: S.quality }), b = A.crate(T, 'kristall', { quality: S.quality }); a.position.x = -0.4; b.position.x = 0.4; g.add(a, b); return { obj: g, group: g, fit: [1.0, 0.25], update: () => A.setNight(S.night ? 1 : 0) }; },
+    harpoon: () => { const h = A.harpoon(T, { quality: S.quality }); const g = new T.Group(); g.add(h); return { obj: g, group: g, fit: [1.0, 0], update: () => {} }; }
+  };
+  const ALL = ['ship', 'dragon', 'home', 'kristall', 'holz', 'windrad', 'kanone', 'zisterne', 'werkstatt', 'sternwarte', 'person', 'crate', 'harpoon'];
+  const selModel = document.getElementById('selModel');
+  for (const k of ['all', 'buildings', 'lifecycle', 'people', ...ALL]) selModel.add(new Option(k, k));
+  selModel.value = S.model; document.getElementById('selStage').value = String(S.stage);
+  document.getElementById('rngBuild').value = S.build; document.getElementById('rngHp').value = S.hp;
+  const go = (patch) => { const u = new URLSearchParams(location.search); for (const [k, v] of Object.entries(patch)) { if (v == null) u.delete(k); else u.set(k, v); } location.search = u.toString(); };
+  selModel.onchange = () => go({ model: selModel.value });
+  document.getElementById('selStage').onchange = (e) => go({ stage: e.target.value });
+  document.getElementById('rngBuild').onchange = (e) => go({ build: e.target.value });
+  document.getElementById('rngHp').onchange = (e) => go({ hp: e.target.value });
+  const tog = (id, key, param, cur) => { const b = document.getElementById(id); if (cur) b.classList.add('on'); b.onclick = () => go({ [param]: cur ? null : '1' }); };
+  tog('btnRuin', 'ruined', 'ruined', S.ruined); tog('btnNight', 'night', 'night', S.night); tog('btnBoost', 'boost', 'boost', S.boost); tog('btnBreath', 'breath', 'breath', S.breath);
+  document.getElementById('btnLow').classList.toggle('on', S.quality === 'low'); document.getElementById('btnLow').onclick = () => go({ quality: S.quality === 'low' ? null : 'low' });
+  document.getElementById('btnSpin').classList.toggle('on', S.spin); document.getElementById('btnSpin').onclick = () => go({ spin: S.spin ? '0' : null });
+
+  // ---- which cells ----
+  let cells = [];
+  const cellOf = (name, fn) => ({ name, mk: fn });
+  if (S.model === 'all') cells = ALL.map((n) => cellOf(n, DEF[n]));
+  else if (S.model === 'buildings') cells = ['windrad', 'kanone', 'zisterne', 'werkstatt', 'sternwarte'].map((n) => cellOf(n, DEF[n]));
+  else if (S.model === 'people') cells = ['person', 'cheer', 'carry'].map((n) => cellOf(n, DEF[n]));
+  else if (S.model === 'lifecycle') {
+    const k = S.kind, st = S.stage;
+    const steps = [[0.08, 1, false], [0.25, 1, false], [0.45, 1, false], [0.65, 1, false], [0.85, 1, false], [1, 1, false], [1, 0.55, false], [1, 0.2, false], [1, 0, true]];
+    cells = steps.map(([b, hp, r]) => cellOf(`${k}${k === 'sternwarte' ? ' st' + st : ''} b=${b}${hp < 1 ? ' hp=' + hp : ''}${r ? ' ruin' : ''}`, mkBuilding(k, { build: b, hp, ruined: r, working: b >= 1 })));
+  } else cells = [cellOf(S.model, DEF[S.model])];
+  const cols = cells.length === 1 ? 1 : cells.length <= 3 ? cells.length : cells.length <= 6 ? 3 : cells.length <= 9 ? 3 : 5, rows = Math.ceil(cells.length / cols);
+  const cw = Math.floor(W / cols), ch = Math.floor(H / rows);
+  const built = cells.map((c) => { const m = c.mk(); m.name = c.name; m.group.visible = false; scene.add(m.group); m.s = A.stats(m.group); return m; });
+  const fmt = built.map((m) => `${m.name}: ${m.s.tris} tris, ${m.s.calls} calls`);
+  console.log('[gallery] ' + fmt.join(' | '));
+  document.title = 'Skyfarers Art ' + fmt.join(' | ');
+
+  const sky = S.night ? new T.Color('#10163a') : new T.Color('#9fd0f5');
+  function frame(now) {
+    const t = S.t0 + (S.freeze ? 0 : now / 1000);
+    if (S.night) { sun.color.set('#9db4ff'); sun.intensity = 0.9; hemi.intensity = 0.7; hemi.color.set('#4a5aa0'); hemi.groundColor.set('#201a30'); }
+    A.setNight(S.night ? 1 : 0);
+    gl.setClearColor(sky); gl.setViewport(0, 0, W, H); gl.setScissor(0, 0, W, H); gl.clear();
+    built.forEach((m, i) => {
+      const cx = (i % cols) * cw, cy = H - (Math.floor(i / cols) + 1) * ch;
+      m.update(t);
+      m.s = A.stats(m.group);
+      m.group.visible = true; m.group.rotation.y = S.spin ? t * 0.35 + i * 0.9 : (m.name === 'ship' || m.name === 'dragon' ? -0.55 : 0.5 + i * 0.1);
+      const R = m.fit[0] / S.zoom, el = S.el * Math.PI / 180, d = R * 3.3;
+      cam.aspect = cw / ch; cam.fov = 32; cam.updateProjectionMatrix();
+      cam.position.set(0, m.fit[1] + Math.sin(el) * d, Math.cos(el) * d); cam.lookAt(0, m.fit[1], 0);
+      sun.position.set(-6, 10, 7).multiplyScalar(1); sun.target.position.set(0, 0, 0);
+      gl.setViewport(cx, cy, cw, ch); gl.setScissor(cx, cy, cw, ch);
+      gl.render(scene, cam);
+      m.group.visible = false;
+    });
+    ctx.drawImage(gl.domElement, 0, 0);
+    ctx.font = 'bold 15px system-ui,sans-serif'; ctx.textAlign = 'left';
+    built.forEach((m, i) => {
+      const cx = (i % cols) * cw, cy = (Math.floor(i / cols)) * ch;
+      ctx.fillStyle = 'rgba(8,16,40,.62)'; ctx.fillRect(cx + 6, cy + 6, Math.min(cw - 12, 330), 22);
+      ctx.fillStyle = '#fff'; ctx.fillText(`${m.name}  ${m.s.tris} tris / ${m.s.calls} calls`, cx + 12, cy + 22);
+      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.strokeRect(cx + .5, cy + .5, cw - 1, ch - 1);
+    });
+    if (!S.freeze) requestAnimationFrame(frame);
+  }
+  if (S.freeze) for (let tt = 0; tt < Math.min(S.t0, 12); tt += 1 / 20) built.forEach((m) => m.update(tt));
+  frame(0);
+  if (!S.freeze) requestAnimationFrame(frame);
+} catch (e) { devFail('Fehler: ' + e.message + '\n' + (e.stack || '')); }
+</script>
+</body>
+</html>

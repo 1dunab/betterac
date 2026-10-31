@@ -7,9 +7,9 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **21 games** — from social deduction and drawing chains to real-3D racing, co-op
-bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs, 3D light-cycle duels
-and a werewolf night with an automatic narrator.
+and **22 games** — from social deduction and drawing chains to real-3D racing, co-op
+bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs, 3D light-cycle duels,
+a werewolf night with an automatic narrator and a co-op airship crew defending a floating island.
 
 ## Screenshots
 
@@ -22,7 +22,8 @@ and a werewolf night with an automatic narrator.
 | ![Artillery](docs/screenshots/artillery.png) | ![Wauwau-WG](docs/screenshots/wauwauwg.png) |
 | 💥 Artillery Hills — Worms-style tanks | 🐶 Wauwau-WG — dog care in a shared flat |
 
-...plus a real-3D racer (three.js), the BREACH tactical shooter and 11 more. The GIFs are
+...plus a real-3D racer (three.js), the BREACH tactical shooter, the 🎈 Skyfarers sky
+archipelago and 13 more. The GIFs are
 captured straight from the dev harnesses (`?sim=…&seed=…&freeze=1` + headless Firefox +
 ffmpeg) — no phones were harmed.
 
@@ -76,6 +77,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 🐶 Wauwau-WG | 1+ | Nintendogs-style dog care: pet, bathe, walk and play fetch — your dog lives on your phone |
 | ⚡ Neonspur | 1–4 | 3D light-cycle arena: walls of light, jumps onto terraces, Turbo, power-ups, split-screen, bots |
 | 🐺 Werwolfnacht | 5–16 | Werewolf with an automatic moderator: secret roles and night actions on the phones, narrated village on the TV |
+| 🎈 Skyfarers | 1–8 | Co-op 3D airship crew: harvest, build and defend a floating island through storms and dragons until dawn |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -212,6 +214,36 @@ time, reveal roles on death, narrator voice.
 `/dev-werwolf.html?n=8&fast=0.1` runs the TV with bot players, `/dev-werwolf-village.html`
 previews the village and the narrator, `/dev-werwolf-phone.html?state=wolf` the phone. See
 the [Werwolfnacht design notes](docs/WERWOLF.md).
+
+## Skyfarers
+
+![Skyfarers on the TV](docs/screenshots/skyfarers.png)
+
+A co-op airship game over a floating sky archipelago, in real 3D. Every phone is the cockpit
+of a small airship — analog stick, 🌬️ Boost and one big context button — and the TV shows the
+whole archipelago through one day: sunrise, noon, sunset and a storm night, with drifting
+islets, waterfalls, glowing jellyfish swarms, bird flocks and tiny inhabitants carrying crates.
+
+Captains harvest 💎 crystal and 🪵 wood on the islets, fetch 💧 water from rain clouds and dock
+at the home island, where the phone turns into a build menu: 🌀 Windrad (energy for the island
+shield), 💣 Kanonenturm, 💧 Zisterne, 🔧 Werkstatt and the 🔭 Sternwarte, the goal, in three
+stages. Storms and dragon attacks are announced 15 seconds ahead: lightning sets buildings on
+fire, dragons breathe fire and swipe ships, and someone has to stay docked and hold the shield.
+The context button always does the right thing — harvest, extinguish, harpoon, repair, shield —
+and short hints on the phones teach the rest. Survive until dawn and the whole crew wins, with
+up to three stars. Nobody is ever knocked out: a hit ship just drops half its cargo.
+
+1–8 captains; co-op bots fill up the crew. Settings: day length (4 / 6 / 8 min), weather
+severity, bot captains, graphics (Auto / Voll / Sparsam — Auto switches to the light mode once
+if the TV browser is too slow). The picture renders at up to 1920×1200 for big TVs, and
+Mitschauen still works.
+
+`node test-skyfarers.js` checks the rules (with a bot balance table), `node
+test-skyfarers-flow.js` plays matches through the real screen and phone pages.
+`/dev-skyfarers.html?sim=110000&blit=1` runs the TV with bot captains,
+`/dev-skyfarers-view.html?dayT=0.85&event=nacht` previews the renderer,
+`/dev-skyfarers-art.html` shows every model and `/dev-skyfarers-phone.html?state=docked` the
+phone. See the [Skyfarers design notes](docs/SKYFARERS.md).
 
 ## How it works
 
