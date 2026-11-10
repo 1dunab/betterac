@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Furt &amp; Fehde Phone Dev</title>
+<!-- Phone dev page: runs the real Furt & Fehde controller.js (+ warmap.js, world.js) against a FAKE SCREEN that speaks the whole Phase 1 protocol
+     (ffInfo with costs, rules, shared and bots · ffMap · ffLevel · ffPhase · ffYou with hunger, pacts, banners and food · ffBoard with ruins and the 13th field paused · ffAlert · ffToast · ffResult;
+     it answers ffBuild/ffCancel/ffRecruit/ffBanner/ffHome/ffPact/ffPause/ffAgain). Costs come from FurtSim.CONST (sim.js), like the real glue sends them.
+     Two modes in one file. The top page = fake screen + panel + an iframe sized like a phone; the iframe (same file, ?phone=1) is the phone,
+     so orientation media queries are real.
+     ?w=844&h=390 landscape (default) | ?w=390&h=844 portrait      ?seed=1 map seed      ?host=0 guest      ?lords=2|3|4 houses (2 = no pacts)      ?shared=Ben (a co-player in your house)
+     Opened directly with ?phone=1 (on a real phone, or at the exact phone size for screenshots) the page runs phone AND fake screen in one window; the 🛠 button (bottom left) opens the panel.
+     Presets (hide the panel unless panel=1; for headless screenshots):
+       ?mode=bauen|truppen|banner|pakte  &L=0..1  &lord=0..3  &ghost=<building key>  &invalid=1 (ghost on a spot that breaks a rule)
+       &drag=1 (freeze a banner-I drag at 62 % of the way to the Westfurt, with its route and snap label; drag=0.9 = 90 %, &to=<crossing id>)  &view=all|mine  &mud=1 (L just fell from 1: damp mud)  &crown=1 (👑, Ruhm 134)  &still=1 (no animation, frozen clocks)  &target=1..3
+       &state=frieden|ebbe|fehde|letzte   phase chip: Burgfrieden 1:12 · Ebbe at L 0.6 · Fehde 7:00 · Letzte Minute 0:42 (the water level follows unless L= is given; &left=12 sets the seconds left)
+       &state=pact (Pakte panel: active, offered, none)  &state=offer (Pakte panel with an incoming offer; &mode=bauen shows the prompt over the map instead)
+       &ruin=kaserne (which own building is the ruin; default huette)  &state=card (card of the own Hof; &kind=holzfaeller|steinbruch|kaserne|… picks another)  &card=ruin|nowood|fire|<kind>  &state=cardruin (card of a ruin)
+       &alert=attack|fire|hunger|plunder|crossing|pact|crown (also &state=alert)  &hunger=1 (no grain)
+       &state=end (end screen as host, you come 2nd)  &state=endguest (as guest, you win)  &rank=1..4  &state=spectator (👀 Alle Burgen sind besetzt)
+       &guide=1 (the ❓ guide, top)  &guide=gebaeude|korn|truppen|feuer|pakte|bots|ziel|ablauf (the guide scrolled to that section)
+       &advice=1..10 (the advisor line shows tip n whatever the state says)   &food=low (the food balance turns red: +2 −9)   &card=paused (the card of a resting Steinbruch: 💤 ruht, ▶ Weiterarbeiten)
+       &mode=banner&arm=1..3 (⚑ with that banner picked: gold ring and „Tippe aufs Ziel“)
+       &place=brunnen (the well-coverage demo: a few more own wooden buildings out in the fields, two groups no well reaches yet, and the Brunnen ghost on the spot that protects the most of them; &dash=1 adds a Brunnen
+         still being built, drawn dashed; &card=brunnen / &card=keep show the coverage with the card of the own Brunnen / castle open)
+       &bench=drag (with &place=brunnen: 300 forced frames while the planned Brunnen jumps about, with and without the coverage layer; the result replaces the autotest line)
+       &lager=1 (the 📦 Lager sheet is open; &lager=full: Korn and Stein are full, so their tips show)   &rules=0 (the fake screen sends no ffInfo.rules: the phone uses 12, 12, 30, 60, 60, 8, 4)
+     ?wait=1 only activates the phone (waiting screen)
+     ?auto=1 the fake clock drives the phases and the water (Burgfrieden → Ebbe → Fehde → Ende), &burg=20 a short truce, &speed=10 faster, &dauer=6 match minutes, &advance=130 fast-forwards 130 s before the first picture   ?legacy=1 sends only the Phase 0 messages (no costs, ffPhase, pacts; 9-field board rows)   ?costs=0 sends no costs (the phone falls back to the stale world.js drafts)
+     ?autotest=1 plays the test steps through the real UI and prints AUTOTEST OK or the first failure (on screen + console)
+     firefox --headless --no-remote --profile <dir> --window-size=844,390 --screenshot out.png "http://localhost:3984/dev-furtfehde-phone.html?phone=1&state=offer&still=1" -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; touch-action:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  canvas { background:#fff; flex:1; min-height:0; border-radius:10px; margin:0 10px; touch-action:none; }   /* the shell's global canvas rule: the game must override it */
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .center { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; padding:20px; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:fixed; top:6px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+  #devErr { position:fixed; left:0; right:0; bottom:0; z-index:2000; margin:0; padding:8px 10px; background:#b00020; color:#fff;
+            font:12px/1.35 monospace; white-space:pre-wrap; pointer-events:none; }
+  #devErr:empty { display:none; }
+  /* top page */
+  body.top { display:flex; gap:12px; padding:10px; box-sizing:border-box; align-items:flex-start; overflow:hidden; }
+  #frameWrap { flex:none; border:3px solid #444; border-radius:18px; overflow:hidden; background:#000; }
+  #frameWrap iframe { display:block; border:0; }
+  #panel { flex:1; min-width:280px; height:100%; overflow:auto; touch-action:auto; -webkit-user-select:text; user-select:text; font-size:14px; }
+  body.nopanel #panel { display:none; } body.nopanel { justify-content:center; }
+  body.phone .topOnly { display:none; }
+  body.phone #panel { position:fixed; left:0; top:0; right:0; bottom:0; z-index:3000; display:none; background:rgba(16,16,24,.98); padding:12px; box-sizing:border-box; min-width:0; }
+  body.phone.panelopen #panel { display:block !important; }
+  #devToggle { display:none; position:fixed; left:3px; bottom:3px; z-index:2500; width:30px; height:30px; border:none; border-radius:15px; background:rgba(20,20,30,.45); color:#fff; font-size:15px; padding:0; }
+  body.phone.standalone #devToggle { display:block; }
+  #panel h3 { margin:10px 0 5px; font-size:13px; opacity:.7; }
+  #panel .btn { margin:0 5px 5px 0; padding:7px 10px; font-size:13px; }
+  #panel .btn.on { background:#0a84ff; }
+  #panel a.btn { display:inline-block; text-decoration:none; }
+  #panel input[type=range] { width:230px; vertical-align:middle; }
+  #panel label { font-size:12px; opacity:.85; }
+  #log { font:11px/1.35 monospace; background:#000; padding:6px; height:230px; overflow:auto; white-space:pre-wrap; }
+  #perf { font:12px monospace; color:#7fe3ff; margin:4px 0; min-height:30px; }
+  #autoRes { font:800 22px/1.2 system-ui; margin:6px 0; min-height:28px; white-space:pre-wrap; }
+  #autoRes.ok { color:#30d158; } #autoRes.fail { color:#ff6b5e; }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const IS_PHONE = q.get('phone') === '1';
+  const STANDALONE = IS_PHONE && window.parent === window;   // ?phone=1 opened directly (a real phone): the page brings its own fake screen
+  document.body.classList.add(IS_PHONE ? 'phone' : 'top');
+  const PW = Math.max(200, Math.min(2000, +q.get('w') || 844)), PH = Math.max(200, Math.min(2000, +q.get('h') || 390));
+// ========== phone mode: shell globals the controller expects ==========
+if (IS_PHONE) {
+  if (q.get('still') === '1') document.head.insertAdjacentHTML('beforeend', '<style>*{transition:none!important;animation-duration:0s!important;animation-delay:0s!important}</style>');
+  document.body.insertAdjacentHTML('afterbegin', '<button id="abortBtn">✕ Abbrechen</button>');
+  const $ = (id) => document.getElementById(id);
+  window.$ = $;
+  window.VIEWS = [];
+  window.showView = (v) => VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v));
+  window.myHost = q.get('host') !== '0';
+  window.updateAbort = () => { $('abortBtn').style.display = myHost ? 'block' : 'none'; };
+  window.AirConsole = { SCREEN: 0 };
+  window.ac = { message(to, d) { try { parent.devFromPhone(JSON.parse(JSON.stringify(d))); } catch (e) {} } };
+  window.devActivate = () => { window.CONTROLLERS.furtfehde.activate(); updateAbort(); };
+  window.devToPhone = (d) => window.CONTROLLERS.furtfehde.onMessage(d);
+  window.addEventListener('error', (e) => {
+    document.title = 'ERROR: ' + e.message;
+    const b = $('devErr') || document.body.appendChild(Object.assign(document.createElement('pre'), { id: 'devErr' }));
+    b.textContent += e.message + ' @' + String(e.filename || '').split('/').pop() + ':' + e.lineno + '\n';
+  });
+}
+  // load order matters: write the tags synchronously (shell globals above, then registry, world, map, controller; the fake screen also reads sim.js for the costs)
+  if (IS_PHONE) document.write('<script src="core/game-registry.js"><\/script><script src="games/furtfehde/world.js"><\/script><script src="games/furtfehde/warmap.js"><\/script><script src="games/furtfehde/controller.js"><\/script>' + (STANDALONE ? '<script src="games/furtfehde/sim.js"><\/script>' : ''));
+  else document.write('<script src="games/furtfehde/world.js"><\/script><script src="games/furtfehde/sim.js"><\/script>');
+</script>
+
+<!-- ========== top mode: fake screen + panel + iframe ========== -->
+<div id="frameWrap" style="display:none"></div>
+<button id="devToggle" title="Falscher Fernseher">🛠</button>
+<div id="panel">
+  <h3>🏰 Furt &amp; Fehde · Kriegstisch gegen einen falschen Fernseher <button class="btn" id="panelClose" style="float:right;margin:0">✕ zu</button></h3>
+  <button class="btn" id="reload">⟲ Neu laden</button>
+  <button class="btn topOnly" id="autoBtn">🧪 Autotest</button>
+  <div id="autoRes" class="topOnly"></div>
+  <h3>🕰 Phase <b id="phv"></b> · Uhr <b id="clk"></b></h3>
+  <span id="phases"></span>
+  <label><input type="checkbox" id="autoPh"> Uhr läuft selbst (Phasen und Pegel folgen)</label>
+  <h3>🌊 Pegel L <b id="Lv">0.00</b></h3>
+  <input id="Lsl" type="range" min="0" max="1" step="0.01" value="0">
+  <button class="btn" id="ebb">🌊 Flut ablaufen lassen</button><button class="btn" data-L="1">L = 1</button><button class="btn" data-L="0.5">0.5</button><button class="btn" data-L="0">L = 0</button>
+  <h3>🔔 Alarme (ffAlert)</h3>
+  <span id="alerts"></span>
+  <h3>🤝 Pakte (die anderen Häuser)</h3>
+  <span id="pactBtns"></span>
+  <h3>👤 Rolle</h3>
+  <span id="roles"></span>
+  <h3>👑 Herr</h3>
+  <span id="lords"></span>
+  <h3>Vorrat des falschen Fernsehers</h3>
+  <button class="btn" id="richBtn">Lager voll</button><button class="btn" id="poorBtn">Lager leer</button><button class="btn" id="fireBtn">🔥 Feuer legen</button>
+  <h3>Presets (laden neu)</h3>
+  <span id="presets"></span>
+  <h3>Dynamische Karte: Kosten pro Bild</h3>
+  <button class="btn" id="benchBtn">⏱ 300 Bilder messen</button>
+  <div id="perf"></div>
+  <h3>Nachrichten (→ Phone / ← Phone) <label><input type="checkbox" id="verb"> Board/You/Level zeigen</label> <button class="btn" id="clearLog">leeren</button></h3>
+  <div id="log"></div>
+</div>
+
+<script>
+if (!IS_PHONE || STANDALONE) {
+  const $ = (id) => document.getElementById(id);
+  const FW = window.FurtWorld, FS = window.FurtSim;
+  const STILL = q.get('still') === '1';
+  const S0 = q.get('state') || '';
+  const PRESET_KEYS = ['mode', 'ghost', 'invalid', 'drag', 'view', 'target', 'wait', 'mud', 'crown', 'state', 'alert', 'card', 'phase', 'hunger', 'rank', 'guide', 'advice', 'food', 'arm', 'place', 'lager', 'queue'];
+  const preset = PRESET_KEYS.some((k) => q.has(k));
+  if (preset && q.get('panel') !== '1' && q.get('autotest') !== '1' && !STANDALONE) document.body.classList.add('nopanel');
+  if (STANDALONE) {
+    document.body.classList.add('standalone');
+    $('devToggle').onclick = () => document.body.classList.toggle('panelopen'); $('panelClose').onclick = () => document.body.classList.remove('panelopen');
+    if (q.get('panel') === '1') document.body.classList.add('panelopen');
+  } else $('panelClose').style.display = 'none';
+  const wrap = $('frameWrap'); if (!STANDALONE) wrap.style.display = 'block';
+  const log = $('log'), t0 = performance.now();
+
+  // ---- the cast: houses by site, two humans and two bots; ?shared=Ben puts a co-player into house 0 ----
+  const SITE_HOUSE = ['Haus Falkenstein', 'Haus Wolfsberg', 'Haus Eichenhain', 'Haus Hirschfurt'];
+  const COLORS = ['#e0453a', '#3a7be0', '#e6b830', '#9a4ad8'];
+  const CAST = [{ p: 'Anna' }, { p: 'Cara' }, { bot: '🤖 Graf Grimbart' }, { bot: '🤖 Gräfin Gundula' }];
+  const NL = Math.max(2, Math.min(4, +q.get('lords') || 4));
+  const SITES = NL === 2 ? [0, 3] : NL === 3 ? [0, 1, 3] : [0, 1, 2, 3];   // 4 houses → all sites, 3 → 0, 1, 3, 2 → the diagonal
+  const LORDS = SITES.map((site, i) => ({ i, site, color: COLORS[i], emblem: i, bot: !!CAST[i].bot, players: CAST[i].p || '', botName: CAST[i].bot || '' }));
+  let sharedWith = q.get('shared') ? (q.get('shared') === '1' ? 'Ben' : q.get('shared')) : '';
+  const lordsMsg = () => LORDS.map((l) => ({ i: l.i, site: l.site, color: l.color, emblem: l.emblem, bot: l.bot,
+    name: l.bot ? l.botName : SITE_HOUSE[l.site] + ' · ' + (l.i === 0 && sharedWith ? 'Anna & ' + sharedWith : l.players) }));
+  const hname = (i) => { const l = LORDS[i]; return l.bot ? l.botName : SITE_HOUSE[l.site]; };
+
+  // ---- costs: from FurtSim.CONST (the single source of truth), the way the real glue sends them in ffInfo.costs ----
+  const FALLBACK = { build: { huette: { holz: 4 }, hof: { holz: 5 }, kornspeicher: { holz: 6 }, lager: { holz: 5 }, holzfaeller: { holz: 3 }, steinbruch: { holz: 6 }, kaserne: { holz: 8, stein: 8 }, wachturm: { holz: 2, stein: 10 }, brunnen: { stein: 4 } },
+    units: { speer: { korn: 2, holz: 2 }, bogen: { korn: 2, holz: 3 }, ritter: { korn: 4, stein: 3 }, fackel: { korn: 1, holz: 1 } }, rebuild: 0.5 };
+  function simCosts() {
+    const C = FS && FS.CONST; if (!C || !C.BUILD || !C.UNIT) return FALLBACK;
+    const out = { build: {}, units: {}, rebuild: C.REBUILD_COST == null ? 0.5 : C.REBUILD_COST };
+    for (const k in C.BUILD) if (C.BUILD[k].cost) out.build[k] = C.BUILD[k].cost;
+    for (const u in C.UNIT) if (C.UNIT[u].cost) out.units[u] = C.UNIT[u].cost;
+    return out;
+  }
+  const RULES_FALLBACK = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4 };
+  function simRules() {   // FurtSim.CONST → ffInfo.rules, like the real glue (screen.js)
+    const C = FS && FS.CONST; if (!C || C.BUCKET_R == null) return RULES_FALLBACK;
+    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES };
+  }
+  const LEGACY = q.get('legacy') === '1';   // ?legacy=1: only the Phase 0 messages (no costs, phase, pacts, hunger, banners in ffYou, 9-field board rows): the phone must still cope
+  const COSTS = simCosts(), SEND_COSTS = q.get('costs') !== '0' && !LEGACY, RULES = simRules();
+  let sendRules = q.get('rules') !== '0' && !LEGACY;   // false: an older screen without ffInfo.rules
+  const RES = { korn: 'Korn', holz: 'Holz', stein: 'Stein' };
+
+  // ---- the clock and the phases (sim seconds): frieden → ebbe (the water falls) → fehde → over ----
+  const CC = (FS && FS.CONST) || {};
+  const BURG = q.get('burg') != null ? +q.get('burg') : CC.BURGFRIEDEN_S || 120, EBB = CC.EBB_S || 25, T_EBBE = BURG, T_FEHDE = BURG + EBB, T_END = Math.max(T_FEHDE + 90, (+q.get('dauer') || 12) * 60);
+  const PACT_S = CC.PACT_S || 180, OFFER_S = CC.OFFER_S || 30;
+  const PHASE_AT = { frieden: Math.max(0, T_EBBE - 72), ebbe: T_EBBE + 10, fehde: T_END - 420, letzte: T_END - 42, over: T_END };
+  const levelOf = (t) => t < T_EBBE ? 1 : t < T_FEHDE ? 1 - (t - T_EBBE) / EBB : 0;
+  const phaseOf = (t) => t >= T_END ? 'over' : t >= T_FEHDE ? 'fehde' : t >= T_EBBE ? 'ebbe' : 'frieden';
+  const endsAtOf = (ph) => ph === 'frieden' ? T_EBBE : ph === 'ebbe' ? T_FEHDE : T_END;
+
+  const seed = +q.get('seed') || 1;
+  const world = FW.make(seed);
+  const BKEYS = Object.keys(FW.BUILDINGS), code = (k) => 1 + BKEYS.indexOf(k);
+  let host = q.get('host') !== '0' && S0 !== 'endguest', me = Math.max(0, Math.min(NL - 1, +q.get('lord') || 0)), L = q.get('L') != null ? +q.get('L') : 0;
+  let spectator = S0 === 'spectator' || q.get('spectator') === '1', speed = Math.max(0.1, +q.get('speed') || 1), phaseAuto = q.get('auto') === '1', ended = false;
+  let stock, cap, pop, popCap, idle, ruhm, crown, hunger, queue, buildings, banners, nextId, rally = {}, pact = {}, simT = 0, phase = 'fehde';
+  const PH0 = q.get('phase') || (['frieden', 'ebbe', 'fehde', 'letzte'].indexOf(S0) >= 0 ? S0 : '');
+  if (PH0 && PHASE_AT[PH0] != null) {
+    simT = PHASE_AT[PH0]; phase = PH0 === 'letzte' ? 'fehde' : PH0;
+    if (q.get('left') != null && PH0 !== 'ebbe') simT = endsAtOf(phase) - Math.max(0, +q.get('left'));   // &left=12: seconds left in the phase (Burgfrieden 0:12 pulses orange)
+    if (q.get('L') == null) L = levelOf(simT);
+  }
+  else if (L >= 0.999) { phase = 'frieden'; simT = PHASE_AT.frieden; }                                  // no phase asked for: it follows the water level
+  else if (L > 0.001) { phase = 'ebbe'; simT = T_EBBE + (1 - L) * EBB; }
+  else { phase = 'fehde'; simT = PHASE_AT.fehde; }
+  const rng = FW.mulberry32(seed * 7 + 3);
+  const verbose = () => $('verb').checked;
+  const ph = () => STANDALONE ? window : $('phoneFrame') && $('phoneFrame').contentWindow;
+
+  // ---- message log ----
+  const sizeOf = (d) => JSON.stringify(d).length;
+  function brief(d) {
+    if (d.t === 'ffMap') return 'ffMap { grid: ' + (sizeOf(d.grid) / 1024).toFixed(1) + ' KB, sites: ' + d.sites.length + ', crossings: ' + d.crossings.length + ' }';
+    if (d.t === 'ffBoard') return 'ffBoard { b: ' + d.b.length + ', banners: ' + d.banners.length + ' }';
+    if (d.t === 'ffInfo') return 'ffInfo { lord: ' + d.lord + ', host: ' + d.host + ', shared: ' + JSON.stringify(d.shared) + ', lords: ' + d.lords.length + ', costs: ' + (d.costs ? 'ja' : 'nein') + ', rules: ' + (d.rules ? 'ja' : 'nein') + ' }';
+    if (d.t === 'ffResult') return 'ffResult { ranking: ' + d.ranking.length + ' Zeilen }';
+    return JSON.stringify(d).slice(0, 170);
+  }
+  function logLine(s) { log.textContent += s + '\n'; if (log.textContent.length > 40000) log.textContent = log.textContent.slice(-30000); log.scrollTop = log.scrollHeight; }
+  const sent = [];   // every message the phone sent, for the autotest
+  window.devFromPhone = function (d) {
+    sent.push(d);
+    logLine(((performance.now() - t0) / 1000).toFixed(2).padStart(7) + 's ← ' + JSON.stringify(d));
+    handle(d);
+  };
+  function toPhone(d) {
+    const w = ph(); if (!w || !w.devToPhone) return;
+    const noisy = d.t === 'ffBoard' || d.t === 'ffYou' || d.t === 'ffLevel';
+    if (!noisy || verbose()) logLine(((performance.now() - t0) / 1000).toFixed(2).padStart(7) + 's → ' + brief(d));
+    w.devToPhone(JSON.parse(JSON.stringify(d)));
+  }
+
+  // ---- the fake screen's truth ----
+  const keepOf = (s) => world.sites.find((x) => x.s === s);
+  const bannerHome = (lord, n) => { const k = keepOf(LORDS[lord].site); return { x: k.x + (n - 2) * 7, y: k.y + 12.6 }; };
+  function recount() {   // caps and housing from the finished buildings, like the sim: keep 30 + Kornspeicher +60 🌾 / Lagerplatz +60 🪵 and 🪨; keep 8 + 4 per Hütte
+    const mine = buildings.filter((b) => b.lord === me && !b.ruined && b.build >= 1), n = (k) => mine.filter((b) => b.kind === k).length;
+    cap = { korn: RULES.capKeep + n('kornspeicher') * RULES.capKorn, holz: RULES.capKeep + n('lager') * RULES.capLager, stein: RULES.capKeep + n('lager') * RULES.capLager };
+    popCap = RULES.keepHouses + n('huette') * RULES.hutHouses;
+  }
+  const WORKERS = { hof: 1, holzfaeller: 1, steinbruch: 0 }, PAUSABLE = { hof: 1, holzfaeller: 1, steinbruch: 1 };   // the workplaces that can rest (docs R5)
+  function resetState() {
+    stock = { korn: 30, holz: 70, stein: 26 }; cap = { korn: 90, holz: 90, stein: 90 }; pop = 6; popCap = 12; idle = 3; ruhm = 20; crown = false; hunger = q.get('hunger') === '1';
+    queue = []; buildings = []; banners = []; nextId = 1; rally = {}; pact = {}; ended = false;
+    if (q.get('queue') === 'wait') { idle = 0; for (let k = 0; k < 3; k++) queue.push({ unit: ['speer', 'bogen', 'speer'][k], n: [1, 1, 2][k], p: 0, dur: 2, wait: true }); }   // ?queue=wait: every peasant works, three recruits wait for one (the advisor's recruit tip)
+    const seq = ['hof', 'huette', 'kornspeicher', 'holzfaeller', 'lager', 'huette', 'kaserne', 'steinbruch', 'wachturm', 'brunnen', 'hof', 'huette'];   // (the last Hütte is a finished one: housing 8 + 4)
+    for (let lord = 0; lord < NL; lord++) {
+      const occ = new Uint8Array(FW.GW * FW.GH); let n = 0;
+      for (const kind of seq) {
+        const sp = FW.suggest(world, kind, LORDS[lord].site, { L: 0, occ });
+        if (!sp) continue;
+        const fp = FW.footprintOf(kind, sp.rot);
+        for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(sp.j + dj) * FW.GW + sp.i + di] = code(kind);
+        buildings.push({ id: nextId++, lord, kind, i: sp.i, j: sp.j, rot: sp.rot, build: n === 5 ? 0.55 : 1, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: WORKERS[kind] || 0, paused: 0, dur: 0 }); n++;
+      }
+      const counts = [[5, 2, 0], [8, 3, 4], [3, 6, 1], [7, 0, 2]][lord];
+      for (let b = 1; b <= 3; b++) {
+        if (lord === 0 && b === 3) continue;   // lord 0's third banner does not exist yet: its pin waits at the keep
+        const home = bannerHome(lord, b);
+        banners.push({ lord, n: b, x: home.x, y: home.y, count: counts[b - 1], path: null, pi: 0, wait: 2 + rng() * 6 });
+      }
+    }
+    const mine = (kind, k) => buildings.filter((b) => b.lord === me && b.kind === kind)[k || 0];
+    const enemy = (me + 1) % NL, fb = buildings.find((b) => b.lord === enemy && b.kind === 'hof'); if (fb) fb.fire = 0.7;
+    const ob = mine('kaserne'); if (ob) { const done = q.get('queue') === 'wait'; ob.build = done ? 1 : 0.6; ob.dur = done ? 0 : 8; }   // (?queue=wait: the Kaserne stands, that is where the recruits wait for a peasant)
+    const hof = mine('hof'); if (hof) hof.hp = 0.86;
+    const fall = mine('holzfaeller'); if (fall) fall.hp = 0.64;
+    const stb = mine('steinbruch'); if (stb) stb.hp = 0.35;       // no worker yet: „wartet auf Arbeiter“
+    const hut = mine(q.get('ruin') || 'huette'); if (hut) { hut.ruined = 1; hut.hp = 0; hut.build = 1; hut.dur = 0; }   // the own ruin (&ruin=kaserne makes a bigger one)
+    const eb = buildings.find((b) => b.lord === enemy && b.kind === 'lager'); if (eb) { eb.ruined = 1; eb.hp = 0; }   // and an enemy one
+    recount();
+  }
+  const cfgMap = () => ({ t: 'ffMap', grid: FW.encode(world), sites: world.sites.map((s) => ({ s: s.s, name: s.name, x: s.x, y: s.y, keep: s.keep })),
+    crossings: world.crossings.map((c) => ({ id: c.id, kind: c.kind, water: c.water, name: c.name, x: c.x, y: c.y, rot: c.rot, len: c.len, open: c.open, ends: c.ends, joins: c.joins, spans: c.spans, deck: c.deck })) });
+  const sendInfo = () => toPhone({ t: 'ffInfo', lord: spectator ? -1 : me, color: spectator ? '#c9a45a' : LORDS[me].color, host, lords: lordsMsg(),
+    shared: !LEGACY && !spectator && me === 0 && sharedWith ? sharedWith : false, costs: SEND_COSTS ? COSTS : undefined, rules: sendRules ? RULES : undefined });
+  const sendLevel = () => toPhone({ t: 'ffLevel', L: Math.round(L * 1000) / 1000 });
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const sendPhase = () => { $('phv').textContent = phase; if (!LEGACY) toPhone({ t: 'ffPhase', phase, endsAt: endsAtOf(phase), now: r2(simT) }); };
+  const pstate = (i) => { const p = pact[i]; return p && p.state !== 'none' && p.until > simT ? p : { state: 'none', until: 0 }; };
+  const pactsForYou = () => LORDS.filter((l) => l.i !== me).map((l) => { const p = pstate(l.i); return { with: l.i, state: p.state, until: p.state === 'none' ? 0 : r2(p.until) }; });
+  const ownBanners = () => banners.filter((b) => b.lord === me);
+  const youBanners = () => [{ n: 0, count: 4, x: keepOf(LORDS[me].site).x, y: keepOf(LORDS[me].site).y + 7, tx: keepOf(LORDS[me].site).x, ty: keepOf(LORDS[me].site).y + 7 }].concat(ownBanners().map((b) => {
+    const end = b.path && b.path.length ? b.path[b.path.length - 1] : b; return { n: b.n, count: b.count, x: r2(b.x), y: r2(b.y), tx: r2(end.x), ty: r2(end.y) };
+  }));
+  // the food balance (R9): sacks harvested and eaten per minute. Every finished Hof that works brings 5; ?food=low shows a shortfall; ?food=0 sends none (an older screen)
+  let foodMode = q.get('food') || '';
+  const foodNow = () => ({ prod: foodMode === 'low' ? 2 : buildings.filter((b) => b.lord === me && b.kind === 'hof' && !b.ruined && b.build >= 1 && !b.paused).length * 5, eat: Math.round(pop * 60 / ((FS && FS.CONST && FS.CONST.EAT_S) || 60)) });
+  function sendYou() {
+    if (spectator) return;
+    recount();
+    const qu = queue.map((e) => ({ unit: e.unit, n: e.n, p: Math.min(1, e.p), wait: !!e.wait }));
+    if (LEGACY) toPhone({ t: 'ffYou', stock, cap, pop, popCap, idle, queue: qu.map((e) => ({ unit: e.unit, n: e.n, p: e.p })), ruhm, crown });
+    else toPhone({ t: 'ffYou', now: r2(simT), stock, cap, pop, popCap, idle, hunger, queue: qu, ruhm, crown, pacts: pactsForYou(), banners: youBanners(), food: foodMode === '0' ? undefined : foodNow() });
+  }
+  const sendBoard = () => toPhone({ t: 'ffBoard', b: buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.paused || b.full ? 0 : b.workers, b.paused ? 1 : b.full ? 2 : 0].slice(0, LEGACY ? 9 : 13)),
+    banners: banners.map((b) => [b.lord, b.n, r2(b.x), r2(b.y), b.count]) });
+  const toast = (text) => toPhone({ t: 'ffToast', text });
+  function sendAll() { sendInfo(); toPhone(cfgMap()); sendLevel(); sendPhase(); sendYou(); sendBoard(); }
+  function fakeAlert(kind) {
+    const o = LORDS.find((l) => l.i !== me) || LORDS[0], on = hname(o.i), k = keepOf(LORDS[me].site);
+    const T = { attack: ['⚔️ ' + on + ' greift an!', k.x + 5, k.y + 9], fire: ['🔥 Dein Hof brennt!', k.x - 8, k.y + 8], hunger: ['🍞 Hunger! Dein Volk hat nichts zu essen.'], plunder: ['🏰 ' + hname(me) + ' wurde geplündert!', k.x, k.y],
+      crossing: ['🌊 Die Steinbrücke ist frei!'], pact: ['🤝 ' + on + ' bietet dir einen Pakt an'], crown: ['👑 ' + on + ' trägt die Krone'] }[kind];
+    if (T) toPhone({ t: 'ffAlert', kind, text: T[0], x: T[1], y: T[2] });
+  }
+  function makeResult() {   // the sim's ranking rows; you come `rank=N` (default 2)
+    const others = LORDS.filter((l) => l.i !== me).map((l) => l.i), rk = Math.max(1, Math.min(LORDS.length, +q.get('rank') || (host ? 2 : 1))), order = others.slice(); order.splice(rk - 1, 0, me);
+    const base = [134, 108, 83, 51];
+    return order.map((lordI, k) => ({ rank: k + 1, lord: lordI, ruhm: base[k], people: 26 - k * 4, soldiers: 15 - k * 3, buildings: 13 - k * 2,
+      stats: { kills: Math.max(0, 22 - k * 6), lost: 5 + k * 3, razed: Math.max(0, 4 - k), crops: Math.max(0, 3 - k), plunders: k === 0 ? 2 : k === 1 ? 1 : 0, built: 14 - k * 2, ignites: Math.max(0, 5 - k * 2), pacts: lordI === me ? 2 : 1, betrayals: k === 3 ? 1 : 0 },
+      by: { kills: 40 - k * 9, buildings: 12 - k * 3, crops: 4, plunder: k === 0 ? 40 : 0, prosperity: 20 - k * 4, betrayal: k === 3 ? -5 : 0 } }));
+  }
+  function endMatch() {
+    ended = true; phase = 'over'; simT = T_END; const rows = makeResult(); ruhm = rows.find((r) => r.lord === me).ruhm;
+    sendPhase(); sendYou(); toPhone({ t: 'ffResult', ranking: rows, you: spectator ? undefined : rows.find((r) => r.lord === me) });
+  }
+  function rematch() {   // ffAgain: a new match, a new ffMap
+    resetState(); phase = 'frieden'; simT = 0; L = 1; setL(1, true); ended = false;
+    sendInfo(); toPhone(cfgMap()); sendLevel(); sendPhase(); sendYou(); sendBoard(); toast('🔁 Neue Runde!');
+  }
+
+  const REASON = { wet: 'Zu nass', owner: 'Nicht dein Land', tight: 'Zu eng', forest: 'Kein Wald in der Nähe', rock: 'Kein Fels daneben', occupied: 'Belegt', terrain: 'Ungeeigneter Boden', bounds: 'Außerhalb der Karte' };
+  function occGrid() {
+    const occ = new Uint8Array(FW.GW * FW.GH);
+    for (const b of buildings) { const fp = FW.footprintOf(b.kind, b.rot); for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(b.j + dj) * FW.GW + b.i + di] = code(b.kind); }
+    return occ;
+  }
+  const pay = (cost) => { for (const r in cost) if ((stock[r] | 0) < cost[r]) { toast('❌ Zu wenig ' + RES[r]); return false; } for (const r in cost) stock[r] -= cost[r]; return true; };
+  function handle(d) {
+    if (spectator) return;
+    if (d.t === 'ffBuild') {
+      const B = FW.BUILDINGS[d.kind]; if (!B || d.kind === 'bergfried') return;
+      const rot = d.rot ? 1 : 0, ruin = buildings.find((b) => b.lord === me && b.ruined && b.kind === d.kind && b.i === d.i && b.j === d.j && b.rot === rot), base = COSTS.build[d.kind] || {}, cost = {};
+      for (const r in base) cost[r] = ruin ? Math.ceil(base[r] * COSTS.rebuild) : base[r];
+      if (!ruin) { const res = FW.canPlace(world, d.kind, d.i, d.j, rot, { lord: LORDS[me].site, L, occ: occGrid() }); if (!res.ok) { toast('❌ ' + (REASON[res.reason] || res.reason)); return; } }
+      if (!pay(cost)) return;
+      if (ruin) { ruin.ruined = 0; ruin.build = 0; ruin.hp = 1; ruin.fire = 0; ruin.dur = 8; toast('♻️ ' + B.name + ' wird wiederaufgebaut'); }
+      else { buildings.push({ id: nextId++, lord: me, kind: d.kind, i: d.i, j: d.j, rot, build: 0, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: 8 }); toast('🏗️ ' + B.name + ' wird gebaut'); }
+      sendYou(); sendBoard();
+    } else if (d.t === 'ffCancel') {
+      const k = buildings.findIndex((b) => b.id === d.id && b.lord === me); if (k < 0) { toast('❌ Das gibt es nicht mehr'); return; }
+      const b = buildings[k];
+      if (!b.ruined && b.build < 1) { const c = COSTS.build[b.kind] || {}; for (const r in c) stock[r] = Math.min(cap[r], stock[r] + c[r]); }   // a site is refunded in full
+      buildings.splice(k, 1); sendYou(); sendBoard();
+    } else if (d.t === 'ffRecruit') {
+      const U = FW.UNITS[d.unit]; if (!U || d.unit === 'bauer') return;
+      const waits = q.get('queue') === 'wait';   // every peasant works: the order is taken (the real sim accepts it, too) and waits for a free one
+      if (idle < 1 && !waits) { toast('❌ Niemand frei'); return; }
+      if (!pay(COSTS.units[d.unit] || {})) return;
+      if (waits) queue.push({ unit: d.unit, n: d.n | 0, p: 0, dur: 2, wait: true }); else { idle--; queue.push({ unit: d.unit, n: d.n | 0, p: 0, dur: 2 }); }
+      sendYou();
+    } else if (d.t === 'ffBanner') {
+      let b = banners.find((x) => x.lord === me && x.n === d.n);
+      if (!b) { rally[d.n] = { x: d.x, y: d.y }; toast('⚑ Sammelpunkt für Fahne ' + d.n + ' gesetzt'); return; }   // a banner that does not exist yet: a rally point for its recruits
+      const p = FW.path(world, { x: b.x, y: b.y }, { x: d.x, y: d.y }, L);
+      if (!p) { toast('✖ Kein Weg'); b.path = null; return; }
+      b.path = p; b.pi = 0; b.wait = 0; sendBoard(); sendYou();
+    } else if (d.t === 'ffHome') {
+      for (const b of ownBanners()) { const h = bannerHome(me, b.n), p = FW.path(world, { x: b.x, y: b.y }, h, L); b.path = p; b.pi = 0; }
+      sendBoard(); sendYou();
+    } else if (d.t === 'ffPact') {
+      if (LORDS.length <= 2) { toast('Mit zwei Häusern gibt es keine Pakte'); return; }
+      const to = d.to | 0; if (to === me || !LORDS[to]) return;
+      const p = pstate(to);
+      if (d.on) {
+        if (p.state === 'incoming') { pact[to] = { state: 'active', until: simT + PACT_S }; toast('🤝 Pakt mit ' + hname(to)); }
+        else if (p.state === 'none') {
+          pact[to] = { state: 'offered', until: simT + OFFER_S };
+          if (LORDS[to].bot && !STILL && !autoRunning) setTimeout(() => { if (pstate(to).state === 'offered') { pact[to] = { state: 'active', until: simT + PACT_S }; toPhone({ t: 'ffAlert', kind: 'pact', text: '🤝 ' + hname(to) + ' nimmt deinen Pakt an' }); sendYou(); } }, 1800);   // bots accept
+        }
+      } else if (p.state === 'active') { pact[to] = { state: 'none', until: 0 }; ruhm -= 5; toast('🗡️ Verrat! −5 Ruhm'); }
+      else if (p.state !== 'none') pact[to] = { state: 'none', until: 0 };
+      sendYou();
+    } else if (d.t === 'ffPause') {   // a workplace rests / works again; the glue's refusals are German toasts
+      const b = buildings.find((x) => x.id === d.id && x.lord === me);
+      if (!b) { toast('❌ Das gibt es nicht mehr'); return; }
+      if (!PAUSABLE[b.kind] || b.ruined || b.build < 1) { toast('❌ Nur Hof, Holzfäller und Steinbruch können ruhen'); return; }
+      b.paused = d.on ? 1 : 0; sendBoard(); sendYou();
+    } else if (d.t === 'ffAgain') {
+      if (host && ended) rematch();
+    }
+  }
+  function moveAlong(b, dist) {
+    while (dist > 0 && b.path && b.pi < b.path.length - 1) {
+      const c = b.path[b.pi + 1], dx = c.x - b.x, dy = c.y - b.y, d = Math.hypot(dx, dy);
+      if (d <= dist) { b.x = c.x; b.y = c.y; b.pi++; dist -= d; } else { b.x += dx / d * dist; b.y += dy / d * dist; dist = 0; }
+    }
+    if (b.path && b.pi >= b.path.length - 1) b.path = null;
+  }
+  let lastTick = performance.now(), boardAcc = 0, phaseAcc = 0, idleAcc = 0, lvlAcc = 0, sentL = -1, ebbT = 0, autoRunning = false;
+  const waypoints = () => world.sites.map((s) => ({ x: s.x, y: s.y + 4 })).concat(world.crossings.map((c) => ({ x: c.x, y: c.y })));
+  function step(dt) {   // the fake sim: dt sim seconds (everything runs on this clock, so ?advance= can fast-forward it)
+    simT = Math.min(T_END, simT + dt);
+    if (phaseAuto && !ended) {
+      const np = phaseOf(simT);
+      if (np === 'over') endMatch();
+      else { L = levelOf(simT); $('Lsl').value = L; $('Lv').textContent = L.toFixed(2); if (np !== phase) { phase = np; sendPhase(); } }
+    }
+    for (const b of buildings) if (b.build < 1 && b.dur && !b.ruined) b.build = Math.min(1, b.build + dt / b.dur);
+    for (const e of queue.slice()) {
+      if (e.wait) continue;
+      e.p += dt / e.dur;
+      if (e.p >= 1) {
+        queue.splice(queue.indexOf(e), 1);
+        if (e.n >= 1) {
+          let b = banners.find((x) => x.lord === me && x.n === e.n);
+          if (!b) { const h = rally[e.n] || bannerHome(me, e.n); b = { lord: me, n: e.n, x: h.x, y: h.y, count: 0, path: null, pi: 0, wait: 0 }; banners.push(b); }
+          b.count++;
+        }
+      }
+    }
+    for (const b of banners) {
+      const own = b.lord === me;
+      if (b.path) moveAlong(b, (own ? 3 : 1) * dt);   // own banners march at 3 u/s, the other lords' banners wander slowly
+      else if (!own) {
+        b.wait -= dt;
+        if (b.wait <= 0) { const w = waypoints(), t = w[Math.floor(rng() * w.length)], p = FW.path(world, { x: b.x, y: b.y }, t, L); b.wait = 3 + rng() * 6; if (p) { b.path = p; b.pi = 0; } }
+      }
+    }
+    if ((idleAcc += dt) >= 8) { idleAcc = 0; if (q.get('queue') !== 'wait' && idle + queue.length < popCap - pop + 3) idle++; }   // (?queue=wait: nobody comes free)
+    if ((lvlAcc += dt) >= 0.25) { lvlAcc = 0; if (L !== sentL) { sentL = L; sendLevel(); } }
+    if ((boardAcc += dt) >= 0.5) { boardAcc = 0; sendBoard(); sendYou(); }
+    if ((phaseAcc += dt) >= 10) { phaseAcc = 0; sendPhase(); }
+    $('clk').textContent = Math.floor(simT / 60) + ':' + ('0' + Math.floor(simT % 60)).slice(-2);
+  }
+  function tick() { const now = performance.now(), dt = Math.min(0.3, (now - lastTick) / 1000); lastTick = now; step(dt * speed); }
+
+  // ---- panel ----
+  function setL(v, quiet) { L = Math.max(0, Math.min(1, v)); $('Lsl').value = L; $('Lv').textContent = L.toFixed(2); if (!quiet) sendLevel(); }
+  $('Lsl').oninput = (e) => { clearInterval(ebbT); setL(parseFloat(e.target.value)); };
+  document.querySelectorAll('[data-L]').forEach((b) => b.onclick = () => { clearInterval(ebbT); setL(parseFloat(b.dataset.L)); });
+  $('ebb').onclick = () => { clearInterval(ebbT); setL(1); let last = performance.now(); ebbT = setInterval(() => { const n = performance.now(); setL(L - (n - last) / (EBB * 1000)); last = n; if (L <= 0) clearInterval(ebbT); }, 250); };   // 25 s, ≤ 4 messages per second
+  const mkBtn = (box, label, fn, extra) => { const b = document.createElement('button'); b.className = 'btn' + (extra || ''); b.textContent = label; b.onclick = fn; $(box).appendChild(b); return b; };
+  function gotoPhase(name) {   // jump the fake clock into a phase; the water level belongs to it
+    clearInterval(ebbT); ended = false; simT = PHASE_AT[name]; phase = name === 'letzte' ? 'fehde' : name;
+    if (name === 'over') { endMatch(); return; }
+    setL(levelOf(simT)); sendPhase(); sendYou();
+  }
+  [['🌊 Burgfrieden 1:12', 'frieden'], ['🌊 Ebbe', 'ebbe'], ['⚔️ Fehde', 'fehde'], ['⏳ Letzte Minute', 'letzte'], ['🏁 Ende', 'over']].forEach(([lab, n]) => mkBtn('phases', lab, () => gotoPhase(n)));
+  $('autoPh').checked = phaseAuto; $('autoPh').onchange = (e) => { phaseAuto = e.target.checked; };
+  ['attack', 'fire', 'hunger', 'plunder', 'crossing', 'pact', 'crown'].forEach((k) => mkBtn('alerts', { attack: '⚔️ attack', fire: '🔥 fire', hunger: '🍞 hunger', plunder: '💰 plunder', crossing: '🌊 crossing', pact: '🤝 pact', crown: '👑 crown' }[k], () => fakeAlert(k)));
+  mkBtn('alerts', '🍞 Hunger an/aus', () => { hunger = !hunger; sendYou(); });
+  function pactButtons() {
+    $('pactBtns').innerHTML = '';
+    LORDS.forEach((l) => { if (l.i === me) return; const n = hname(l.i).replace('Haus ', '');
+      mkBtn('pactBtns', '📨 ' + n + ' bietet an', () => { pact[l.i] = { state: 'incoming', until: simT + OFFER_S }; fakeAlert('pact'); sendYou(); });
+      mkBtn('pactBtns', '🤝 aktiv mit ' + n, () => { pact[l.i] = { state: 'active', until: simT + PACT_S }; sendYou(); });
+      mkBtn('pactBtns', '✖ ' + n, () => { pact[l.i] = { state: 'none', until: 0 }; sendYou(); }); });
+  }
+  const roleBtns = {};
+  roleBtns.host = mkBtn('roles', '', () => { host = !host; sendInfo(); roleLabels(); });
+  roleBtns.spec = mkBtn('roles', '', () => { spectator = !spectator; sendInfo(); sendYou(); roleLabels(); });
+  roleBtns.shared = mkBtn('roles', '', () => { sharedWith = sharedWith ? '' : 'Ben'; sendInfo(); roleLabels(); });
+  mkBtn('roles', '🏁 Spiel beenden', () => endMatch());
+  mkBtn('roles', '🔁 Neue Runde', () => rematch());
+  function roleLabels() { roleBtns.host.textContent = host ? '👑 Host (tippen: Gast)' : 'Gast (tippen: Host)'; roleBtns.spec.textContent = spectator ? '👀 Zuschauer (tippen: Spieler)' : 'Spieler (tippen: Zuschauer)'; roleBtns.shared.textContent = sharedWith ? '👥 mit ' + sharedWith + ' (tippen: allein)' : 'allein (tippen: mit Ben)'; }
+  roleLabels();
+  LORDS.forEach((l) => { const b = document.createElement('button'); b.className = 'btn' + (l.i === me ? ' on' : ''); b.textContent = l.i + ' ' + hname(l.i).replace('Haus ', ''); b.style.borderBottom = '4px solid ' + l.color; b.onclick = () => { me = l.i; document.querySelectorAll('#lords .btn').forEach((x, k) => x.classList.toggle('on', k === me)); resetState(); pactButtons(); sendAll(); }; $('lords').appendChild(b); });
+  pactButtons();
+  $('richBtn').onclick = () => { recount(); stock = { korn: cap.korn - 2, holz: cap.holz - 2, stein: cap.stein - 2 }; sendYou(); };
+  $('poorBtn').onclick = () => { stock = { korn: 1, holz: 2, stein: 0 }; sendYou(); };
+  $('fireBtn').onclick = () => { const b = buildings.find((x) => x.lord === me && x.kind === 'hof') || buildings.find((x) => x.lord === me); if (b) { b.fire = 0.8; sendBoard(); } };
+  $('clearLog').onclick = () => { log.textContent = ''; };
+  $('reload').onclick = () => { if (STANDALONE) location.reload(); else build(); };
+  [['Bauen · Hof', 'mode=bauen&ghost=hof&L=0.4'], ['Bauen · ungültig', 'mode=bauen&ghost=hof&invalid=1&L=0.4'], ['Truppen', 'mode=truppen'], ['Banner', 'mode=banner'], ['Banner-Zug', 'mode=banner&drag=1&L=0'], ['Banner-Zug Flut', 'mode=banner&drag=0.98&to=steinbruecke&L=1'],
+    ['Flut L=1', 'mode=banner&L=1&view=all'], ['Trocken L=0', 'mode=banner&L=0&view=all'], ['Hochformat', 'w=390&h=844&mode=bauen&ghost=hof&L=0.4'],
+    ['Burgfrieden', 'state=frieden'], ['Ebbe', 'state=ebbe'], ['Fehde', 'state=fehde'], ['Letzte Minute', 'state=letzte'],
+    ['Pakte', 'state=pact'], ['Angebot (Tafel)', 'state=offer'], ['Angebot (Karte)', 'state=offer&mode=bauen'], ['Karte: Hof', 'state=card'], ['Karte: Ruine', 'state=cardruin'], ['Karte: Holzfäller', 'card=nowood'], ['Karte: Feuer', 'card=fire'], ['Karte: ruht', 'card=paused'], ['Karte: Lager voll', 'card=full'],
+    ['Brunnen-Abdeckung', 'place=brunnen&dash=1&state=fehde'], ['Brunnen-Karte', 'card=brunnen&state=fehde'], ['Burg-Karte', 'card=keep&state=fehde'], ['Lager', 'lager=1&state=fehde'], ['Lager voll', 'lager=full&state=fehde'],
+    ['Anleitung', 'guide=1'], ['Anleitung: Gebäude', 'guide=gebaeude'], ['Tipp 1 Hunger', 'advice=1'], ['Tipp 6 Lager voll', 'advice=6'], ['Tipp 5 Rekruten warten', 'queue=wait&mode=truppen&state=fehde'], ['Tipp 10 Truppen', 'advice=10&state=fehde'], ['Fahne gewählt', 'mode=banner&arm=2&view=all'], ['Korn knapp', 'food=low'],
+    ['Alarm Angriff', 'alert=attack'], ['Alarm Feuer', 'alert=fire'], ['Alarm Krone', 'alert=crown'], ['Ende (Host)', 'state=end'], ['Ende (Gast)', 'state=endguest'], ['Zuschauer', 'state=spectator'],
+    ['mit Ben', 'shared=Ben&state=frieden'], ['2 Häuser', 'lords=2&mode=bauen'], ['Hunger', 'hunger=1&mode=truppen'], ['nur Phase-0-Nachrichten', 'legacy=1&mode=truppen'], ['Echtzeit-Spiel', 'auto=1&burg=20&speed=2&L=1']].forEach(([lab, qs]) => {
+    const a = document.createElement('a'); a.className = 'btn'; a.textContent = lab; a.href = '?' + (STANDALONE ? 'phone=1&' : '') + qs + (STANDALONE ? '' : '&panel=1') + '&seed=' + seed; $('presets').appendChild(a);
+  });
+  function updatePerf() {
+    const w = ph(), m = w && w.__ff && w.__ff.map; if (!m) return;
+    const p = m.perf;
+    $('perf').textContent = 'dynamisch: ' + (p.frames ? (p.sum / p.frames).toFixed(2) : '–') + ' ms Ø · max ' + p.max.toFixed(2) + ' ms (' + p.frames + ' Bilder)\n' +
+      'statisch: ' + p.staticN + '× gezeichnet, zuletzt ' + (p.lastStaticMs || 0).toFixed(0) + ' ms · Flutmaske ' + p.maskN + '×, zuletzt ' + (p.lastMaskMs || 0).toFixed(1) + ' ms · Vorbereitung ' + p.prepMs.toFixed(0) + ' ms\n' +
+      'Karte: L ' + m.L.toFixed(2) + (m.maskVisible ? ' · Flutmaske sichtbar' : ' · keine Flutmaske') + ' · Ansicht ' + m.viewName + ' · ' + m.w + '×' + m.h + ' px × ' + m.dpr + '\nVorbereitung: ' + JSON.stringify(p.prepParts);
+  }
+  setInterval(updatePerf, 700);
+  $('benchBtn').onclick = () => {
+    const w = ph(), m = w && w.__ff && w.__ff.map; if (!m) return;
+    m.resetPerf(); const times = [];
+    for (let i = 0; i < 300; i++) { m.dirty = true; const a = performance.now(); m.render(a + i * 16); times.push(performance.now() - a); }
+    times.sort((a, b) => a - b);
+    logLine('Messung 300 erzwungene Bilder: Ø ' + (times.reduce((a, b) => a + b, 0) / 300).toFixed(2) + ' ms · Median ' + times[150].toFixed(2) + ' · p95 ' + times[285].toFixed(2) + ' · max ' + times[299].toFixed(2) + ' ms');
+  };
+
+  // ---- phone iframe ----
+  function build() {
+    if (STANDALONE) { sent.length = 0; start(); return; }
+    wrap.innerHTML = '';
+    wrap.style.width = PW + 'px'; wrap.style.height = PH + 'px';
+    const f = document.createElement('iframe'); f.id = 'phoneFrame'; f.width = PW; f.height = PH;
+    f.src = 'dev-furtfehde-phone.html?phone=1&host=' + (host ? 1 : 0) + (STILL ? '&still=1' : '');
+    f.onload = () => { start(); };
+    wrap.appendChild(f);
+  }
+  function start() {
+    const w = ph();
+    if (!w.devToPhone) { setTimeout(start, 50); return; }
+    clearInterval(ebbT); resetState(); setL(L, true); $('phv').textContent = phase;
+    if (q.get('crown') === '1') { crown = true; ruhm = 134; }
+    presetPact();
+    logLine('activate()'); w.devActivate();
+    if (q.get('wait') === '1') return;   // preset: the screen has not sent the map yet ("Warte auf die Karte")
+    sendAll();
+    applyPreset(w);
+    if (q.get('advance')) { for (let t = 0; t < +q.get('advance'); t += 0.1) step(0.1); sendPhase(); sendYou(); sendBoard(); w.__ff.draw(); }   // &advance=130: fast-forward the fake clock (with auto=1 the phases and the water follow)
+    if (!STILL) { lastTick = performance.now(); clearInterval(window.__tick); window.__tick = setInterval(tick, 100); }
+    if (q.get('autotest') === '1' || runAuto) { runAuto = false; autotest(); }
+    if (q.get('bench') === 'drag' && !spectator) benchDrag(w);
+    if (q.get('bench') === '1') { w.__ff.map.layer('mine'); w.__ff.map.layer('all'); $('benchBtn').onclick(); updatePerf(); }   // ?bench=1: measure 300 forced frames right away (result in the log and the perf line)
+  }
+  function presetPact() {   // the pact states of the pact presets (relative to the fake clock)
+    if (NL < 3) return;
+    if (S0 === 'pact') { pact[1] = { state: 'active', until: simT + 161 }; if (LORDS[2]) pact[2] = { state: 'offered', until: simT + 21 }; }
+    if (S0 === 'offer') { pact[1] = { state: 'incoming', until: simT + 24 }; if (LORDS[2]) pact[2] = { state: 'active', until: simT + 161 }; }
+    if (q.get('pacts') === '1') { pact[1] = { state: 'active', until: simT + 161 }; }
+  }
+  const click = (w, id) => { const el = w.document.getElementById(id); if (!el) throw new Error('Element fehlt: ' + id); el.click(); };
+  const shown = (w, id) => { const el = w.document.getElementById(id); return !!el && !el.hidden && el.getClientRects().length > 0; };
+  function findInvalid(kind, preferred) {   // an own-land spot for `kind` that breaks a rule, nearest to the keep
+    const site = LORDS[me].site, k = keepOf(site), occ = occGrid(), fp = FW.footprintOf(kind, 0);
+    let best = null, bd = 1e9;
+    for (const want of preferred) {
+      for (let j = 0; j + fp[1] <= FW.GH; j++) for (let i = 0; i + fp[0] <= FW.GW; i++) {
+        const d = Math.hypot(i + fp[0] / 2 - 72 - k.x, j + fp[1] / 2 - 45 - k.y); if (d > 40 || d >= bd) continue;
+        const res = FW.canPlace(world, kind, i, j, 0, { lord: site, L, occ });
+        if (!res.ok && res.reason === want) { bd = d; best = { i, j, reason: want }; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+  function mouse(w, target, type, x, y) { target.dispatchEvent(new w.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0, buttons: type === 'mouseup' ? 0 : 1 })); }
+  const centerOf = (b) => { const fp = FW.footprintOf(b.kind, b.rot); return { x: -72 + b.i + fp[0] / 2, y: -45 + b.j + fp[1] / 2 }; };
+  function syncMap(w) {   // the phone's ResizeObserver fits the map one task after a layout change; the synchronous tests must not depend on that
+    const m = w.__ff.map, rr = w.document.getElementById('ffCanvas').getBoundingClientRect();
+    if (m && rr.width > 10 && rr.height > 10) m.resize(rr.width, rr.height);
+  }
+  function tapMap(w, x, y) {   // a real tap on the war table at map coordinates
+    syncMap(w);
+    const cvs = w.document.getElementById('ffCanvas'), r = cvs.getBoundingClientRect(), p = w.__ff.map.toScreen(x, y);
+    mouse(w, cvs, 'mousedown', r.left + p.x, r.top + p.y); mouse(w, w, 'mouseup', r.left + p.x, r.top + p.y);
+  }
+  const tapBuilding = (w, b) => { const c = centerOf(b); tapMap(w, c.x, c.y); };
+  // The sim's coverage rule, written out once more on the fake screen's own truth (the autotest's oracle): an own wooden building that is not a ruin is protected when its centre lies within
+  // bucketR of a finished Brunnen's centre or within keepWellR of the keep's centre. `plan` = { i, j } of a Brunnen that is not built yet: how many more it would protect.
+  function coverTruth(plan) {
+    const k = keepOf(LORDS[me].site), wells = buildings.filter((b) => b.lord === me && b.kind === 'brunnen' && !b.ruined && b.build >= 1).map(centerOf);
+    const wood = buildings.filter((b) => b.lord === me && !b.ruined && FW.BUILDINGS[b.kind].mat === 'holz'), pc = plan ? { x: -72 + plan.i + 0.5, y: -45 + plan.j + 0.5 } : null;
+    const out = { wood: wood.length, covered: 0, extra: 0, covIds: [], gainIds: [], wells: wells.length, keep: k };
+    for (const b of wood) {
+      const c = centerOf(b);
+      if (Math.hypot(c.x - k.x, c.y - k.y) <= RULES.keepWellR || wells.some((w) => Math.hypot(c.x - w.x, c.y - w.y) <= RULES.bucketR)) { out.covered++; out.covIds.push(b.id); }
+      else if (pc && Math.hypot(c.x - pc.x, c.y - pc.y) <= RULES.bucketR) { out.extra++; out.gainIds.push(b.id); }
+    }
+    return out;
+  }
+  // a new own building on the free spot nearest to (tx, ty); null when there is none (the demo must not break on another seed)
+  function addOwn(kind, tx, ty, build) {
+    const occ = occGrid(), fp = FW.footprintOf(kind, 0), site = LORDS[me].site; let best = null, bd = 1e9;
+    for (let j = Math.max(0, Math.round(ty + 45 - 10)); j < Math.min(FW.GH - fp[1], Math.round(ty + 45 + 10)); j++)
+      for (let i = Math.max(0, Math.round(tx + 72 - 10)); i < Math.min(FW.GW - fp[0], Math.round(tx + 72 + 10)); i++) {
+        const d = Math.hypot(i - 72 + fp[0] / 2 - tx, j - 45 + fp[1] / 2 - ty); if (d >= bd) continue;
+        if (FW.canPlace(world, kind, i, j, 0, { lord: site, L: 0, occ }).ok) { bd = d; best = { i, j }; }
+      }
+    if (!best) return null;
+    const b = { id: nextId++, lord: me, kind, i: best.i, j: best.j, rot: 0, build: build == null ? 1 : build, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: WORKERS[kind] || 0, paused: 0, dur: 0 };
+    buildings.push(b); return b;
+  }
+  // ?place=brunnen: two more groups of own wooden buildings out in the fields (no well reaches them), the Brunnen card and its ghost on the spot that protects the most unprotected buildings
+  function placeDemo(w) {
+    const k = keepOf(LORDS[me].site), sx = k.x < 0 ? 1 : -1, sy = k.y < 0 ? 1 : -1;   // „towards the middle of the map“
+    addOwn('hof', k.x + sx * 33, k.y + sy * 1); addOwn('huette', k.x + sx * 31, k.y + sy * 7, 0.5);   // a farm group out east (the Hütte still a building site)
+    addOwn('hof', k.x - sx * 15, k.y + sy * 19); addOwn('huette', k.x - sx * 17, k.y + sy * 13, 0.7);  // and one out south-west
+    if (q.get('dash') === '1') addOwn('brunnen', k.x - sx * 14, k.y + sy * 17, 0.4);                                                                  // a Brunnen still being built beside the second group: dashed
+    recount(); sendBoard(); sendYou();
+    click(w, 'ffMode-bauen'); click(w, 'ffCard-brunnen');
+    const F = w.__ff, plan = bestWellSpot(); if (plan) { F.map.setGhost({ kind: 'brunnen', i: plan.i, j: plan.j, rot: 0 }); F.map.emit('ghostMove', F.map.getGhost()); }
+  }
+  function bestWellSpot() {   // the valid 1×1 spot on the own land that would protect the most unprotected buildings (ties: the one nearest the keep)
+    const site = LORDS[me].site, k = keepOf(site), occ = occGrid(); let best = null, bn = 0, bd = 1e9;
+    for (let j = 0; j < FW.GH; j++) for (let i = 0; i < FW.GW; i++) {
+      if (!FW.canPlace(world, 'brunnen', i, j, 0, { lord: site, L, occ }).ok) continue;
+      const n = coverTruth({ i, j }).extra, d = Math.hypot(i - 71.5 - k.x, j - 44.5 - k.y);
+      if (n > bn || (n === bn && n > 0 && d < bd)) { bn = n; bd = d; best = { i, j }; }
+    }
+    return best;
+  }
+  function openCardPreset(w, k) {   // select a building and tap it on the map, so the card opens through the real picking
+    const mine = (kind) => buildings.find((b) => b.lord === me && b.kind === kind);
+    let b;
+    if (k === 'keep') { const kp = keepOf(LORDS[me].site); sendBoard(); click(w, 'ffMode-bauen'); w.__ff.map.view('mine', true); w.__ff.draw(); tapMap(w, kp.x, kp.y); return; }   // the own castle has a card, too
+    if (k === 'ruin') b = buildings.find((x) => x.lord === me && x.ruined);
+    else if (k === 'fire') { b = mine('hof'); if (b) { b.fire = 0.6; b.hp = 0.5; } }
+    else if (k === 'nowood' || k === 'holzfaeller') { b = mine('holzfaeller'); if (b) b.noWood = 1; }
+    else if (k === 'paused') { b = mine('steinbruch'); if (b) { b.paused = 1; b.workers = 0; } }
+    else if (k === 'full') { b = mine('steinbruch'); if (b) { b.full = 1; b.workers = 0; recount(); stock.stein = cap.stein; sendYou(); } }   // the store of its good is full: the card says so (the 13th board field is 2)
+    else b = mine(k) || mine('hof');
+    if (!b) return;
+    sendBoard(); click(w, 'ffMode-bauen'); w.__ff.map.view('mine', true); w.__ff.draw(); tapBuilding(w, b);
+  }
+  function applyPreset(w) {
+    const mode = q.get('mode'), F = w.__ff;
+    if (mode) click(w, 'ffMode-' + mode);
+    if (q.get('target')) click(w, 'ffTarget-' + q.get('target'));
+    const gk = q.get('ghost');
+    if (gk) {
+      click(w, 'ffMode-bauen'); click(w, 'ffCard-' + gk);
+      if (q.get('invalid') === '1') {
+        const spot = findInvalid(gk, ['wet', 'terrain', 'occupied', 'tight', 'owner']);
+        if (spot) { F.map.setGhost({ kind: gk, i: spot.i, j: spot.j, rot: 0 }); F.map.emit('ghostMove', F.map.getGhost()); }
+      }
+    }
+    if (q.get('mud') === '1') { const L0 = L; F.map.setLevel(1); F.draw(); F.map.setLevel(L0); }   // the water has just gone down: wet mud where it stood
+    if (q.get('view')) F.map.view(q.get('view'), true);
+    if (q.get('drag')) {
+      const dv = +q.get('drag'), frac = dv > 0 && dv < 1 ? dv : 0.62;   // drag=1: a bit more than halfway (close enough to snap to the crossing); drag=0.9: 90 % of the way
+      click(w, 'ffMode-banner');
+      const pin = F.map.ownPins()[0], c = world.crossings.find((x) => x.id === (q.get('to') || 'westfurt'));
+      const to = { x: pin.x + (c.x - pin.x) * frac, y: pin.y + (c.y - pin.y) * frac };
+      dragPin(w, pin, to, false);
+    }
+    if ((S0 === 'pact' || S0 === 'offer') && !mode) click(w, 'ffMode-pakte');   // &mode=bauen shows the offer prompt over the map instead
+    if (q.get('place') === 'brunnen' && !spectator) placeDemo(w);
+    const ck = q.get('card') || (S0 === 'card' ? q.get('kind') || 'hof' : S0 === 'cardruin' ? 'ruin' : '');
+    if (ck && !spectator) openCardPreset(w, ck);
+    if (q.get('lager') && !spectator) { if (q.get('lager') === 'full') { recount(); stock.korn = cap.korn; stock.stein = cap.stein; sendYou(); } F.openLager(); }
+    const al = q.get('alert') || (S0 === 'alert' ? 'attack' : ''); if (al) fakeAlert(al);
+    if (q.get('arm') && !spectator) { if (q.get('mode') !== 'banner') click(w, 'ffMode-banner'); F.armBanner(+q.get('arm')); }
+    if (q.get('advice')) F.advice(+q.get('advice'));
+    if (q.get('guide')) F.openGuide(q.get('guide') === '1' ? undefined : q.get('guide'));
+    if (S0 === 'end' || S0 === 'endguest') endMatch();
+    F.draw();
+  }
+  // ?bench=drag (with &place=brunnen): 300 forced frames while the Brunnen ghost jumps about, once without and once with the coverage layer. The layer's wash is rebuilt every frame then (the worst case of a drag).
+  function benchDrag(w) {
+    const F = w.__ff, m = F.map, g = m.getGhost(); if (!g) return;
+    const run = (on) => {
+      m.setCoverage(on ? { r: RULES.bucketR, keepR: RULES.keepWellR } : null); const t = [];
+      for (let i = 0; i < 300; i++) { m.ghost.i = Math.max(0, Math.min(FW.GW - 1, g.i + (i * 7 % 31) - 15)); m.ghost.j = Math.max(0, Math.min(FW.GH - 1, g.j + (i * 5 % 21) - 10)); m.recheckGhost(); const a = performance.now(); m.render(a); t.push(performance.now() - a); }
+      t.sort((x, y) => x - y); return 'Ø ' + (t.reduce((x, y) => x + y, 0) / t.length).toFixed(2) + ' ms · Median ' + t[150].toFixed(2) + ' · p95 ' + t[285].toFixed(2) + ' · max ' + t[299].toFixed(2);
+    };
+    const off = run(false), on = run(true), txt = 'Zug-Messung (300 Bilder, Plan wandert): Abdeckung aus ' + off + ' | an ' + on + ' | Karte ' + m.w + '×' + m.h;
+    $('autoRes').textContent = txt; logLine(txt); console.log(txt);
+  }
+  // drag a banner pin (synchronously, `release` = false freezes the drag in mid-air)
+  function dragPin(w, pin, to, release) {
+    syncMap(w);
+    const m = w.__ff.map, cvs = w.document.getElementById('ffCanvas'), r = cvs.getBoundingClientRect();
+    const a = m.toScreen(pin.x, pin.y), b = m.toScreen(to.x, to.y);
+    mouse(w, cvs, 'mousedown', r.left + a.x, r.top + a.y - 20);
+    for (let s = 1; s <= 6; s++) mouse(w, w, 'mousemove', r.left + a.x + (b.x - a.x) * s / 6, r.top + a.y + (b.y - a.y) * s / 6);
+    if (release) mouse(w, w, 'mouseup', r.left + b.x, r.top + b.y);
+  }
+
+  // ---- autotest: the brief's steps, played through the real UI (clicks, taps and synthetic mouse drags).
+  // Fully synchronous on purpose: it finishes inside the iframe's load event, so a headless screenshot already shows the result. ----
+  let runAuto = false;
+  function autotest() {
+    const res = $('autoRes'); res.className = ''; res.textContent = 'Autotest läuft …';
+    let step = 'Start'; autoRunning = true;
+    const must = (c, msg) => { if (!c) throw new Error(msg); };
+    try {
+      const w = ph();
+      step = '0 Bereit'; must(w && w.__ff && w.__ff.map, 'Karte nicht da');
+      must(!spectator && NL >= 3 && !LEGACY, 'der Autotest braucht ein Haus, drei Häuser und das ganze Phase-1-Protokoll (kein ?lords=2, kein Zuschauer, kein ?legacy=1)');
+      clearInterval(window.__tick); clearInterval(ebbT);
+      const F = w.__ff, doc = w.document, cvs = doc.getElementById('ffCanvas');
+      let m = F.map;   // a new map after a change of seat: refetched in step 18
+      const renderTipNow = () => F.renderTip();
+      stock = { korn: 40, holz: 80, stein: 40 }; sendYou();
+      setL(0.5); sendLevel();
+      const site = LORDS[me].site;
+      const dragGhost = (g, ti, tj) => {   // drag with the mouse (no finger lift): the ghost centre follows the pointer
+        syncMap(w);
+        const fp = FW.footprintOf(g.kind, g.rot), r = cvs.getBoundingClientRect(), a = m.toScreen(-72 + g.i + fp[0] / 2, -45 + g.j + fp[1] / 2), b = m.toScreen(-72 + ti + fp[0] / 2, -45 + tj + fp[1] / 2);
+        mouse(w, cvs, 'mousedown', r.left + a.x, r.top + a.y);
+        for (let s = 1; s <= 6; s++) mouse(w, w, 'mousemove', r.left + a.x + (b.x - a.x) * s / 6, r.top + a.y + (b.y - a.y) * s / 6);
+        mouse(w, w, 'mouseup', r.left + b.x, r.top + b.y);
+      };
+      const last = (t) => { const a = sent.filter((x) => x.t === t); return a[a.length - 1]; };
+      // 1: pick the Hof and move the ghost onto a wet cell → red and „Zu nass“
+      step = '1 Hof wählen und auf eine nasse Zelle ziehen';
+      click(w, 'ffMode-bauen'); click(w, 'ffCard-hof');
+      let g = m.getGhost(); must(g && g.kind === 'hof', 'kein Hof-Geist nach dem Kartentipp');
+      const hofChip = Array.from(doc.querySelectorAll('#ffCard-hof .ff-chip')).map((c) => c.textContent).join(' ');
+      if (SEND_COSTS) must(hofChip.indexOf((COSTS.build.hof.holz || 0) + ' ') === 0, 'die Hof-Karte zeigt nicht die Kosten aus ffInfo.costs: «' + hofChip + '» statt ' + COSTS.build.hof.holz + ' 🪵');
+      const occ0 = occGrid(), sp = FW.suggest(world, 'hof', site, { L, occ: occ0 }); must(sp, 'FurtWorld.suggest findet keinen Platz');
+      must(g.i === sp.i && g.j === sp.j && g.rot === sp.rot, 'Geist nicht auf FurtWorld.suggest (' + g.i + ',' + g.j + ' statt ' + sp.i + ',' + sp.j + ')');
+      must(g.ok, 'der vorgeschlagene Platz ist rot (' + g.reason + ')');
+      const wet = findInvalid('hof', ['wet']); must(wet, 'keine nasse Zelle für einen Hof bei L = ' + L.toFixed(2));
+      dragGhost(g, wet.i, wet.j);
+      g = m.getGhost(); must(g.i === wet.i && g.j === wet.j, 'Geist liegt nicht auf der nassen Zelle (' + g.i + ',' + g.j + ' statt ' + wet.i + ',' + wet.j + ')');
+      must(!g.ok && g.reason === 'wet', 'erwartet rot mit Grund wet, bekam ok=' + g.ok + ' reason=' + g.reason);
+      const why = doc.getElementById('ffReason'); must(why.textContent.indexOf('Zu nass') >= 0 && why.classList.contains('bad'), 'Text „Zu nass“ fehlt: «' + why.textContent + '»');
+      const before = sent.filter((x) => x.t === 'ffBuild').length;
+      click(w, 'ffOk');
+      must(sent.filter((x) => x.t === 'ffBuild').length === before, '✓ auf rotem Geist hat ffBuild gesendet');
+      must(m.getGhost(), 'der rote Geist ist nach ✓ verschwunden');
+      // 2: move to the suggested spot and confirm → exactly one valid ffBuild
+      step = '2 auf den Vorschlag ziehen und bestätigen';
+      dragGhost(m.getGhost(), sp.i, sp.j);
+      g = m.getGhost(); must(g.ok && g.i === sp.i && g.j === sp.j, 'Vorschlag nicht grün (' + g.reason + ')');
+      must(doc.getElementById('ffReason').textContent.indexOf('Passt') >= 0, 'Text „Passt hier“ fehlt');
+      const nb = buildings.length; click(w, 'ffOk');
+      const builds = sent.filter((x) => x.t === 'ffBuild'); must(builds.length === before + 1, 'erwartet genau ein ffBuild, bekam ' + (builds.length - before));
+      const bm = builds[builds.length - 1];
+      must(bm.kind === 'hof' && bm.i === sp.i && bm.j === sp.j && bm.rot === sp.rot, 'ffBuild falsch: ' + JSON.stringify(bm));
+      must(FW.canPlace(world, bm.kind, bm.i, bm.j, bm.rot, { lord: site, L, occ: occ0 }).ok, 'ffBuild ist nach canPlace ungültig');
+      must(buildings.length === nb + 1, 'der falsche Fernseher hat nicht gebaut');
+      must(!m.getGhost(), 'der Geist ist nach ✓ nicht verschwunden');
+      must(m.board.buildings.some((b) => b.lord === me && b.kind === 'hof' && b.i === sp.i && b.j === sp.j && b.build < 1), 'der Hof steht nicht als Baustelle auf der Karte (ffBoard)');
+      must(Array.from(doc.querySelectorAll('.ff-toast')).some((t) => t.textContent.indexOf('Hof') >= 0), 'Toast „Hof wird gebaut“ fehlt');
+      // 3: recruit +🗡️ into banner II
+      step = '3 Speerträger in Fahne II';
+      click(w, 'ffMode-truppen'); click(w, 'ffTarget-2'); click(w, 'ffUnit-speer');
+      const rec = sent.filter((x) => x.t === 'ffRecruit'), rm = rec[rec.length - 1];
+      must(rm && rm.unit === 'speer' && rm.n === 2, 'erwartet ffRecruit {unit:speer,n:2}, bekam ' + JSON.stringify(rm));
+      must(doc.querySelectorAll('.ff-q').length === 1 && doc.querySelector('.ff-q').textContent.indexOf('II') >= 0, 'Warteschlangen-Chip „🗡️→II“ fehlt');
+      must(doc.getElementById('ffTCnt-0').textContent === '×4', 'die Burgwache zeigt ihre Zahl aus ffYou.banners nicht: «' + doc.getElementById('ffTCnt-0').textContent + '»');
+      // 4: drag banner I to the Westfurt → ffBanner snapped to the ford centre
+      step = '4 Fahne I zur Westfurt ziehen';
+      setL(0, true); sendLevel(); click(w, 'ffMode-banner');
+      { // a tap on a crossing shows its name
+        syncMap(w);
+        const ford0 = world.crossings.find((c) => c.id === 'nordfurt'), r0 = cvs.getBoundingClientRect(), sc0 = m.toScreen(ford0.x, ford0.y);
+        mouse(w, cvs, 'mousedown', r0.left + sc0.x, r0.top + sc0.y); mouse(w, w, 'mouseup', r0.left + sc0.x, r0.top + sc0.y);
+        must(m.callouts.length === 1 && m.callouts[0].text.indexOf('Nordfurt') >= 0, 'Tipp auf die Nordfurt zeigt den Namen nicht (' + JSON.stringify(m.callouts.map((c) => c.text)) + ')');
+        m.callouts.length = 0;
+      }
+      const ford = world.crossings.find((c) => c.id === 'westfurt'), pin = m.ownPins()[0], to = { x: ford.x + 1.8, y: ford.y + 1.4 };
+      const nbn = sent.filter((x) => x.t === 'ffBanner').length;
+      dragPin(w, pin, to, true);
+      const bans = sent.filter((x) => x.t === 'ffBanner'); must(bans.length === nbn + 1, 'erwartet ein ffBanner, bekam ' + (bans.length - nbn));
+      const fm = bans[bans.length - 1];
+      must(fm.n === 1 && Math.abs(fm.x - ford.x) < 0.011 && Math.abs(fm.y - ford.y) < 0.011, 'ffBanner nicht auf der Furtmitte: ' + JSON.stringify(fm) + ' statt ' + ford.x + ',' + ford.y);
+      // 5: free camera (wheel zoom, pan), and — where the browser has Touch events — the finger lift and a pinch
+      step = '5 Karte mit Mausrad zoomen und mit einem Zug verschieben';
+      click(w, 'ffMode-truppen'); click(w, 'ffZ-all');
+      syncMap(w);
+      const rc = cvs.getBoundingClientRect(), s0 = m.cam.s, cx0 = m.cam.cx;
+      cvs.dispatchEvent(new w.WheelEvent('wheel', { deltaY: -400, clientX: rc.left + rc.width / 2, clientY: rc.top + rc.height / 2, bubbles: true, cancelable: true }));
+      must(m.viewName === 'free' && m.cam.s > s0 * 1.5, 'Mausrad zoomt nicht (s ' + s0.toFixed(2) + ' → ' + m.cam.s.toFixed(2) + ')');
+      const ntap = sent.length, s1 = m.cam.s;
+      mouse(w, cvs, 'mousedown', rc.left + 200, rc.top + 150); for (let k = 1; k <= 4; k++) mouse(w, w, 'mousemove', rc.left + 200 + k * 25, rc.top + 150); mouse(w, w, 'mouseup', rc.left + 300, rc.top + 150);
+      must(Math.abs(m.cam.cx - cx0) > 0.5 && m.cam.s === s1 && sent.length === ntap, 'Ziehen auf leerer Karte verschiebt nicht');
+      F.draw(); m.camT = 0; F.draw();   // the crisp layer for the new camera is rendered once the gesture is over
+      must(!m.freeStale(), 'die scharfe Ebene für die freie Kamera fehlt');
+      click(w, 'ffZ-mine'); must(m.viewName === 'mine', '„Mein Land“ bringt die Karte nicht zurück');
+      let extra = '';
+      if (w.Touch && w.TouchEvent) {
+        step = '6 Finger-Zug hebt den Geist über den Finger, Zwei-Finger-Zoom';
+        click(w, 'ffMode-bauen'); click(w, 'ffCard-huette'); m.view('mine', true);
+        syncMap(w);
+        const gh0 = m.getGhost(), r = cvs.getBoundingClientRect(), P = { x: r.width * 0.5, y: r.height * 0.7 };
+        const touch = (id, type, x, y, all) => { const mk = (i, tx, ty) => new w.Touch({ identifier: i, target: cvs, clientX: Math.round(r.left + tx), clientY: Math.round(r.top + ty) }), t = mk(id, x, y), list = (all || [[id, x, y]]).map((a) => mk(a[0], a[1], a[2])); cvs.dispatchEvent(new w.TouchEvent(type, { touches: type === 'touchend' ? list.filter((q) => q.identifier !== id) : list, targetTouches: list, changedTouches: [t], bubbles: true, cancelable: true })); };
+        touch(7, 'touchstart', P.x, P.y); touch(7, 'touchmove', P.x + 30, P.y); touch(7, 'touchend', P.x + 30, P.y);
+        const sx = m.w / (r.width || m.w), sy = m.h / (r.height || m.h);   // the map sees client px scaled to its own size (the canvas box can be a fraction of a px off)
+        const pt = { x: (Math.round(r.left + P.x + 30) - r.left) * sx, y: (Math.round(r.top + P.y) - r.top) * sy };   // a Touch rounds its client coordinates to whole px
+        const lift = Math.min(m.liftPx, Math.max(0, pt.y - 6)), wp = m.toWorld(pt.x, pt.y - lift), fp = FW.footprintOf('huette', 0), g5 = m.getGhost();
+        const ei = Math.round(wp.x + 72 - fp[0] / 2), ej = Math.round(wp.y + 45 - fp[1] / 2);
+        must(g5.i === ei && g5.j === ej, 'Geist nicht ' + m.liftPx + ' px über dem Finger (' + g5.i + ',' + g5.j + ' statt ' + ei + ',' + ej + '; Start ' + gh0.i + ',' + gh0.j + ', Karte ' + m.w + '×' + m.h + ', exakt ' + (wp.x + 72 - fp[0] / 2).toFixed(3) + ',' + (wp.y + 45 - fp[1] / 2).toFixed(3) + ')');
+        const sz = m.cam.s;   // pinch: two fingers apart → zoom in, and the ghost stays where it was
+        touch(1, 'touchstart', 200, 150, [[1, 200, 150]]); touch(2, 'touchstart', 260, 150, [[1, 200, 150], [2, 260, 150]]);
+        touch(2, 'touchmove', 380, 150, [[1, 200, 150], [2, 380, 150]]); touch(2, 'touchend', 380, 150, [[1, 200, 150], [2, 380, 150]]); touch(1, 'touchend', 200, 150, [[1, 200, 150]]);
+        must(m.cam.s > sz * 1.8 && m.viewName === 'free', 'Pinch zoomt nicht (s ' + sz.toFixed(2) + ' → ' + m.cam.s.toFixed(2) + ')');
+        must(m.getGhost().i === g5.i && m.getGhost().j === g5.j, 'Pinch hat den Geist verschoben');
+        click(w, 'ffNo'); must(!m.getGhost(), '✕ räumt den Geist nicht weg');
+        extra = ' + Touch-Schritt 6 (Finger-Hub, Pinch)';
+      } else extra = ' · Touch-Schritt 6 übersprungen (kein TouchEvent in diesem Browser)';
+
+      // ===== Phase 1 =====
+      // 7: a pact offer from the fake screen → the prompt → Annehmen → ffPact { to, on: true }
+      step = '7 Pakt-Angebot: Karte erscheint, Annehmen sendet ffPact on:true';
+      click(w, 'ffNo'); if (m.getGhost()) m.setGhost(null); click(w, 'ffMode-bauen');
+      must(!shown(w, 'ffOffer'), 'die Angebotskarte steht schon vor dem Angebot da');
+      pact[1] = { state: 'incoming', until: simT + OFFER_S }; fakeAlert('pact'); sendYou();
+      must(shown(w, 'ffOffer'), 'die Angebotskarte fehlt');
+      must(doc.getElementById('ffOfTx').textContent.indexOf(hname(1)) >= 0, 'die Angebotskarte nennt das Haus nicht: «' + doc.getElementById('ffOfTx').textContent + '»');
+      must(doc.getElementById('ffOfT').textContent === '0:30', 'der Angebots-Countdown steht nicht auf 0:30: «' + doc.getElementById('ffOfT').textContent + '»');
+      must(doc.getElementById('ffAlert').classList.contains('show') && doc.getElementById('ffAlert').classList.contains('pact'), 'das Alarm-Banner „pact“ fehlt');
+      must(doc.getElementById('ffBd-pakte').textContent === '1', 'das Abzeichen am Pakte-Knopf zeigt nicht „1“');
+      const npc = sent.filter((x) => x.t === 'ffPact').length;
+      click(w, 'ffOfYes');
+      const pc = sent.filter((x) => x.t === 'ffPact'); must(pc.length === npc + 1, 'erwartet ein ffPact, bekam ' + (pc.length - npc));
+      must(pc[pc.length - 1].to === 1 && pc[pc.length - 1].on === true, 'ffPact falsch: ' + JSON.stringify(pc[pc.length - 1]));
+      must(!shown(w, 'ffOffer'), 'die Angebotskarte bleibt nach „Annehmen“');
+      click(w, 'ffMode-pakte');
+      must(doc.getElementById('ffPact-1').classList.contains('active') && shown(w, 'ffPBreak-1'), 'der Pakt steht nicht als aktiv mit „Pakt brechen“ in der Liste');
+      must(doc.querySelector('#ffPact-1 .pt-s').textContent.indexOf('3:00') >= 0, 'die Pakt-Uhr steht nicht auf 3:00: «' + doc.querySelector('#ffPact-1 .pt-s').textContent + '»');
+      // 8: break → confirmation → ffPact { on: false }
+      step = '8 Pakt brechen: erst Rückfrage, dann ffPact on:false';
+      const npb = sent.filter((x) => x.t === 'ffPact').length, ruhm0 = ruhm;
+      click(w, 'ffPBreak-1');
+      must(sent.filter((x) => x.t === 'ffPact').length === npb, 'ffPact wurde ohne Rückfrage gesendet');
+      must(shown(w, 'ffPSure-1') && shown(w, 'ffPBack-1') && !shown(w, 'ffPBreak-1'), 'die Rückfrage fehlt');
+      click(w, 'ffPBack-1'); must(shown(w, 'ffPBreak-1') && !shown(w, 'ffPSure-1'), '„Zurück“ schließt die Rückfrage nicht');
+      click(w, 'ffPBreak-1'); click(w, 'ffPSure-1');
+      const pb = sent.filter((x) => x.t === 'ffPact'); must(pb.length === npb + 1, 'erwartet ein ffPact, bekam ' + (pb.length - npb));
+      must(pb[pb.length - 1].to === 1 && pb[pb.length - 1].on === false, 'ffPact falsch: ' + JSON.stringify(pb[pb.length - 1]));
+      must(ruhm === ruhm0 - 5, 'der falsche Fernseher hat den Verrat nicht bestraft');
+      must(shown(w, 'ffPOffer-1') && !shown(w, 'ffPBreak-1'), 'nach dem Bruch fehlt „Pakt anbieten“');
+      // 9: a building card → Abreißen (confirmation) → ffCancel
+      step = '9 Gebäudekarte: Abreißen, Rückfrage, ffCancel';
+      click(w, 'ffMode-bauen'); m.view('mine', true); F.draw();
+      const wc = buildings.find((b) => b.lord === me && b.kind === 'holzfaeller' && b.build >= 1 && !b.ruined); must(wc, 'kein fertiger Holzfäller da');
+      tapBuilding(w, wc);
+      must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Holzfäller', 'die Karte des Holzfällers öffnet sich nicht nach dem Tipp aufs Gebäude');
+      must(m.selId === wc.id, 'das Gebäude ist auf der Karte nicht markiert');
+      must(doc.getElementById('ffCHpT').textContent === '64 %', 'die Lebensanzeige zeigt nicht 64 %: «' + doc.getElementById('ffCHpT').textContent + '»');
+      must(doc.getElementById('ffCState').textContent.indexOf('arbeitet') >= 0, 'der Zustand „arbeitet“ fehlt: «' + doc.getElementById('ffCState').textContent + '»');
+      wc.noWood = 1; sendBoard(); must(doc.getElementById('ffCState').textContent.indexOf('kein Wald in Reichweite') >= 0, 'der Zustand „kein Wald in Reichweite“ fehlt: «' + doc.getElementById('ffCState').textContent + '»');
+      wc.noWood = 0; wc.workers = 0; sendBoard(); must(doc.getElementById('ffCState').textContent.indexOf('wartet auf Arbeiter') >= 0, 'der Zustand „wartet auf Arbeiter“ fehlt: «' + doc.getElementById('ffCState').textContent + '»');
+      wc.workers = 1; sendBoard();
+      must(shown(w, 'ffCardDemolish') && !shown(w, 'ffCardRebuild'), 'die Knöpfe der Gebäudekarte stimmen nicht');
+      const nc = sent.filter((x) => x.t === 'ffCancel').length;
+      click(w, 'ffCardDemolish');
+      must(sent.filter((x) => x.t === 'ffCancel').length === nc, 'ffCancel wurde ohne Rückfrage gesendet');
+      must(shown(w, 'ffCardConfirm') && shown(w, 'ffCardKeep'), 'die Abriss-Rückfrage fehlt');
+      click(w, 'ffCardKeep'); must(shown(w, 'ffCardDemolish') && !shown(w, 'ffCardConfirm'), '„Zurück“ schließt die Abriss-Rückfrage nicht');
+      click(w, 'ffCardDemolish'); click(w, 'ffCardConfirm');
+      const cc = sent.filter((x) => x.t === 'ffCancel'); must(cc.length === nc + 1, 'erwartet ein ffCancel, bekam ' + (cc.length - nc));
+      must(cc[cc.length - 1].id === wc.id, 'ffCancel mit falscher id: ' + JSON.stringify(cc[cc.length - 1]));
+      must(!buildings.some((b) => b.id === wc.id), 'der falsche Fernseher hat nicht abgerissen');
+      must(!doc.getElementById('ffPanel').classList.contains('card') && m.selId == null, 'die Karte bleibt nach dem Abriss offen');
+      // 10: a ruin card → Wiederaufbau ½ → ffBuild on the ruin's footprint
+      step = '10 Ruinenkarte: Wiederaufbau ½ sendet ffBuild auf dem Grundriss';
+      const ruin = buildings.find((b) => b.lord === me && b.ruined); must(ruin, 'keine eigene Ruine da');
+      tapBuilding(w, ruin);
+      must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCState').textContent.indexOf('Ruine') >= 0, 'die Ruinenkarte öffnet sich nicht');
+      must(shown(w, 'ffCardRebuild') && shown(w, 'ffCardClear') && !shown(w, 'ffCardDemolish'), 'die Knöpfe der Ruinenkarte stimmen nicht');
+      must(doc.getElementById('ffCHpT').textContent === '0 %', 'die Ruine zeigt nicht 0 % Leben');
+      const half = Math.ceil(COSTS.build[ruin.kind].holz * COSTS.rebuild), holz0 = stock.holz;
+      const shownHalf = SEND_COSTS ? half : Math.ceil(FW.BUILDINGS[ruin.kind].draft.cost.holz * 0.5);   // without ffInfo.costs the phone shows the stale world.js drafts
+      must(doc.querySelector('#ffCCost .ff-chip').textContent === shownHalf + ' 🪵', 'der Wiederaufbau zeigt nicht ½ der Kosten: «' + doc.getElementById('ffCCost').textContent + '»');
+      const nr = sent.filter((x) => x.t === 'ffBuild').length;
+      click(w, 'ffCardRebuild');
+      const rb = sent.filter((x) => x.t === 'ffBuild'); must(rb.length === nr + 1, 'erwartet ein ffBuild, bekam ' + (rb.length - nr));
+      must(rb[rb.length - 1].kind === ruin.kind && rb[rb.length - 1].i === ruin.i && rb[rb.length - 1].j === ruin.j && rb[rb.length - 1].rot === ruin.rot, 'ffBuild nicht auf dem Grundriss der Ruine: ' + JSON.stringify(rb[rb.length - 1]));
+      must(!ruin.ruined && stock.holz === holz0 - half, 'der falsche Fernseher hat nicht für ½ wiederaufgebaut');
+      must(!doc.getElementById('ffPanel').classList.contains('card'), 'die Karte bleibt nach dem Wiederaufbau offen');
+      // a ruin can also be cleared: 🧹 Räumen → ffCancel
+      const ruin2 = buildings.find((b) => b.lord === (me + 1) % NL && b.ruined); must(ruin2, 'keine Feindruine da');
+      tapBuilding(w, ruin2); must(!doc.getElementById('ffPanel').classList.contains('card') && m.callouts.some((c) => c.text.indexOf('Ruine') >= 0), 'eine fremde Ruine öffnet eine Karte statt einer Sprechblase');
+      m.callouts.length = 0;
+      // 11: Banner mode → „Alle heim“ → ffHome
+      step = '11 Alle heim sendet ffHome';
+      click(w, 'ffMode-banner'); const nh = sent.filter((x) => x.t === 'ffHome').length; click(w, 'ffHome');
+      must(sent.filter((x) => x.t === 'ffHome').length === nh + 1, 'erwartet ein ffHome');
+      // 12: the phase chip, every alert kind, hunger, the co-player's name, a rally point
+      step = '12 Phasenchip, Alarme, Hunger, „mit Ben“, Sammelpunkt';
+      const chipTxt = () => doc.getElementById('ffPhase').firstChild.textContent;
+      gotoPhase('frieden'); must(chipTxt() === '🌊 Burgfrieden 1:12', 'Phasenchip im Burgfrieden: «' + chipTxt() + '»');
+      simT = T_EBBE - 12; sendPhase(); must(doc.getElementById('ffPhase').className === 'warn', 'der Chip warnt nicht in den letzten 15 s des Burgfriedens (' + doc.getElementById('ffPhase').className + ')');
+      gotoPhase('ebbe'); must(chipTxt() === '🌊 Ebbe 60 %', 'Phasenchip in der Ebbe: «' + chipTxt() + '»');
+      gotoPhase('fehde'); must(chipTxt() === '⚔️ Fehde 7:00', 'Phasenchip in der Fehde: «' + chipTxt() + '»');
+      gotoPhase('letzte'); must(chipTxt() === '⏳ Letzte Minute 0:42' && doc.getElementById('ffPhase').className === 'letzte', 'Phasenchip in der letzten Minute: «' + chipTxt() + '»');
+      ['attack', 'fire', 'hunger', 'plunder', 'crossing', 'pact', 'crown'].forEach((k) => {
+        fakeAlert(k); const a = doc.getElementById('ffAlert');
+        must(a.classList.contains('show') && a.classList.contains(k) && a.querySelector('.tx').textContent.length > 3, 'Alarm-Banner „' + k + '“ fehlt');
+        must(a.querySelector('.tx').textContent.charAt(0).match(/[A-Za-zÄÖÜ]/), 'das Alarm-Banner „' + k + '“ zeigt das Emoji des Textes doppelt: «' + a.querySelector('.tx').textContent + '»');
+      });
+      toPhone({ t: 'ffAlert', kind: 'nonsense', text: 'x' }); must(doc.getElementById('ffAlert').classList.contains('crown'), 'ein unbekannter Alarm hat das Banner verändert');
+      doc.getElementById('ffAlert').click(); must(!doc.getElementById('ffAlert').classList.contains('show'), 'ein Tipp schließt das Alarm-Banner nicht');
+      hunger = true; sendYou(); must(doc.getElementById('ffKorn').classList.contains('hungry'), 'die Hunger-Anzeige fehlt');
+      hunger = false; sendYou();
+      sharedWith = 'Ben'; sendInfo(); must(doc.getElementById('ffMit').textContent === 'mit Ben', 'der Mitspieler „mit Ben“ fehlt im Kopf: «' + doc.getElementById('ffMit').textContent + '»');
+      sharedWith = ''; sendInfo(); must(doc.getElementById('ffMit').textContent === '', 'der Mitspieler bleibt nach dem Auszug stehen');
+      click(w, 'ffMode-banner'); m.view('all', true); F.draw();
+      { const pin3 = m.ownPins()[2], nb3 = sent.filter((x) => x.t === 'ffBanner').length; must(pin3 && !pin3.exists, 'die dritte Fahne sollte noch nicht existieren');
+        dragPin(w, pin3, { x: pin3.x - 6, y: pin3.y - 4 }, true);
+        const b3 = sent.filter((x) => x.t === 'ffBanner'); must(b3.length === nb3 + 1 && b3[b3.length - 1].n === 3, 'ein Sammelpunkt für die nicht vorhandene Fahne III wird nicht gesendet'); }
+      gotoPhase('fehde');
+      // 13: the end screen as guest (no button), then as host → ffAgain → a new match
+      step = '13 Endbildschirm: Gast ohne Knopf, Host mit 🔁 Nochmal → ffAgain';
+      host = false; sendInfo(); endMatch();
+      must(shown(w, 'ffEnd') && doc.getElementById('ffRank').children.length === NL, 'der Endbildschirm zeigt die Rangliste nicht');
+      must(!shown(w, 'ffAgain') && shown(w, 'ffWaitHost'), 'der Gast sieht den „Nochmal“-Knopf');
+      must(doc.querySelectorAll('#ffRank .rk.me').length === 1 && doc.querySelector('#ffRank .rk.win'), 'die Rangliste markiert dich oder den Sieger nicht');
+      host = true; sendInfo();   // the host changed: ffInfo is sent again
+      must(shown(w, 'ffAgain'), 'der neue Host bekommt keinen „Nochmal“-Knopf');
+      const na = sent.filter((x) => x.t === 'ffAgain').length; click(w, 'ffAgain');
+      must(sent.filter((x) => x.t === 'ffAgain').length === na + 1, 'erwartet ein ffAgain');
+      must(!shown(w, 'ffEnd') && phase === 'frieden', 'nach ffAgain läuft keine neue Runde (der Endbildschirm bleibt)');
+      // 14: a spectator
+      step = '14 Zuschauer: Karte mit Häuserliste statt Kriegstisch';
+      spectator = true; sendInfo(); F.draw();
+      must(doc.getElementById('v-furtfehde').classList.contains('spec') && !shown(w, 'ffModes') && shown(w, 'ffPSpec') && doc.getElementById('ffSpecL').children.length === NL, 'die Zuschauer-Ansicht stimmt nicht');
+      spectator = false; sendInfo(); F.draw();
+      must(!doc.getElementById('v-furtfehde').classList.contains('spec') && shown(w, 'ffModes') && w.__ff.map.me === me, 'nach der Rückkehr ins Haus fehlt der Kriegstisch');
+      F.draw();
+
+      // ===== Phase 1b: the phone explains itself =====
+      // 15: the food balance by 🌾 (P4)
+      step = '15 Nahrungsbilanz „+p −e“ neben 🌾';
+      gotoPhase('fehde'); sendBoard(); sendYou();
+      const fd = doc.getElementById('ffFood'), f0 = foodNow();
+      must(fd.classList.contains('show') && fd.classList.contains('pos') && fd.textContent === '+' + f0.prod + ' −' + f0.eat, 'die Nahrungsbilanz steht nicht grün neben 🌾: «' + fd.textContent + '» (' + fd.className + ') statt +' + f0.prod + ' −' + f0.eat);
+      foodMode = 'low'; sendYou(); must(fd.classList.contains('neg') && fd.textContent.indexOf('+2 −') === 0, 'bei zu wenig Ernte wird die Bilanz nicht rot: «' + fd.textContent + '» (' + fd.className + ')');
+      foodMode = '0'; sendYou(); must(!fd.classList.contains('show') && fd.textContent === '', 'ohne ffYou.food muss die Bilanz verschwinden: «' + fd.textContent + '»');
+      foodMode = ''; sendYou(); must(fd.classList.contains('show'), 'die Bilanz kommt mit ffYou.food nicht zurück');
+      // 16: the ❓ guide (P2): pulse until opened, sections, ✕ and the back gesture
+      step = '16 Anleitung: ❓ pulsiert, öffnet, Abschnitte, ✕ und Zurück-Geste';
+      const help = doc.getElementById('ffHelp');
+      gotoPhase('frieden'); F.seen = false; must(help.classList.contains('pulse'), 'das ❓ pulsiert im Burgfrieden nicht, solange die Anleitung nie offen war');
+      gotoPhase('fehde'); must(!help.classList.contains('pulse'), 'das ❓ pulsiert auch außerhalb des Burgfriedens');
+      gotoPhase('frieden'); must(!shown(w, 'ffGuide'), 'die Anleitung steht schon offen');
+      click(w, 'ffHelp');
+      must(shown(w, 'ffGuide') && !help.classList.contains('pulse') && F.seen === true, 'das ❓ öffnet die Anleitung nicht (oder pulsiert danach weiter)');
+      const heads = Array.from(doc.querySelectorAll('.gd-sec h3')).map((h) => h.textContent);
+      ['Ziel & Ruhm', 'Hochwasser → Ebbe → Fehde', 'Leute & Korn', 'Gebäude', 'Truppen', 'Feuer & Brunnen', 'Pakte', 'Bot-Stärken'].forEach((t) => must(heads.some((h) => h.indexOf(t) >= 0), 'die Anleitung hat keinen Abschnitt „' + t + '“ (' + heads.join(' | ') + ')'));
+      must(doc.querySelectorAll('.gd-bld').length === 9 && doc.getElementById('ffGuideSec-gebaeude').textContent.indexOf('1 Hof ernährt etwa') >= 0, 'der Abschnitt Gebäude zeigt nicht alle neun Gebäude mit Wozu · Wohin · Wie viele');
+      must(doc.getElementById('ffGuideSec-truppen').textContent.indexOf('Fahne losschicken') >= 0 && doc.getElementById('ffGuideSec-feuer').textContent.indexOf('Burgbrunnen') >= 0 && doc.getElementById('ffGuideSec-korn').textContent.indexOf('nie unter 4') >= 0, 'in der Anleitung fehlen Fahne losschicken / Burgbrunnen / „nie unter 4“');
+      click(w, 'ffGuideNav-truppen'); const gb = doc.getElementById('ffGuideBody');
+      must(gb.scrollTop > 100 && doc.getElementById('ffGuideNav-truppen').classList.contains('on'), 'der Abschnitts-Chip „Truppen“ scrollt nicht dorthin (scrollTop ' + gb.scrollTop + ')');
+      w.dispatchEvent(new w.PopStateEvent('popstate', { state: null })); must(!shown(w, 'ffGuide'), 'die Zurück-Geste (popstate) schließt die Anleitung nicht');   // before ✕: its history.back() answers asynchronously
+      F.openGuide('feuer'); must(shown(w, 'ffGuide') && gb.scrollTop > 100, 'openGuide(feuer) scrollt nicht zum Abschnitt');
+      click(w, 'ffGuideX'); must(!shown(w, 'ffGuide'), '✕ schließt die Anleitung nicht');
+      // 17: the advisor line (P3)
+      step = '17 Berater: Hunger, Ernte, Hütte, Tippen, ✕';
+      gotoPhase('fehde'); F.st.tipSnooze = {}; F.st.forceTip = 0; F.seen = true;
+      const tipTx = () => doc.getElementById('ffTipTx').textContent, tipOn = () => shown(w, 'ffTip');
+      must(!tipOn() || tipTx().indexOf('Hunger') < 0, 'der Berater meldet Hunger ohne Hunger');
+      F.st.hungerUntil = 0; hunger = true; sendYou();
+      must(tipOn() && tipTx().indexOf('Hunger') >= 0 && tipTx().indexOf('mehr 🌾 Höfe') >= 0 && doc.getElementById('ffTip').classList.contains('hot'), 'Tipp 1 (Hunger, mit Hof) fehlt: «' + tipTx() + '»');
+      click(w, 'ffTipTx'); must(shown(w, 'ffGuide') && doc.getElementById('ffGuideNav-korn').classList.contains('on'), 'ein Tipp auf den Hunger-Tipp öffnet „Leute & Korn“ nicht'); click(w, 'ffGuideX');
+      hunger = false; F.st.hungerUntil = 0; sendYou();
+      must(!tipOn() || tipTx().indexOf('Hunger') < 0, 'der Hunger-Tipp bleibt nach dem Hunger stehen');
+      foodMode = 'low'; F.st.hofSince = performance.now() - 100000; sendYou();
+      must(tipOn() && /Ernte \+2, Verbrauch −\d+ pro Min – bau noch einen Hof/.test(tipTx()), 'Tipp 2 (Ernte +p, Verbrauch −e) fehlt: «' + tipTx() + '»');
+      F.st.hofSince = performance.now() - 20000; renderTipNow(); must(!tipOn() || tipTx().indexOf('Ernte') < 0, 'Tipp 2 erscheint schon vor 90 s mit einem fertigen Hof');
+      foodMode = ''; sendYou();
+      { // a fire that no Brunnen and not the keep reaches
+        const hofb = buildings.find((b) => b.lord === me && b.kind === 'hof' && !b.ruined), well = buildings.find((b) => b.lord === me && b.kind === 'brunnen' && !b.ruined), keep = F.st.sites.find((x) => x.s === site), keep0 = { x: keep.x, y: keep.y };
+        must(hofb && well && keep, 'für Tipp 3 fehlen ein Hof, ein Brunnen oder der Bergfried');
+        const wasRuined = well.ruined; well.ruined = 1; keep.x += 60; hofb.fire = 0.7; sendBoard();
+        must(tipOn() && tipTx().indexOf('Feuer! Ein 🪣 Brunnen') >= 0, 'Tipp 3 (Feuer ohne Brunnen) fehlt: «' + tipTx() + '»');
+        keep.x = keep0.x; keep.y = keep0.y; sendBoard(); const near = Math.hypot(centerOf(hofb).x - keep.x, centerOf(hofb).y - keep.y) <= 12;
+        must(near ? (!tipOn() || tipTx().indexOf('Feuer!') < 0) : true, 'Tipp 3 erscheint, obwohl der Bergfried das Feuer löscht (Burgbrunnen)');
+        well.ruined = wasRuined; hofb.fire = 0; sendBoard();
+      }
+      pop = popCap; sendYou(); must(tipOn() && tipTx().indexOf('bau eine Hütte') >= 0 && tipTx().indexOf('Kein Platz') >= 0, 'Tipp 4 (Kein Platz) fehlt: «' + tipTx() + '»');
+      click(w, 'ffMode-truppen'); click(w, 'ffTipTx'); must(doc.getElementById('ffMode-bauen').classList.contains('on'), 'ein Tipp auf „bau eine Hütte“ führt nicht zum Reiter Bauen');
+      click(w, 'ffTipX'); must(!tipOn() || tipTx().indexOf('Kein Platz') < 0, '✕ blendet den Tipp nicht aus');
+      pop = 6; sendYou();
+      stock.stein = cap.stein; sendYou(); must(tipOn() && tipTx().indexOf('Stein voll – Steinbruch 💤 ruhen lassen oder 📦 Lagerplatz bauen') >= 0, 'Tipp 6 (Stein voll) fehlt: «' + tipTx() + '»');
+      stock.stein = 26; sendYou();
+      F.st.ordered = false; sendYou(); must(tipOn() && tipTx().indexOf('Schick deine Truppen') >= 0, 'Tipp 10 (Truppen schicken) fehlt in der Fehde: «' + tipTx() + '»');
+      click(w, 'ffTipTx'); must(doc.getElementById('ffMode-banner').classList.contains('on') && F.st.arm >= 1, 'ein Tipp auf „Schick deine Truppen“ wählt nicht eine Fahne im Reiter ⚑'); F.armBanner(F.st.arm);
+      F.st.ordered = true; F.st.tipSnooze = {}; click(w, 'ffMode-bauen');
+      F.advice(3); must(tipOn() && tipTx().indexOf('Feuer') >= 0, 'advice=3 erzwingt Tipp 3 nicht: «' + tipTx() + '»'); F.advice(0);
+      // 18: a workplace rests (P5)
+      step = '18 Ruhen lassen: Knopf, Zustand, ffPause, 13. Brettfeld, 💤 auf der Karte';
+      click(w, 'ffMode-bauen'); m = F.map; m.view('mine', true); F.draw(); sendBoard();
+      const sb = buildings.find((b) => b.lord === me && b.kind === 'steinbruch' && b.build >= 1 && !b.ruined); must(sb, 'kein fertiger Steinbruch da');
+      tapBuilding(w, sb); must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Steinbruch', 'die Karte des Steinbruchs öffnet sich nicht');
+      must(shown(w, 'ffCPause') && doc.getElementById('ffCPause').textContent.indexOf('Ruhen lassen') >= 0 && doc.getElementById('ffCWozu').textContent.indexOf('2 Bauern brechen') >= 0 && doc.getElementById('ffCWohin').textContent.indexOf('grauen Fels') >= 0, 'die Karte zeigt „💤 Ruhen lassen“ oder die Texte Wozu/Wohin nicht');
+      const npz = sent.filter((x) => x.t === 'ffPause').length;
+      click(w, 'ffCPause');
+      const pz = sent.filter((x) => x.t === 'ffPause'); must(pz.length === npz + 1 && pz[pz.length - 1].id === sb.id && pz[pz.length - 1].on === true, 'erwartet ffPause {id, on:true}, bekam ' + JSON.stringify(pz[pz.length - 1]));
+      must(sb.paused === 1 && doc.getElementById('ffCState').textContent.indexOf('💤 ruht – die Arbeiter sind frei') >= 0 && doc.getElementById('ffCPause').textContent.indexOf('Weiterarbeiten') >= 0, 'nach dem Tippen steht die Karte nicht auf „💤 ruht“: «' + doc.getElementById('ffCState').textContent + '»');
+      must(F.st.byId[sb.id].truth === true && m.board.buildings.find((x) => x.id === sb.id).paused === true, 'das 13. Brettfeld (paused) kommt nicht an / die Karte zeigt kein 💤');
+      click(w, 'ffCPause');
+      const pz2 = sent.filter((x) => x.t === 'ffPause'); must(pz2.length === npz + 2 && pz2[pz2.length - 1].on === false && sb.paused === 0 && doc.getElementById('ffCState').textContent.indexOf('ruht') < 0 && doc.getElementById('ffCPause').textContent.indexOf('Ruhen lassen') >= 0, '▶ Weiterarbeiten sendet kein ffPause on:false / die Karte springt nicht zurück');
+      must(F.st.byId[sb.id].truth === false, 'das 13. Brettfeld kippt nicht zurück');
+      { const rows = buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.workers]);   // an older screen: 12 fields
+        sb.paused = 1; toPhone({ t: 'ffBoard', b: rows, banners: [] }); must(F.st.byId[sb.id].paused === false, 'eine alte Zeile mit 12 Feldern muss „nicht pausiert“ heißen'); sb.paused = 0; sendBoard(); }
+      const hut = buildings.find((b) => b.lord === me && b.kind === 'kornspeicher' && b.build >= 1 && !b.ruined); must(hut, 'kein fertiger Kornspeicher da');
+      tapBuilding(w, hut); must(doc.getElementById('ffPanel').classList.contains('card') && !shown(w, 'ffCPause') && doc.getElementById('ffCWozu').textContent.indexOf('+60 🌾 Platz') >= 0, 'die Kornspeicherkarte zeigt einen Ruhen-Knopf oder keinen Text');
+      F.send({ t: 'ffPause', id: hut.id, on: true }); must(Array.from(doc.querySelectorAll('.ff-toast')).some((t) => t.textContent.indexOf('können ruhen') >= 0) && hut.paused !== 1, 'ein abgelehntes ffPause bringt keinen Toast');
+      click(w, 'ffCClose');
+      // 19: sending troops (P6): tap a banner, then the map; 📍 Schicken; the first recruit; „Fahnen“
+      step = '19 Truppen schicken: Fahne antippen, Ziel antippen, 📍 Schicken, erster Rekrut';
+      must(doc.getElementById('ffMode-banner').textContent.indexOf('Fahnen') >= 0, 'der Reiter heißt nicht „Fahnen“');
+      setL(0, true); sendLevel(); click(w, 'ffMode-banner'); m = F.map; m.view('all', true); F.draw();
+      const hint = () => doc.getElementById('ffBanHint').textContent;
+      must(hint().indexOf('Tippe eine Fahne an') >= 0 && !doc.getElementById('ffBanHint').classList.contains('armed'), 'die Zeile im Reiter ⚑ sagt nicht „Tippe eine Fahne an“: «' + hint() + '»');
+      click(w, 'ffBan-1'); must(hint().indexOf('Tippe aufs Ziel für Fahne I') >= 0 && doc.getElementById('ffBan-1').classList.contains('on') && F.st.arm === 1 && m.armPin === 1, 'der Chip Fahne I wählt die Fahne nicht: «' + hint() + '»');
+      { const fordb = world.crossings.find((c) => c.id === 'westfurt'), nbn2 = sent.filter((x) => x.t === 'ffBanner').length;
+        tapMap(w, fordb.x + 1.2, fordb.y + 0.8);
+        const bb = sent.filter((x) => x.t === 'ffBanner'); must(bb.length === nbn2 + 1, 'ein Tipp aufs Ziel sendet kein (oder mehrere) ffBanner: ' + (bb.length - nbn2));
+        must(bb[bb.length - 1].n === 1 && Math.abs(bb[bb.length - 1].x - fordb.x) < 0.011 && Math.abs(bb[bb.length - 1].y - fordb.y) < 0.011, 'ffBanner nach dem Tippen nicht auf der Furtmitte: ' + JSON.stringify(bb[bb.length - 1]));
+        must(F.st.arm === 0 && m.armPin === 0 && !doc.getElementById('ffBanHint').classList.contains('armed') && F.st.ordered === true, 'nach dem Senden bleibt die Fahne gewählt');
+        must(Array.from(doc.querySelectorAll('.ff-toast')).some((t) => t.textContent.indexOf('Westfurt') >= 0), 'kein Toast „⚑ I → Westfurt“');
+        // an empty spot (no pin, building, crossing or castle in reach: on a small portrait map the pins' tap reach covers a lot)
+        let nothing = null; for (let ex = -60; ex <= 60 && !nothing; ex += 5) for (let ey = -40; ey <= 40 && !nothing; ey += 5) { const sc = m.toScreen(ex, ey); if (sc.x < 24 || sc.y < 24 || sc.x > m.w - 24 || sc.y > m.h - 24) continue; const pk = m.pick(sc.x, sc.y); if (!pk.banner && !pk.building && !pk.crossing && !pk.site) nothing = { x: ex, y: ey }; }
+        must(nothing, 'kein leerer Fleck auf der Karte für den Tipp ohne Fahne');
+        const n3 = sent.length; tapMap(w, nothing.x, nothing.y); must(sent.length === n3 && F.st.arm === 0, 'ein Tipp auf die Karte ohne gewählte Fahne sendet einen Befehl (oder wählt eine Fahne)');
+        m.callouts.length = 0; }
+      { const pin2 = m.ownPins()[1], n4 = sent.length; tapMap(w, pin2.x, pin2.y);
+        must(sent.length === n4 && F.st.arm === 2 && m.armPin === 2, 'ein Tipp auf die Fahnennadel wählt sie nicht (oder schickt sie los): arm=' + F.st.arm + ', gesendet ' + (sent.length - n4));
+        tapMap(w, pin2.x, pin2.y); must(F.st.arm === 0 && sent.length === n4, 'ein zweiter Tipp auf die Nadel lässt die Fahne nicht los'); }
+      click(w, 'ffMode-truppen'); click(w, 'ffTarget-3'); must(shown(w, 'ffSend') && doc.getElementById('ffSend').textContent.indexOf('Fahne III') >= 0, '„📍 Fahne III schicken“ fehlt unter ⚔️');
+      click(w, 'ffTarget-0'); must(!shown(w, 'ffSend'), 'die Burgwache bekommt einen „Schicken“-Knopf');
+      click(w, 'ffTarget-2'); click(w, 'ffSend');
+      must(doc.getElementById('ffMode-banner').classList.contains('on') && F.st.arm === 2 && hint().indexOf('Tippe aufs Ziel für Fahne II') >= 0, '„📍 Schicken“ wechselt nicht zu ⚑ mit Fahne II: «' + hint() + '»');
+      click(w, 'ffMode-bauen'); must(F.st.arm === 0 && m.armPin === 0, 'beim Moduswechsel bleibt die Fahne gewählt');
+      { const ks = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); ks.build = 1; sendBoard(); F.st.recruited = false; click(w, 'ffMode-truppen'); click(w, 'ffTarget-1'); click(w, 'ffUnit-speer');
+        must(F.st.recruited === true, 'der erste Rekrut löst den Hinweis „unter ⚑ Fahnen losschicken“ nicht aus'); }
+      gotoPhase('fehde'); click(w, 'ffMode-bauen');
+
+      // ===== Phase 1b addendum: what the wells cover, what the stores hold =====
+      // 20: well coverage (W1): the discs, the rings, the summary line, the cards of a Brunnen and of the castle; every number against the oracle (coverTruth)
+      step = '20 Brunnen-Abdeckung: Scheiben, Ringe, Zeile im Bauen-Panel, Karten von Brunnen und Burg';
+      {
+        setL(0, true); sendLevel(); F.st.tipSnooze = {}; F.advice(0); F.st.forceTip = 0;
+        const kp = keepOf(site), ksx = kp.x < 0 ? 1 : -1, ksy = kp.y < 0 ? 1 : -1;   // „towards the middle of the map“: two outlying groups no well reaches, and a Brunnen still being built beside one
+        addOwn('hof', kp.x + ksx * 33, kp.y + ksy * 1); addOwn('huette', kp.x + ksx * 31, kp.y + ksy * 7, 0.5); addOwn('hof', kp.x - ksx * 15, kp.y + ksy * 19); addOwn('brunnen', kp.x - ksx * 14, kp.y + ksy * 17, 0.4);
+        recount(); sendBoard(); sendYou();
+        click(w, 'ffMode-bauen'); m = F.map; m.view('mine', true); syncMap(w);
+        const T0 = coverTruth();
+        must(T0.wood >= 6 && T0.covered >= 1 && T0.wood - T0.covered >= 2 && T0.wells >= 1, 'die Szene hat nicht genug (un)geschützte Holzgebäude: ' + JSON.stringify({ wood: T0.wood, covered: T0.covered, wells: T0.wells }));
+        must(!m.cover && !shown(w, 'ffPCover'), 'die Abdeckung ist an, ohne dass ein Brunnen geplant wird');
+        must(F.st.rules.bucketR === RULES.bucketR && F.st.rules.keepWellR === RULES.keepWellR && F.st.rules.capKeep === RULES.capKeep && F.st.rules.capKorn === RULES.capKorn && F.st.rules.capLager === RULES.capLager && F.st.rules.keepHouses === RULES.keepHouses && F.st.rules.hutHouses === RULES.hutHouses, 'das Handy hat ffInfo.rules nicht übernommen: ' + JSON.stringify(F.st.rules));
+        click(w, 'ffCard-brunnen'); g = m.getGhost(); must(g && g.kind === 'brunnen', 'kein Brunnen-Geist nach dem Kartentipp');
+        must(m.cover && m.cover.r === RULES.bucketR && m.cover.keepR === RULES.keepWellR, 'beim Planen eines Brunnens ist die Abdeckung nicht an (oder hat nicht die Radien aus ffInfo.rules)');
+        const holzWord = (n) => n === 1 ? 'Holzgebäude' : 'Holzgebäuden', plural = (n) => n === 1 ? ' weiteres' : ' weitere';
+        const lineOf = (T) => '🪣 Geschützt: ' + T.covered + ' von ' + T.wood + ' ' + holzWord(T.wood) + ' · dieser Brunnen schützt ' + (T.extra ? T.extra + plural(T.extra) : 'keine weiteren');
+        const lineEl = doc.getElementById('ffPCover'), idsOf = (C, f) => C.marks.filter(f).map((x) => x.id).sort((a, b) => a - b).join();
+        const sorted = (a) => a.slice().sort((x, y) => x - y).join();
+        const checkMap = (T, plan) => {   // the map's discs and rings against the oracle
+          const C = m.coverage(), keepD = C.discs.find((d) => d.kind === 'keep'), wells = C.discs.filter((d) => d.kind === 'well'), own = buildings.filter((b) => b.lord === me && b.kind === 'brunnen' && !b.ruined);
+          must(keepD && keepD.x === T.keep.x && keepD.y === T.keep.y && keepD.r === RULES.keepWellR && keepD.live, 'die Burgbrunnen-Scheibe sitzt nicht auf der Burg (Radius keepWellR)');
+          must(wells.length === own.length && wells.every((d) => { const b = own.find((x) => x.id === d.id); return b && d.x === centerOf(b).x && d.y === centerOf(b).y && d.r === RULES.bucketR && d.live === (b.build >= 1); }), 'Brunnen-Scheiben: Mitte, Radius oder fertig/unfertig falsch');
+          must(wells.some((d) => d.live) && wells.some((d) => !d.live), 'in der Szene fehlt ein fertiger oder ein unfertiger (gestrichelter) Brunnen');
+          const pd = C.discs.find((d) => d.kind === 'plan');
+          if (plan) must(pd && pd.x === -72 + plan.i + 0.5 && pd.y === -45 + plan.j + 0.5 && pd.r === RULES.bucketR, 'die Scheibe des geplanten Brunnens folgt dem Geist nicht'); else must(!pd, 'eine Plan-Scheibe ohne Plan');
+          must(C.wood === T.wood && C.covered === T.covered && C.extra === T.extra && C.marks.every((x) => FW.BUILDINGS[x.kind].mat === 'holz'), 'Zählung der Karte: ' + C.covered + '/' + C.wood + '+' + C.extra + ' statt ' + T.covered + '/' + T.wood + '+' + T.extra);
+          must(idsOf(C, (x) => x.cov) === sorted(T.covIds) && idsOf(C, (x) => x.gain) === sorted(T.gainIds), 'Ringe: blau/orange stimmen nicht mit der Regel überein');
+        };
+        let T = coverTruth({ i: g.i, j: g.j });
+        must(shown(w, 'ffPCover') && lineEl.textContent === lineOf(T), 'Zeile im Bauen-Panel: «' + lineEl.textContent + '» statt «' + lineOf(T) + '»'); checkMap(T, g);
+        // the picture: a pixel inside the keep's disc is bluer with the layer on, and the rings have their colours
+        {
+          F.draw(); const dpr = m.dpr, px = (x, y) => { const p = m.toScreen(x, y), d = m.ctx.getImageData(Math.round(p.x * dpr), Math.round(p.y * dpr), 1, 1).data; return [d[0], d[1], d[2]]; };
+          const free = (x, y) => { const s0 = m.toScreen(x, y); if (s0.x < 6 || s0.y < 6 || s0.x > m.w - 6 || s0.y > m.h - 6) return false; const pk = m.pick(s0.x, s0.y); return !pk.building && !pk.banner && !pk.crossing && !pk.site; };
+          let pt = null; for (let a = 0; a < 24 && !pt; a++) { const x = kp.x + 10.5 * Math.cos(a * Math.PI / 12), y = kp.y + 10.5 * Math.sin(a * Math.PI / 12); if (free(x, y)) pt = { x, y }; }
+          must(pt, 'kein freier Messpunkt in der Burgscheibe');
+          const on = px(pt.x, pt.y); m.setCoverage(null); F.draw(); const off = px(pt.x, pt.y); m.setCoverage({ r: RULES.bucketR, keepR: RULES.keepWellR }); F.draw();
+          must((on[2] - on[0]) - (off[2] - off[0]) >= 15, 'die blaue Scheibe wird nicht gemalt (Pixel ' + off + ' → ' + on + ')');
+          const C = m.coverage(), rr = Math.max(4.6, Math.min(8, m.cam.s * 1.25)), ringPx = (mk) => { const p = m.toScreen(mk.x0, mk.y0), x = p.x + 0.5, y = p.y + 0.5 - rr; if (x < 3 || y < 3 || x > m.w - 3 || y > m.h - 3) return null; const d = m.ctx.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data; return [d[0], d[1], d[2]]; };
+          const orange = C.marks.filter((x) => !x.cov && !x.gain).map(ringPx).filter(Boolean), blue = C.marks.filter((x) => x.cov).map(ringPx).filter(Boolean);
+          must(orange.some((c) => c[0] > 200 && c[1] > 90 && c[1] < 175 && c[2] < 90), 'kein oranger Ring auf der Karte (Pixel ' + JSON.stringify(orange) + ')');
+          must(blue.some((c) => c[2] > c[0] + 60), 'kein blauer Ring auf der Karte (Pixel ' + JSON.stringify(blue) + ')');
+        }
+        // dragging the plan changes the line; the best spot protects the most; a spot beside the keep adds nothing
+        const bs = bestWellSpot(); must(bs, 'kein Platz für einen Brunnen');
+        dragGhost(m.getGhost(), bs.i, bs.j); g = m.getGhost(); must(g.i === bs.i && g.j === bs.j, 'der Geist liegt nicht auf dem besten Platz');
+        T = coverTruth({ i: g.i, j: g.j }); must(T.extra >= 1, 'der beste Platz schützt keine weiteren');
+        must(lineEl.textContent === lineOf(T), 'Zeile nach dem Ziehen: «' + lineEl.textContent + '» statt «' + lineOf(T) + '»'); checkMap(T, g);
+        { const occN = occGrid(); let nearSp = null, nd = 1e9;
+          for (let j = 0; j < FW.GH; j++) for (let i = 0; i < FW.GW; i++) { const d = Math.hypot(i - 71.5 - kp.x, j - 44.5 - kp.y); if (d < nd && FW.canPlace(world, 'brunnen', i, j, 0, { lord: site, L, occ: occN }).ok && coverTruth({ i, j }).extra === 0) { nd = d; nearSp = { i, j }; } }
+          must(nearSp, 'kein Platz ohne Gewinn gefunden'); dragGhost(m.getGhost(), nearSp.i, nearSp.j); g = m.getGhost(); T = coverTruth({ i: g.i, j: g.j });
+          must(T.extra === 0 && lineEl.textContent === lineOf(T) && /dieser Brunnen schützt keine weiteren$/.test(lineEl.textContent), 'ohne Gewinn muss „dieser Brunnen schützt keine weiteren“ stehen: «' + lineEl.textContent + '»'); }
+        dragGhost(m.getGhost(), bs.i, bs.j); click(w, 'ffNo');
+        must(!m.cover && !shown(w, 'ffPCover'), 'nach ✕ bleibt die Abdeckung an');
+        // the card of an own Brunnen (finished: its disc is highlighted; unfinished: it protects nothing yet), of the Hof (no layer) and of the castle
+        const nWithin = (c, R) => buildings.filter((b) => b.lord === me && !b.ruined && FW.BUILDINGS[b.kind].mat === 'holz').filter((b) => Math.hypot(centerOf(b).x - c.x, centerOf(b).y - c.y) <= R).length;
+        const well = buildings.find((b) => b.lord === me && b.kind === 'brunnen' && !b.ruined && b.build >= 1), dashed = buildings.find((b) => b.lord === me && b.kind === 'brunnen' && !b.ruined && b.build < 1), Tn = coverTruth(), allTxt = Tn.covered + ' von ' + Tn.wood + ' ' + holzWord(Tn.wood);
+        const coverTxt = () => doc.getElementById('ffCCover').textContent, rowOn = () => shown(w, 'ffCRowCover');
+        m.view('mine', true); F.draw(); tapBuilding(w, well);
+        must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Brunnen' && m.selId === well.id && m.cover, 'die Karte des Brunnens öffnet sich nicht oder die Abdeckung bleibt aus');
+        { const C = m.coverage(); must(C.discs.filter((d) => d.sel).length === 1 && C.discs.find((d) => d.sel).id === well.id, 'die Scheibe des gewählten Brunnens ist nicht hervorgehoben'); }
+        must(rowOn() && coverTxt() === 'Dieser Brunnen schützt ' + nWithin(centerOf(well), RULES.bucketR) + ' Holzgebäude im Umkreis von ' + RULES.bucketR + '. Zusammen mit Burg und allen Brunnen sind ' + allTxt + ' geschützt.', 'Schutz-Zeile der Brunnen-Karte: «' + coverTxt() + '»');
+        if (dashed) { tapBuilding(w, dashed); must(m.cover && m.selId === dashed.id && rowOn() && coverTxt() === 'Noch im Bau – er löscht erst, wenn er fertig ist. Bisher geschützt: ' + allTxt + '.', 'Schutz-Zeile des unfertigen Brunnens: «' + coverTxt() + '»'); }
+        const hofb = buildings.find((b) => b.lord === me && b.kind === 'hof' && !b.ruined && b.build >= 1); tapBuilding(w, hofb);
+        must(doc.getElementById('ffCNm').textContent === 'Hof' && !m.cover && !rowOn(), 'die Karte eines Hofs schaltet die Abdeckung ein');
+        tapMap(w, kp.x, kp.y);
+        must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Bergfried' && m.selId === 'keep' && m.cover, 'ein Tipp auf die eigene Burg öffnet keine Karte (oder die Abdeckung bleibt aus)');
+        { const C = m.coverage(); must(C.discs.filter((d) => d.sel).length === 1 && C.discs.find((d) => d.sel).kind === 'keep', 'die Burg-Scheibe ist nicht hervorgehoben'); }
+        must(rowOn() && coverTxt() === 'Der Bergfried schützt ' + nWithin(kp, RULES.keepWellR) + ' Holzgebäude im Umkreis von ' + RULES.keepWellR + '. Zusammen mit den Brunnen sind ' + allTxt + ' geschützt.', 'Schutz-Zeile der Burg-Karte: «' + coverTxt() + '»');
+        must(!shown(w, 'ffCHp') && !shown(w, 'ffCardDemolish') && !shown(w, 'ffCPause') && shown(w, 'ffCardLager') && doc.getElementById('ffCWozu').textContent.indexOf('Burgbrunnen') >= 0, 'die Burg-Karte zeigt HP/Abreißen/Ruhen oder nicht „Lager ansehen“ und den Burgbrunnen');
+        click(w, 'ffCardLager'); must(!doc.getElementById('ffPanel').classList.contains('card') && !m.cover && shown(w, 'ffLager'), '„Lager ansehen“ öffnet das Lager nicht (oder lässt die Karte offen)');
+        click(w, 'ffLagerX'); F.ignorePop = 0;
+        tapMap(w, kp.x, kp.y); click(w, 'ffCClose'); must(!m.cover && m.selId == null, 'nach ✕ auf der Karte bleibt die Abdeckung an');
+        // the rule at its edge, on a synthetic board: a centre exactly keepWellR from the keep's centre is protected (≤), a hair further is not; ruins and stone buildings are no part of it
+        if (Number.isInteger(kp.x) && Number.isInteger(kp.y)) {
+          const mk = (id, kind, i, j, ruined) => ({ id, lord: me, kind, i, j, rot: 0, build: 1, hp: 1, fire: 0, ruined: ruined ? 1 : 0 }), R = RULES.keepWellR;
+          m.setBoard({ buildings: [mk(901, 'huette', kp.x + R + 72 - 1, kp.y + 44), mk(902, 'huette', kp.x + R + 72 - 1, kp.y + 45), mk(903, 'huette', kp.x + R + 72 - 1, kp.y + 40, true), mk(904, 'kaserne', kp.x + 72 - 2, kp.y + 45 + 8)], banners: [] });
+          const C = m.coverage(R, R), at = (id) => C.marks.find((x) => x.id === id);
+          must(C.wood === 2 && at(901).cov === true && at(902).cov === false, 'Randfall der Regel: Abstand genau ' + R + ' muss geschützt sein, ein Stück weiter nicht (' + JSON.stringify(C.marks.map((x) => [x.id, x.cov])) + ')');
+          sendBoard();
+        }
+        // ffInfo.rules is what the radii come from: a changed radius reaches the map; without rules the phone uses 12, 12, 30, 60, 60, 8, 4
+        RULES.bucketR = 6; sendInfo(); click(w, 'ffCard-brunnen');
+        { const gg = m.getGhost(), Tr = coverTruth({ i: gg.i, j: gg.j }); must(F.st.rules.bucketR === 6 && m.cover.r === 6 && m.coverage().discs.every((d) => d.kind === 'keep' || d.r === 6) && lineEl.textContent === lineOf(Tr), 'geänderte ffInfo.rules.bucketR kommt nicht an (' + JSON.stringify(m.cover) + ', «' + lineEl.textContent + '»)'); }
+        click(w, 'ffNo'); RULES.bucketR = simRules().bucketR; sendInfo();
+        sendRules = false; sendInfo(); must(JSON.stringify(F.st.rules) === JSON.stringify({ bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4 }), 'ohne ffInfo.rules gelten nicht 12, 12, 30, 60, 60, 8, 4: ' + JSON.stringify(F.st.rules));
+        sendRules = true; sendInfo(); must(F.st.rules.bucketR === simRules().bucketR, 'ffInfo.rules kommt nach dem Wiederholen nicht zurück');
+      }
+
+      // 21: the storage overview (W2): the caps in the top bar, the 📦 Lager sheet (numbers, tips, live updates) and its three ways to close
+      step = '21 Lager-Übersicht: Kappen oben, Blatt mit Zahlen und Tipps, ✕ / Tipp daneben / Zurück';
+      {
+        gotoPhase('fehde'); click(w, 'ffMode-bauen'); F.st.tipSnooze = {}; F.st.hungerUntil = 0; hunger = false; foodMode = ''; pop = 6; stock = { korn: 30, holz: 70, stein: 26 }; sendBoard(); sendYou();
+        const top = doc.getElementById('ffTop'), res3 = [['ffKorn', 'korn'], ['ffHolz', 'holz'], ['ffStein', 'stein']];
+        res3.forEach(([id, r]) => {
+          const b = doc.querySelector('#' + id + ' b'), cp = doc.querySelector('#' + id + ' .cap');
+          must(b.textContent === String(stock[r]) && cp.textContent === '/' + cap[r], 'Kopfleiste ' + r + ': «' + b.textContent + cp.textContent + '» statt «' + stock[r] + '/' + cap[r] + '»');
+          must(parseFloat(w.getComputedStyle(cp).fontSize) < parseFloat(w.getComputedStyle(b).fontSize) && parseFloat(w.getComputedStyle(cp).opacity) < 0.9, 'die Kappe „/' + cap[r] + '“ ist nicht klein und blass');
+          must(!doc.getElementById(id).classList.contains('full'), r + ' steht als voll da, ist es aber nicht');
+        });
+        must(top.scrollWidth <= top.clientWidth + 1 && doc.getElementById('ffHelp').getBoundingClientRect().right <= w.innerWidth + 0.5, 'die Kopfleiste läuft über (' + top.scrollWidth + ' > ' + top.clientWidth + ')');
+        stock.stein = cap.stein; sendYou(); must(doc.getElementById('ffStein').classList.contains('full') && !doc.getElementById('ffKorn').classList.contains('full') && !doc.getElementById('ffHolz').classList.contains('full'), 'ein volles Lager wird oben nicht markiert (nur Stein)');
+        stock.stein = 26; sendYou(); must(!doc.getElementById('ffStein').classList.contains('full'), 'die Markierung „voll“ bleibt stehen');
+        if (w.innerWidth >= 390) {   // three-digit amounts still fit
+          const big = { korn: 210, holz: 210, stein: 210 }; toPhone({ t: 'ffYou', now: r2(simT), stock: big, cap: big, pop: 24, popCap: 24, idle, hunger: false, queue: [], ruhm, crown, pacts: pactsForYou(), banners: youBanners(), food: foodNow() });
+          must(top.scrollWidth <= top.clientWidth + 1 && doc.getElementById('ffHelp').getBoundingClientRect().right <= w.innerWidth + 0.5, 'die Kopfleiste läuft mit dreistelligen Zahlen über (' + top.scrollWidth + ' > ' + top.clientWidth + ')');
+          sendYou();
+        }
+        const finished = (kind) => buildings.filter((b) => b.lord === me && b.kind === kind && !b.ruined && b.build >= 1).length, sites = (kind) => buildings.filter((b) => b.lord === me && b.kind === kind && !b.ruined && b.build < 1).length;
+        const srcOf = (base, kind, per, nm) => 'Bergfried ' + base + (finished(kind) ? ' · ' + finished(kind) + ' ' + nm[finished(kind) === 1 ? 0 : 1] + ' +' + finished(kind) * per : ' · noch kein ' + nm[0]) + (sites(kind) ? ' · ' + sites(kind) + ' im Bau' : '');
+        const lg = (id, sel) => doc.querySelector('#ffLg-' + id + ' ' + sel), lgTips = (id) => Array.from(doc.querySelectorAll('#ffLg-' + id + ' .lg-tip')).map((x) => x.textContent);
+        must(!shown(w, 'ffLager'), 'das Lager-Blatt steht schon offen');
+        click(w, 'ffHolz'); must(shown(w, 'ffLager') && w.history.state && w.history.state.ffLager === 1, 'ein Tipp aufs Holz öffnet das Lager-Blatt nicht (oder die Zurück-Geste hat keinen Eintrag)');
+        must(doc.querySelector('.lg-t').textContent.indexOf('Lager') >= 0, 'das Blatt heißt nicht „📦 Lager“');
+        const checkSheet = () => {
+          const f = foodNow();
+          [['korn', 'kornspeicher', RULES.capKorn, ['Kornspeicher', 'Kornspeicher']], ['holz', 'lager', RULES.capLager, ['Lagerplatz', 'Lagerplätze']], ['stein', 'lager', RULES.capLager, ['Lagerplatz', 'Lagerplätze']]].forEach(([r, kind, per, nm]) => {
+            must(lg(r, '.amt').textContent === String(stock[r]) && lg(r, '.cp').textContent === '/ ' + cap[r], 'Lager ' + r + ': «' + lg(r, '.amt').textContent + ' ' + lg(r, '.cp').textContent + '» statt «' + stock[r] + ' / ' + cap[r] + '»');
+            must(Math.abs(parseFloat(lg(r, 'u').style.width) - 100 * Math.min(1, stock[r] / cap[r])) < 0.6, 'Lager ' + r + ': die Leiste füllt sich nicht nach Menge/Kappe (' + lg(r, 'u').style.width + ')');
+            must(lg(r, '.lg-src').textContent === srcOf(RULES.capKeep, kind, per, nm), 'Lager ' + r + ': Quelle «' + lg(r, '.lg-src').textContent + '» statt «' + srcOf(RULES.capKeep, kind, per, nm) + '»');
+            must(doc.getElementById('ffLg-' + r).classList.contains('full') === (stock[r] >= cap[r]), 'Lager ' + r + ': die Markierung „voll“ stimmt nicht');
+          });
+          must(lg('korn', '.lg-note').textContent === 'Ernte +' + f.prod + ' · Verbrauch −' + f.eat + ' pro Min' && lg('korn', '.lg-note').classList.contains(f.prod >= f.eat ? 'pos' : 'neg'), 'Lager Korn: Bilanz «' + lg('korn', '.lg-note').textContent + '»');
+          must(lg('pop', '.amt').textContent === String(pop) && lg('pop', '.cp').textContent === '/ ' + popCap && lg('pop', '.lg-src').textContent === srcOf(RULES.keepHouses, 'huette', RULES.hutHouses, ['Hütte', 'Hütten']), 'Lager Leute: «' + lg('pop', '.amt').textContent + ' ' + lg('pop', '.cp').textContent + ' · ' + lg('pop', '.lg-src').textContent + '»');
+          must(lg('pop', '.lg-note').textContent === '👷 ' + (idle === 0 ? 'Alle Bauern arbeiten' : idle === 1 ? '1 Bauer frei' : idle + ' Bauern frei'), 'Lager Leute: freie Bauern «' + lg('pop', '.lg-note').textContent + '»');
+        };
+        checkSheet(); must(lgTips('korn').length + lgTips('holz').length + lgTips('stein').length + lgTips('pop').length === 0, 'Tipps im Lager, obwohl nichts voll ist');
+        stock.holz = 71; sendYou(); must(lg('holz', '.amt').textContent === '71', 'das offene Blatt zieht ffYou nicht nach (Holz 71)'); stock.holz = 70; sendYou();
+        const wk = buildings.find((b) => b.lord === me && b.kind === 'kornspeicher' && b.build >= 1 && !b.ruined); wk.build = 0.4; sendBoard(); recount(); sendYou(); checkSheet();   // one under construction: „· 1 im Bau“, and the cap shrinks
+        must(lg('korn', '.lg-src').textContent.indexOf('noch kein Kornspeicher · 1 im Bau') >= 0, 'ein Kornspeicher im Bau zeigt „noch kein Kornspeicher · 1 im Bau“: «' + lg('korn', '.lg-src').textContent + '»'); wk.build = 1; sendBoard(); recount(); sendYou(); checkSheet();
+        hunger = true; F.st.hungerUntil = 0; sendYou(); must(lg('korn', '.lg-note').textContent.indexOf('🍞 Hunger!') === 0, 'Hunger steht nicht im Lager-Blatt'); hunger = false; F.st.hungerUntil = 0; sendYou();
+        // full goods: tips (korn → Kornspeicher, holz → Lagerplatz, stein → Steinbruch ruhen / Lagerplatz), pop → Hütte
+        const sbq = buildings.find((b) => b.lord === me && b.kind === 'steinbruch' && b.build >= 1 && !b.ruined); sbq.paused = 0;
+        stock.korn = cap.korn; stock.holz = cap.holz; stock.stein = cap.stein; pop = popCap; sendBoard(); sendYou(); checkSheet();
+        must(lgTips('korn').join('|') === '🏚️ Kornspeicher bauen' && lgTips('holz').join('|') === '📦 Lagerplatz bauen' && lgTips('stein').join('|') === '⛏️ Steinbruch 💤 ruhen lassen|📦 Lagerplatz bauen' && lgTips('pop').join('|') === '🏠 Hütte bauen', 'Tipps im vollen Lager: ' + JSON.stringify([lgTips('korn'), lgTips('holz'), lgTips('stein'), lgTips('pop')]));
+        sbq.paused = 1; sendBoard(); must(lgTips('stein').join('|') === '📦 Lagerplatz bauen', 'ein ruhender Steinbruch bekommt nicht noch einmal den Ruhen-Tipp'); sbq.paused = 0; sendBoard();
+        lg('korn', '.lg-tip').click();
+        must(!shown(w, 'ffLager') && doc.getElementById('ffMode-bauen').classList.contains('on') && m.getGhost() && m.getGhost().kind === 'kornspeicher', 'der Tipp „Kornspeicher bauen“ schließt das Blatt nicht oder wählt keinen Kornspeicher');
+        click(w, 'ffNo'); click(w, 'ffKorn'); must(shown(w, 'ffLager'), 'ein Tipp aufs Korn öffnet das Lager nicht');
+        Array.from(doc.querySelectorAll('#ffLg-stein .lg-tip'))[0].click();
+        must(!shown(w, 'ffLager') && doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Steinbruch' && !shown(w, 'ffPCover') , 'der Tipp „Steinbruch ruhen lassen“ führt nicht zur Karte des Steinbruchs');
+        click(w, 'ffCClose'); stock = { korn: 30, holz: 70, stein: 26 }; pop = 6; sendYou();
+        // the three ways to close it (the back gesture: a late popstate of an earlier ✕ must not eat this one → the counter is cleared first; the real thing is in the flow test)
+        click(w, 'ffPop'); must(shown(w, 'ffLager'), 'ein Tipp auf 👥 öffnet das Lager nicht'); click(w, 'ffLagerX'); must(!shown(w, 'ffLager'), '✕ schließt das Lager nicht');
+        click(w, 'ffStein'); must(shown(w, 'ffLager'), 'das Lager lässt sich nach ✕ nicht gleich wieder öffnen'); doc.querySelector('.lg-sheet').click(); must(shown(w, 'ffLager'), 'ein Tipp ins Blatt schließt es');
+        doc.getElementById('ffLager').click(); must(!shown(w, 'ffLager'), 'ein Tipp daneben schließt das Lager nicht');
+        click(w, 'ffKorn'); F.ignorePop = 0; w.dispatchEvent(new w.PopStateEvent('popstate', { state: null })); must(!shown(w, 'ffLager'), 'die Zurück-Geste (popstate) schließt das Lager nicht');
+        click(w, 'ffKorn'); click(w, 'ffKorn'); must(!shown(w, 'ffLager'), 'ein zweiter Tipp auf die Leiste schließt das Lager nicht');
+        click(w, 'ffKorn'); click(w, 'ffLagerGuide'); must(!shown(w, 'ffLager') && shown(w, 'ffGuide') && doc.getElementById('ffGuideNav-korn').classList.contains('on') && w.history.state && w.history.state.ffGuide === 1, '„Mehr dazu in der Anleitung“ öffnet die Anleitung bei „Leute & Korn“ nicht (oder das Blatt bleibt)');
+        click(w, 'ffGuideX'); F.ignorePop = 0;
+      }
+
+      // 22: round 2 (R11 / R12): a workplace whose store is full (13th field 2: the card says so, a rest by order wins), the Kaserne texts, recruits nobody can take (queue ⏳, advisor tip 5)
+      step = '22 Lager voll (13. Feld 2), Kaserne-Texte, wartende Rekruten (⏳, Tipp 5)';
+      {
+        gotoPhase('fehde'); hunger = false; foodMode = ''; F.st.tipSnooze = {}; F.st.hungerUntil = 0; F.st.forceTip = 0; stock = { korn: 30, holz: 70, stein: 26 }; pop = 6; idle = 3; queue = []; click(w, 'ffMode-bauen'); m = F.map; m.view('mine', true); F.draw(); sendBoard(); sendYou();
+        const sbF = buildings.find((b) => b.lord === me && b.kind === 'steinbruch' && b.build >= 1 && !b.ruined); must(sbF, 'kein fertiger Steinbruch für Schritt 22');
+        sbF.paused = 0; sbF.full = 1; sbF.workers = 0; recount(); stock.stein = cap.stein; sendYou(); sendBoard();
+        const pbF = F.st.byId[sbF.id];
+        must(pbF.full === true && pbF.paused === false && pbF.truth === false && m.board.buildings.find((x) => x.id === sbF.id).paused === false, 'das 13. Brettfeld 2 muss full heißen (nicht paused, nicht truth) und darf auf der Karte kein 💤 zeigen');
+        tapBuilding(w, sbF); must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Steinbruch', 'die Karte des vollen Steinbruchs öffnet sich nicht');
+        const stF = () => doc.getElementById('ffCState');
+        must(stF().textContent.indexOf('📦 Lager voll – die Arbeiter sind frei') >= 0 && stF().className === 'rest', 'die Karte sagt nicht „📦 Lager voll – die Arbeiter sind frei“: «' + stF().textContent + '» (' + stF().className + ')');
+        must(shown(w, 'ffCPause') && doc.getElementById('ffCPause').textContent.indexOf('Ruhen lassen') >= 0, '„💤 Ruhen lassen“ ist bei einem vollen Betrieb nicht mehr möglich');
+        const npF = sent.filter((x) => x.t === 'ffPause').length;
+        click(w, 'ffCPause'); must(sent.filter((x) => x.t === 'ffPause').length === npF + 1 && sbF.paused === 1 && stF().textContent.indexOf('💤 ruht – die Arbeiter sind frei') >= 0 && doc.getElementById('ffCPause').textContent.indexOf('Weiterarbeiten') >= 0, 'ruhen lassen bei vollem Lager: kein ffPause oder die Karte zeigt nicht „💤 ruht“: «' + stF().textContent + '»');
+        must(F.st.byId[sbF.id].truth === true && F.st.byId[sbF.id].full === false && m.board.buildings.find((x) => x.id === sbF.id).paused === true, 'ein Ruhen auf Befehl (13. Feld 1) gewinnt gegen „voll“ (full false, paused true, 💤 auf der Karte)');
+        click(w, 'ffCPause'); must(sbF.paused === 0 && stF().textContent.indexOf('📦 Lager voll') >= 0 && F.st.byId[sbF.id].full === true, '▶ Weiterarbeiten bei vollem Lager: die Karte sagt nicht wieder „📦 Lager voll“: «' + stF().textContent + '»');
+        { const rows = buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.workers]);   // an older screen: 12 fields, so never full
+          toPhone({ t: 'ffBoard', b: rows, banners: [] }); must(F.st.byId[sbF.id].full === false && F.st.byId[sbF.id].paused === false, 'eine alte Zeile mit 12 Feldern muss „arbeitet“ heißen (nicht full)'); sendBoard(); }
+        click(w, 'ffCClose'); sbF.full = 0; sendBoard(); tapBuilding(w, sbF); must(stF().textContent.indexOf('Lager voll') < 0, 'bei wieder freiem Lager steht die Karte noch auf „Lager voll“: «' + stF().textContent + '»'); click(w, 'ffCClose');
+        // the Kaserne texts (R12) and the guide
+        must(F.INFO.kaserne.wozu === '⚔️ bildet Bauern zu Soldaten aus – jede Kaserne 3 zugleich' && F.INFO.kaserne.viele === '1; eine zweite bildet doppelt so schnell aus', 'die Kaserne-Texte stimmen nicht: ' + JSON.stringify(F.INFO.kaserne));
+        F.openGuide('gebaeude'); must(doc.getElementById('ffGuideSec-gebaeude').textContent.indexOf('jede Kaserne 3 zugleich') >= 0 && doc.getElementById('ffGuideSec-gebaeude').textContent.indexOf('eine zweite bildet doppelt so schnell aus') >= 0, 'die Anleitung (Gebäude) kennt die neuen Kaserne-Texte nicht'); click(w, 'ffGuideX');
+        F.openGuide('truppen'); must(doc.getElementById('ffGuideSec-truppen').textContent.indexOf('mit einer zweiten geht es doppelt so schnell') >= 0 && doc.getElementById('ffGuideSec-truppen').textContent.indexOf('wartet auf einen freien Bauern') >= 0, 'die Anleitung (Truppen) erklärt Kasernen und wartende Rekruten nicht'); click(w, 'ffGuideX');
+        F.openGuide('korn'); must(doc.getElementById('ffGuideSec-korn').textContent.indexOf('Volles Lager') >= 0, 'die Anleitung (Leute & Korn) erklärt das volle Lager nicht'); click(w, 'ffGuideX');
+        // recruits nobody can take: every peasant works (idle 0), three orders wait → ⏳ in the queue and advisor tip 5
+        click(w, 'ffMode-truppen'); F.st.tipSnooze = { 1: 1e15, 2: 1e15, 3: 1e15, 4: 1e15 };
+        const tipT = () => { renderTipNow(); return doc.getElementById('ffTip').classList.contains('show') ? doc.getElementById('ffTipTx').textContent : ''; }, nq = (c) => doc.querySelectorAll('#ffQueue .ff-q' + (c || '')).length, qcap = () => { const c = doc.querySelector('#ffQueue .ff-qwait'); return c ? c.textContent : ''; };
+        idle = 0; queue = [{ unit: 'speer', n: 1, p: 0, dur: 1e9, wait: true }, { unit: 'bogen', n: 1, p: 0, dur: 1e9, wait: true }, { unit: 'speer', n: 2, p: 0.4, dur: 1e9, wait: false }]; sendYou();
+        must(tipT() === '👷 Niemand frei für die Ausbildung – bau Hütten oder lass einen Betrieb 💤 ruhen' && F.st.tip.id === 5, 'Tipp 5 (Rekruten warten, niemand frei) fehlt: «' + tipT() + '»');
+        must(nq() === 3 && nq('.wait') === 2 && qcap() === '⏳ wartet auf einen freien Bauern' && /^⏳/.test(doc.querySelector('#ffQueue .ff-q.wait').textContent), 'die Warteschlange zeigt die zwei wartenden Rekruten nicht mit ⏳ (' + nq() + ' Chips, ' + nq('.wait') + ' wartend, «' + qcap() + '»)');
+        click(w, 'ffTipTx'); must(shown(w, 'ffGuide') && doc.getElementById('ffGuideNav-korn').classList.contains('on'), 'ein Tipp auf den Rekruten-Tipp öffnet „Leute & Korn“ nicht'); click(w, 'ffGuideX');
+        idle = 2; sendYou(); must(tipT().indexOf('Niemand frei für die Ausbildung') < 0 && nq('.wait') === 0 && qcap() === '', 'mit einem freien Bauern bleibt der Rekruten-Tipp / das ⏳ stehen');
+        idle = 0; queue = queue.map((e) => Object.assign({}, e, { wait: false })); sendYou(); must(tipT().indexOf('Niemand frei für die Ausbildung') < 0 && nq('.wait') === 0, 'Rekruten, die einen Bauern haben, lösen den Tipp / das ⏳ aus');
+        queue = [{ unit: 'speer', n: 1, p: 0, dur: 1e9, wait: true }]; sendYou(); toPhone({ t: 'ffYou', now: r2(simT), stock, cap, pop, popCap, idle: 0, hunger: false, queue: [{ unit: 'speer', n: 1, p: 0 }], ruhm, crown, pacts: pactsForYou(), banners: youBanners(), food: foodNow() });   // an older screen: no wait flag
+        must(tipT().indexOf('Niemand frei für die Ausbildung') < 0 && nq('.wait') === 0, 'ohne wait-Flag (älterer Bildschirm) darf nichts geraten werden');
+        idle = 3; queue = []; F.st.tipSnooze = {}; click(w, 'ffMode-bauen'); sendYou();
+      }
+      res.className = 'ok'; res.textContent = 'AUTOTEST OK'; const sub = document.createElement('div'); sub.style.cssText = 'font:600 12px system-ui;color:#9fd8aa'; sub.textContent = 'Schritte 1–22' + extra; res.appendChild(sub);
+      console.log('AUTOTEST OK' + extra); document.title = 'AUTOTEST OK';
+    } catch (e) {
+      res.className = 'fail'; res.textContent = 'AUTOTEST FAIL – Schritt ' + step + ': ' + e.message; console.log('AUTOTEST FAIL – Schritt ' + step + ': ' + e.message); document.title = 'AUTOTEST FAIL';
+    }
+    autoRunning = false;
+  }
+  $('autoBtn').onclick = () => { runAuto = true; build(); };
+  setL(L, true);
+  build();
+}
+</script>
+<script>
+  if (IS_PHONE) { document.getElementById('frameWrap').remove(); if (!STANDALONE) { document.getElementById('panel').remove(); document.getElementById('devToggle').remove(); } }
+</script>
+</body>
+</html>

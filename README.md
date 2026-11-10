@@ -7,9 +7,10 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **22 games** — from social deduction and drawing chains to real-3D racing, co-op
+and **23 games** — from social deduction and drawing chains to real-3D racing, co-op
 bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs, 3D light-cycle duels,
-a werewolf night with an automatic narrator and a co-op airship crew defending a floating island.
+a werewolf night with an automatic narrator, a co-op airship crew defending a floating island
+and castle lords feuding across the fords of a river valley.
 
 ## Screenshots
 
@@ -23,7 +24,7 @@ a werewolf night with an automatic narrator and a co-op airship crew defending a
 | 💥 Artillery Hills — Worms-style tanks | 🐶 Wauwau-WG — dog care in a shared flat |
 
 ...plus a real-3D racer (three.js), the BREACH tactical shooter, the 🎈 Skyfarers sky
-archipelago and 13 more. The GIFs are
+archipelago, the 🏰 Furt & Fehde castle valley and 13 more. The GIFs are
 captured straight from the dev harnesses (`?sim=…&seed=…&freeze=1` + headless Firefox +
 ffmpeg) — no phones were harmed.
 
@@ -78,6 +79,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | ⚡ Neonspur | 1–4 | 3D light-cycle arena: walls of light, jumps onto terraces, Turbo, power-ups, split-screen, bots |
 | 🐺 Werwolfnacht | 5–16 | Werewolf with an automatic moderator: secret roles and night actions on the phones, narrated village on the TV |
 | 🎈 Skyfarers | 1–8 | Co-op 3D airship crew: harvest, build and defend a floating island through storms and dragons until dawn |
+| 🏰 Furt & Fehde | 1–8 | 3D castle-building strategy: farm, build and send banners across fords and bridges at up to three rival castles — flood truce, fire, pacts and a bounty on the crown |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -244,6 +246,42 @@ test-skyfarers-flow.js` plays matches through the real screen and phone pages.
 `/dev-skyfarers-view.html?dayT=0.85&event=nacht` previews the renderer,
 `/dev-skyfarers-art.html` shows every model and `/dev-skyfarers-phone.html?state=docked` the
 phone. See the [Skyfarers design notes](docs/SKYFARERS.md).
+
+## Furt & Fehde
+
+![Furt & Fehde on the TV](docs/screenshots/furtfehde.png)
+
+A castle-building strategy game for up to four lords on one shared map, in real 3D. The TV
+shows a whole river valley as a living diorama: a main river around an island, two streams, a
+stone bridge, footbridges and sandbank fords, four keeps and their villages. Every phone is its
+lord's war table — a parchment map for placing buildings on a free grid, recruiting troops and
+sending banners.
+
+Every match opens with a flood truce: the valley is under water, nobody can reach anybody, and
+everyone builds — farms, woodcutters, quarries, huts, granaries, a barracks. Then the water
+falls: the bridge opens first, the footbridges next, the fords last, and the feud begins.
+Peasants carry every sack and log to the stores. Spearmen beat knights, knights beat archers,
+archers shoot torch-bearers — who set wooden villages ablaze unless a well's bucket chain puts
+the fire out. Ruhm comes from fights, razed buildings, burnt fields, plundered keeps and
+prosperity; the leader wears the crown, and Ruhm won against the crown counts one and a half
+times. Pacts last three minutes, and breaking one costs Ruhm and makes the betrayed house
+furious. The most Ruhm when time runs out wins — nobody is knocked out.
+
+Up to four houses, two phones can share one; bots (Knappe, Ritter, Kriegsherr) fill empty
+houses and take over for anyone who leaves. The phone explains itself: what every building is
+for, where it belongs and how many you need, a guide, an advisor line, the well coverage while
+placing a well, a storage overview and 💤 to let a workplace rest. Settings: match length
+(6–40 min), castles, bot strength, flood truce, graphics (Auto / Voll / Sparsam) and resolution
+(Normal / Nativ for 4K TVs). A picture-in-picture Kampf-Kamera zooms into the biggest battle,
+and Mitschauen works.
+
+`node test-furtfehde-world.js` checks the map generator, `node test-furtfehde-sim.js` the
+rules, `node test-furtfehde-bots.js` plays 60 bot matches and prints a balance table, and `node
+test-furtfehde-flow.js` plays matches through the real screen and phone pages.
+`/dev-furtfehde.html?sim=470000&blit=1` runs the TV with bot lords,
+`/dev-furtfehde-view.html?flood=1` previews the valley and its flood, `/dev-furtfehde-art.html`
+shows every model, `/dev-furtfehde-map.html` the map generator and `/dev-furtfehde-phone.html`
+the phone. See the [Furt & Fehde design notes](docs/FURTFEHDE.md).
 
 ## How it works
 

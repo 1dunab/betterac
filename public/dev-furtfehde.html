@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Furt &amp; Fehde Dev</title>
+<!-- Full TV harness: the real sim, bots, renderer, fx, sound and glue. Without `n` every house is run by a bot (no human at all);
+     with ?n=1..8 that many human stand-ins are seated (round-robin over the houses, like phones) and driven by FurtBots through the
+     phone protocol (ffBuild / ffRecruit / ffBanner / ffHome / ffPact into game.onMessage), so the whole message path is exercised.
+     ?n=0 (default) all houses bots  ?burgen=2..4 (default 4)  ?dauer=6..40 min (default 20)  ?burgfrieden=60|120|180 s (default 120)
+     ?staerke=knappe|ritter|kriegsherr (default ritter)  ?quality=auto|high|low  ?aufloesung=normal|nativ  ?seed=<int> (also seeds Math.random)
+     ?sim=<ms> fast-forward with a fake clock (no drawing), then ~40 settle frames  ?freeze=1 stop after that
+     ?until=kk|fehde|ebbe|lastminute|plunder|end  fast-forward until that happens (the Kampf-Kamera opens, a phase starts, a keep is plundered, the end screen), settle 2 s
+     ?end=1 same as until=end
+     ?blit=1 draw into the visible 2D canvas instead of the full-window wrapper (headless screenshots); ?w=1600&h=1000 its size (default 1600 x 1000)
+     ?bench=N after the fast-forward: average ms/frame of N frames, printed top-left   ?dbg=1 status line (blit)
+     ?phones=0 stand-ins do nothing   ?watch=<id> prints every message that stand-in's phone would get
+     ?pause=1 every finished Steinbruch and Holzfäller rests (💤 sign over it), ?pause=hof the farms too (sim.pause if the sim has it, else the flag is set on the state)   ?cam=x,y,dist[,el] a close-up camera (world x, y; default elevation 50°)
+     ?plunder=<sim s> at that time house 1's keep is knocked down by house 0 (a real plunder: loot, protection dome, herald, Kampf-Kamera; they are rare in bot matches)   ?pact=<sim s> houses 0 and 1 conclude a pact then
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=1600,1000 \
+       --screenshot out.png "http://localhost:3985/dev-furtfehde.html?blit=1&freeze=1&sim=200000&seed=7" -->
+<style>
+  html,body { margin:0; background:#0a0a14; overflow:hidden; }
+  canvas#c { display:block; background:#0d0d1a; margin:0; }
+  #bench { position:fixed; left:8px; top:8px; z-index:9; font:bold 16px monospace; color:#9f9; background:rgba(0,0,0,.7); padding:4px 8px; display:none; }
+  #err { position:fixed; left:8px; right:8px; top:40px; z-index:10; font:bold 16px monospace; color:#fff; background:#a00; padding:8px; white-space:pre-wrap; display:none; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<div id="bench"></div><div id="err"></div>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  // ---- shell stubs ----
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = {
+    1: { color: '#ff2d55', name: 'Anna', named: true }, 2: { color: '#0a84ff', name: 'Ben', named: true },
+    3: { color: '#30d158', name: 'Cleo', named: true }, 4: { color: '#ffd60a', name: 'Dino', named: true },
+    5: { color: '#bf5af2', name: 'Eva', named: true }, 6: { color: '#ff9f0a', name: 'Finn', named: true },
+    7: { color: '#64d2ff', name: 'Gina', named: true }, 8: { color: '#ac8e68', name: 'Hugo', named: true }
+  };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); window.__winners = ids; }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); devFail('endToLobby: ' + m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  const phones = {};            // id → { <message type>: last message }, for inspection from the console
+  const WATCH = (new URLSearchParams(location.search).get('watch') || '').split(',').filter(Boolean).map(Number);
+  const ac = { message(id, d) {
+    (phones[id] = phones[id] || {})[d.t] = d;
+    if (d.t === 'ffToast' || d.t === 'ffAlert' || d.t === 'ffResult' || d.t === 'ffInfo' || d.t === 'ffPhase' && d.phase !== 'frieden' && d.phase !== 'ebbe' && d.phase !== 'fehde') console.log('->', id, JSON.stringify(d).slice(0, 160));
+    else if (WATCH.includes(id)) console.log('->', id, JSON.stringify(d).slice(0, 160));
+  } };
+
+  function devFail(msg) {
+    cv.style.display = '';
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    String(msg).match(/.{1,80}/g).forEach((line, i) => ctx.fillText(line, 20, 50 + i * 26));
+    const e = document.getElementById('err'); e.style.display = 'block'; e.textContent = String(msg).slice(0, 600);
+    console.error(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+  window.addEventListener('unhandledrejection', (e) => devFail('Promise-Fehler: ' + (e.reason && e.reason.stack || e.reason)));
+</script>
+<script src="games/furtfehde/meta.js"></script>
+<script src="games/furtfehde/world.js"></script>
+<script src="games/furtfehde/sim.js"></script>
+<script src="games/furtfehde/bots.js"></script>
+<script src="games/furtfehde/art.js"></script>
+<script src="games/furtfehde/terrain.js"></script>
+<script src="games/furtfehde/fx.js"></script>
+<script src="games/furtfehde/render.js"></script>
+<script src="games/furtfehde/sound.js"></script>
+<script src="games/furtfehde/screen.js"></script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script type="module">
+  try {
+    const q = new URLSearchParams(location.search);
+    const P = (k, d) => q.get(k) == null ? d : q.get(k);
+    const N = clamp(parseInt(P('n', '0'), 10) || 0, 0, 8);
+    const simMs = parseInt(P('sim', '0'), 10) || 0, freeze = P('freeze', '0') === '1', bench = parseInt(P('bench', '0'), 10) || 0;
+    const until = P('until', '') || (P('end', '0') === '1' ? 'end' : '');
+    const blit = P('blit', '0') === '1', dbg = P('dbg', '0') === '1';
+    const realNow = performance.now.bind(performance);
+    if (P('seed', '')) {   // mulberry32 → reproducible cosmetic randomness (fx, birds) next to the seeded sim
+      let a = parseInt(P('seed', '1'), 10) | 0;
+      Math.random = () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    }
+    let fake = 1000;
+    if (simMs > 0 || until) performance.now = () => fake;
+    if (blit) { cv.width = clamp(parseInt(P('w', '1600'), 10) || 1600, 320, 3840); cv.height = clamp(parseInt(P('h', '1000'), 10) || 1000, 200, 2400); }
+
+    const ids = [1, 2, 3, 4, 5, 6, 7, 8].slice(0, N);
+    const cfg = {
+      dauer: parseInt(P('dauer', '20'), 10), burgen: parseInt(P('burgen', '4'), 10), staerke: P('staerke', 'ritter'), burgfrieden: P('burgfrieden', '120'),
+      quality: P('quality', 'auto'), aufloesung: P('aufloesung', 'normal'), seed: parseInt(P('seed', '0'), 10) || 0, allbots: N === 0
+    };
+    const game = window.GAMES.furtfehde();
+    window.__game = game;
+    game.start(ids, cfg);
+
+    // ---- stand-in humans: FurtBots behind a facade that sends every order through the phone protocol ----
+    const brains = [];
+    function standIns() {
+      brains.length = 0;
+      const dbgState = game._debug(); if (!dbgState.sim) return;
+      const done = new Set();       // one brain per house: the two phones of a shared house would only fight over the same keep
+      for (const id of ids) {
+        const house = dbgState.houses.find((h) => h.humans.includes(id)); if (!house || done.has(house.i)) continue;
+        done.add(house.i);
+        const S = dbgState.sim, send = (m) => game.onMessage(id, m) || { ok: false, reason: 'phase' };
+        const facade = { state: S.state, world: S.world, occ: S.occ, dt: S.dt, seed: S.seed, youOf: (l) => S.youOf(l),
+          build: (l, kind, i, j, rot) => send({ t: 'ffBuild', kind, i, j, rot }), cancel: (l, bid) => send({ t: 'ffCancel', id: bid }),
+          recruit: (l, unit, n) => send({ t: 'ffRecruit', unit, n }), banner: (l, n, x, y) => send({ t: 'ffBanner', n, x, y }),
+          home: () => send({ t: 'ffHome' }), pact: (l, to, on) => send({ t: 'ffPact', to, on }) };
+        brains.push(window.FurtBots.create(facade, house.i, { strength: cfg.staerke, seed: S.seed ^ (id * 7919) }));
+      }
+    }
+    // everything that runs before each sim step: the stand-ins' brains, scheduled stunts (?plunder=, ?pact=)
+    const pre = [];
+    if (P('phones', '1') !== '0' && N > 0) { standIns(); pre.push(() => { for (const b of brains) b.step(); }); }
+    const plunderAt = parseFloat(P('plunder', '')), pactAt = parseFloat(P('pact', ''));
+    let plundered = false, pacted = false;
+    const restMode = P('pause', ''), restKinds = restMode === 'hof' ? ['hof', 'steinbruch', 'holzfaeller'] : restMode ? ['steinbruch', 'holzfaeller'] : [];
+    let nextRest = 0;
+    pre.push(() => {
+      const d = game._debug(), S = d.sim, st = S && S.state; if (!st) return;
+      if (restKinds.length && st.t >= nextRest) {   // ?pause=: workplaces that just got finished rest too (checked every 5 sim s)
+        nextRest = st.t + 5;
+        for (const b of st.buildings) if (restKinds.includes(b.kind) && !b.ruined && b.build >= 1 && !b.paused) { if (typeof S.pause === 'function') S.pause(b.lord, b.id, true); else b.paused = true; }
+      }
+      if (plunderAt >= 0 && !plundered && st.t >= plunderAt && st.lords.length > 1) {
+        plundered = true;
+        const keep = st.buildings.find((b) => b.kind === 'bergfried' && b.lord === 1);
+        if (keep) S.dev.damage(S.dev.lord(1).bld.find((b) => b.id === keep.id), 1e7, 0);
+      }
+      if (pactAt >= 0 && !pacted && st.t >= pactAt && st.lords.length > 2) { pacted = true; S.pact(0, 1, true); S.pact(1, 0, true); }
+    });
+    game._hook('pre', () => { for (const f of pre) f(); });
+
+    const status = () => {
+      const d = game._debug(), st = d.sim && d.sim.state; if (!st) return '';
+      return 't=' + st.t.toFixed(0) + 's ' + st.phase + ' L=' + st.level.toFixed(2) + ' fight=' + d.fighters + ' kk=' + (d.kk.on ? d.kk.label : '–') + ' units=' + st.units.length + ' ruhm=' + st.lords.map((l) => l.ruhm).join('/') + ' ' + d.view.W + 'x' + d.view.H;
+    };
+    const step = (dtMs) => {
+      fake += dtMs || 16.7;
+      game.render();
+      if (blit && dbg) { ctx.font = '13px monospace'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; const s = status(); ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(4, cv.height - 22, ctx.measureText(s).width + 12, 18); ctx.fillStyle = '#bff'; ctx.fillText(s, 9, cv.height - 19); }
+    };
+    const reached = () => {
+      const d = game._debug(), st = d.sim && d.sim.state; if (!st) return true;
+      switch (until) {
+        case 'kk': return !!d.cluster || d.kk.on;   // a fight group exists: the next drawn frames open the Kampf-Kamera
+        case 'fehde': return st.phase === 'fehde';
+        case 'ebbe': return st.phase === 'ebbe';
+        case 'lastminute': return st.phase === 'fehde' && st.endsAt - st.t <= 60;
+        case 'plunder': return st.lords.some((l) => l.prot > 0);
+        case 'end': return d.phase === 'end';
+        default: return false;
+      }
+    };
+    if (simMs > 0 || until) {
+      game._fast(true);
+      let capped = false;
+      for (let t = 0; ; t += 500) {
+        if (until ? (reached() || t > 3600000) : t >= simMs) { capped = !!until && !reached(); break; }
+        // a plunder is watched at normal speed (the Kampf-Kamera does not open while fast-forwarding): fast-forward only up to 3 s before it
+        if (until === 'plunder' && plunderAt >= 0 && game._debug().sim.state.t >= plunderAt - 3) break;
+        step(500);
+      }
+      game._fast(false);
+      if (until === 'plunder') for (let i = 0; i < 900 && !reached(); i++) step();
+      for (let i = 0; i < 40; i++) step();               // let weather, camera and the HUD settle on the target state
+      if (P('cam', '')) { const c = P('cam', '').split(',').map(Number); game._debug().view.debugCam({ x: c[0], y: c[1], dist: c[2] || 40, el: c[3] || 50, az: 0 }); for (let i = 0; i < 20; i++) step(); }
+      if (until === 'end') for (let i = 0; i < 120; i++) step();
+      if (until === 'kk' || until === 'plunder') for (let i = 0; i < 60; i++) step();
+      if (capped) console.warn('until=' + until + ' not reached in an hour of game time');
+      if (bench > 0) {
+        const t0 = realNow();
+        for (let i = 0; i < bench; i++) step();
+        const ms = (realNow() - t0) / bench, v = game._debug().view;
+        const el = document.getElementById('bench'); el.style.display = 'block';
+        el.textContent = 'bench ' + bench + ' frames: ' + ms.toFixed(1) + ' ms/frame  calls ' + (v && v.drawCalls) + '  tris ' + (v && Math.round(v.triangles / 1000)) + 'k  ' + (v && v.W) + 'x' + (v && v.H);
+        document.title = 'BENCH ' + ms.toFixed(1);
+        console.log(el.textContent);
+      }
+      console.log('DEV ' + status());
+      if (!freeze) (function loop() { step(); requestAnimationFrame(loop); })();
+    } else {
+      (function loop() { game.render(); requestAnimationFrame(loop); })();
+    }
+    if (!document.title.startsWith('LOBBY')) document.title = (document.title.startsWith('BENCH') ? document.title : 'DEV-RUNNING ') + ' ' + game._debug().phase;
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>

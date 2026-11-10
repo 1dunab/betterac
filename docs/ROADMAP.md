@@ -220,3 +220,7 @@ are data PRs.
 - 🎈 Skyfarers — co-op 3D airship game: harvest, build and defend a floating island through
   storms and dragons over one day, context-button cockpit, co-op bots, day/night and weather,
   fauna and inhabitants, Auto graphics quality ([design notes](SKYFARERS.md)).
+- 🏰 Furt & Fehde — 3D castle-building strategy over a river valley: flood truce, fords and
+  bridges that open as the water falls, a carrying economy, banners, fire and bucket chains,
+  Ruhm with a bounty on the crown, pacts, bots in three strengths, a phone war table with
+  guide and advisor, Kampf-Kamera ([design notes](FURTFEHDE.md)).

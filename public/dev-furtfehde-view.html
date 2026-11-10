@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Furt &amp; Fehde Diorama</title>
+<!-- The diorama: real FurtWorld.make(seed) + FurtView (games/furtfehde/render.js + terrain.js) + a scripted fake actor state in the exact
+     actor-state shape of docs/FURTFEHDE.md. Needs no glue, no phones.
+     ?seed=1 &dayT=0.45 &level=0..1 (fixed) &flood=1 (loop: L = 1 for 6 s, recedes over 25 s, holds 15 s, rises over 4 s) &quality=high|low
+     &cam=ford|bridge|castle|stream|x,y,dist,el,az  &actors=0  &lords=2|3|4  &units=N (peasants per lord, 46)  &bldg=N (buildings per lord, 10)
+     &t=<s> (jump in fake time, then freeze unless live=1)  &w=1280 &h=800  &pause=1  &ui=0 (hide the bar)  &auto=1 (dayT advances)
+     &test=fx,qswitch,dispose (smoke tests: a dummy window.FurtFx driven by the view / quality switches / dispose; result line on the canvas)
+     &labels=1 (names at the crossings and keeps, drawn from view.project(): a check of the projection)
+     Phase 1 (fx + sound): &fx=0 (fx.js loaded but switched off) &nofxjs=1 (fx.js not loaded: the view's fire stand-in shows) &snd=0 (no events to FurtSound)
+     &inset=1 (Kampf-Kamera on the Westfurt fight, high only) &fxdbg=1 (fx pool counters on the canvas) &nodecks=1 (water shader without the flooded-deck whitewater)
+     &test=keeps,sound,trig,brecs (keeps: gates face the river · sound: every FurtSound name creates nodes without errors, needs a running AudioContext · trig: every trigger + odd events, no fx exception).
+     The fake sim now also scripts Phase 1 events through view.event() (and FurtSound.event()), as a loop of CYCLE = 90 s (jump with &t=):
+        continuous  the Westfurt fight: shot every 0.17 s, clash every 0.2 s, hit, a death every 3.3 s (16 soldiers, only while the ford is open)
+        4 order (lord 0 banner 1, Westfurt) 5.3 order (lord 1 banner 2) 6.4 order (lord 3 banner 1) (all three show at 6.8)  | 8..25 a building rises, buildDone at 25 (lord 1)
+        12 ignite (lord 1's farm) -> it burns up, ruined at 36   | 15 crossingOpen Westfurt (sweep)  | 26..30 the house under siege (lord 2) loses its keep hp
+        29 attack  30 plunder of lord 2's keep by lord 0 (prot = 60 s: the dome, until 90, protEnd at 89.9)  33 crown (lord 0)
+        40 fireOut (lord 0's hut) .. 70 it is lit again  | 45 pactOn lords 0+1, 60 pactOff 'broken' by lord 0 (lord 1 gets zorn = 60 s)
+        flood=1 adds crossingOpen for every crossing as the water falls below its `open` value; phase follows the level
+     Screenshot recipes (blit=1, dayT=0.45): battle &cam=ford&t=36 · fire &t=26 · plunder &cam=castle&t=31.3 (dome: &t=50) · orders &t=6.8 · flood &cam=bridge&level=1|0.6
+        · inset &inset=1&t=36 · sweep &cam=ford&t=16.2 · pact &t=47
+     &bench=N (warm up, render N frames as fast as possible, print a BENCH line)  &blit=1 (draw the WebGL canvas into a visible 2D canvas
+     every frame: headless Firefox does not capture WebGL canvases in the DOM)  &dbg=1 (draw-call breakdown)
+     firefox --headless --no-remote --profile /tmp/p --window-size=1600,1000 --screenshot out.png \
+        "http://localhost:3983/dev-furtfehde-view.html?blit=1&ui=0&w=1600&h=1000&dayT=0.45&level=0&t=40" -->
+<style>
+  html,body { margin:0; background:#10150f; color:#dbe8cf; font:13px/1.3 system-ui,sans-serif; }
+  #bar { display:flex; flex-wrap:wrap; gap:5px 9px; align-items:center; padding:5px 8px; background:#1b2618; }
+  #bar button, #bar select, #bar input[type=number] { font:inherit; background:#33472b; color:#eef7e2; border:1px solid #587a48; border-radius:5px; padding:2px 7px; cursor:pointer; }
+  #bar input[type=number] { width:56px; cursor:text; }
+  #bar button.on { background:#6c9a45; }
+  #bar label { display:flex; gap:4px; align-items:center; }
+  #stats { font:12px monospace; color:#9fe3b0; }
+  #err { display:none; position:fixed; left:0; right:0; top:0; z-index:9; background:#6a0d0d; color:#fff; font:12px/1.35 monospace; padding:6px 10px; white-space:pre-wrap; max-height:35vh; overflow:auto; }
+  canvas#c, #host canvas { display:block; max-width:100vw; height:auto; background:#000; }
+  /* interactive mode (no blit): the view fills the whole window, the bar floats on top */
+  body.fill { overflow:hidden; }
+  body.fill #host { position:fixed; inset:0; background:#000; }
+  body.fill #host canvas { width:100vw; height:100vh; max-width:none; }
+  body.fill #bar { position:fixed; top:0; left:0; right:0; z-index:5; background:rgba(27,38,24,.82); transition:opacity .4s; }
+  body.fill.barHidden #bar { opacity:0; pointer-events:none; }
+  #benchBox { display:none; position:fixed; left:50%; top:60px; transform:translateX(-50%); z-index:6; background:rgba(16,21,15,.92);
+              color:#ffe9a0; border:1px solid #587a48; border-radius:10px; padding:12px 20px; font:16px/1.5 system-ui,sans-serif; text-align:center; }
+  #benchBox b { font-size:22px; }
+  #benchBox small { color:#cfdcbf; }
+  #snd { display:none; position:fixed; left:8px; bottom:8px; z-index:7; max-width:min(560px,96vw); background:rgba(16,21,15,.93); border:1px solid #587a48; border-radius:10px; padding:8px 10px; }
+  #snd.open { display:block; }
+  #snd h4 { margin:2px 0 4px; font:600 12px system-ui; color:#9fe3b0; }
+  #snd button { font:inherit; background:#33472b; color:#eef7e2; border:1px solid #587a48; border-radius:5px; padding:2px 7px; margin:2px; cursor:pointer; }
+  #snd button.on { background:#6c9a45; } #snd button.err { background:#7a2a2a; }
+  #snd .row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; } #snd .out { font:11px monospace; color:#ffe9a0; white-space:pre-wrap; max-height:150px; overflow:auto; }
+  #insetLabel { display:none; position:fixed; z-index:4; color:#fff; font:700 14px system-ui; text-shadow:0 0 4px #000,0 0 2px #000; pointer-events:none; text-align:center; }
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="bar"></div>
+<div id="host"><canvas id="c" width="1280" height="800" style="display:none"></canvas></div>
+<div id="benchBox"></div>
+<div id="insetLabel"></div>
+<div id="snd"></div>
+<script src="games/furtfehde/art.js"></script>
+<script src="games/furtfehde/world.js"></script>
+<script src="games/furtfehde/terrain.js"></script>
+<script src="core/sfx.js"></script>
+<script>if (!/[?&]nofxjs=1/.test(location.search)) document.write('<script src="games/furtfehde/fx.js" onerror="void 0"><\/script>');</script>
+<script src="games/furtfehde/sound.js" onerror="void 0"></script>
+<script>if (/[?&]test=[^&]*sound/.test(location.search) && window.FurtSound) window.FurtSound.unlock();   // test=sound: start the context early so it runs by the time the tests do</script>
+<script src="games/furtfehde/render.js"></script>
+<script type="module">import * as THREE from './vendor/three.module.min.js'; window.THREE = THREE;</script>
+<script type="module">
+const errBox = document.getElementById('err');
+const showErr = (m) => { errBox.style.display = 'block'; if (errBox.textContent.length < 3000) errBox.textContent += m + '\n'; };
+window.addEventListener('error', (e) => showErr('JS-Fehler: ' + e.message + (e.error && e.error.stack ? '\n' + e.error.stack : '')));
+window.addEventListener('unhandledrejection', (e) => showErr('Promise: ' + (e.reason && e.reason.stack || e.reason)));
+{ const ow = console.warn.bind(console), oe = console.error.bind(console);
+  console.warn = (...a) => { showErr('warn: ' + a.map((x) => (x && x.stack ? x.stack : String(x))).join(' ').slice(0, 500)); ow(...a); };
+  console.error = (...a) => { showErr('error: ' + a.map((x) => (x && x.stack ? x.stack : String(x))).join(' ').slice(0, 500)); oe(...a); }; }
+try {
+  const FW = window.FurtWorld, THREE_ = window.THREE;
+  const q = new URLSearchParams(location.search), P = (k, d) => (q.has(k) ? q.get(k) : d);
+  const TAU = Math.PI * 2;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), lerp = (a, b, t) => a + (b - a) * t, sstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  const fract = (x) => x - Math.floor(x), hash = (n) => fract(Math.sin(n * 127.1 + 311.7) * 43758.5453);
+  const lerpAngle = (a, b, t) => { let d = (b - a) % TAU; if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU; return a + d * t; };
+  const W = parseInt(P('w', '1280'), 10), H = parseInt(P('h', '800'), 10), DT = 1 / 30;
+  const seed = parseInt(P('seed', '1'), 10) | 0;
+  const world = FW.make(seed);
+  const COLORS = ['#ff2d55', '#0a84ff', '#30d158', '#ffd60a'], NAMES = ['Haus Rubin', 'Haus Saphir', 'Haus Smaragd', 'Haus Gold'];
+  const NL = clamp(parseInt(P('lords', '4'), 10) | 0, 2, 4);
+  const SITES = NL === 2 ? [0, 3] : NL === 3 ? [0, 1, 3] : [0, 1, 2, 3];
+  const lords = SITES.map((s, i) => ({ i, site: s, color: COLORS[i], name: NAMES[i], emblem: i, crown: false, ruhm: 0, people: 0, soldiers: 0, prot: 0, zorn: 0, hunger: 0 }));   // prot / zorn = seconds left
+  const O = { dayT: parseFloat(P('dayT', '0.45')), level: parseFloat(P('level', '0')), flood: P('flood', '0') === '1', actors: P('actors', '1') !== '0', auto: P('auto', '0') === '1' };
+  const bench = parseInt(P('bench', '0'), 10) | 0, blit = P('blit', '0') === '1';
+  let quality = P('quality', 'high') === 'low' ? 'low' : 'high', paused = P('pause', '0') === '1';
+  let fxOn = P('fx', '1') !== '0', sndOn = P('snd', '1') !== '0', insetOn = P('inset', '0') === '1';
+
+  // =====================================================================
+  // fake simulation: steps at 1/30 s; the actor state is built from it every step (exact shape of docs/FURTFEHDE.md)
+  // =====================================================================
+  const GW = FW.GW, GH = FW.GH, BK = Object.keys(FW.BUILDINGS);
+  const NB = clamp(parseInt(P('bldg', '10'), 10) | 0, 4, 14), NP = clamp(parseInt(P('units', '46'), 10) | 0, 0, 120);
+  let simT = 0, tick = 0, nextId = 1, treeV = 0, L = 0;
+  const trees = new Float32Array(world.trees.length).fill(1), stumpAt = new Map();
+  const newId = () => nextId++;
+  const levelAt = (T) => {
+    if (O.flood) { const c = T % 50; return c < 6 ? 1 : c < 31 ? 1 - (c - 6) / 25 : c < 46 ? 0 : (c - 46) / 4; }
+    return O.level;
+  };
+  const cellAt = (x, y) => FW.cellOf(x, y);
+  const walkAt = (x, y, Lv) => { const k = cellAt(x, y); return k < 0 ? 0 : FW.walk(world, k, Lv); };
+  function snapWalk(x, y, Lv) {
+    if (walkAt(x, y, Lv) > 0) return { x, y };
+    for (let r = 1; r <= 6; r++) for (let a = 0; a < 8 * r; a++) { const ang = a / (8 * r) * TAU, px = x + Math.cos(ang) * r * 0.8, py = y + Math.sin(ang) * r * 0.8; if (walkAt(px, py, Lv) > 0) return { x: px, y: py }; }
+    return { x, y };
+  }
+  const pathCache = new Map();
+  function route(a, b, Lv, cache) {
+    if (!cache) return FW.path(world, a, b, Lv);
+    const key = a.x.toFixed(1) + ',' + a.y.toFixed(1) + '>' + b.x.toFixed(1) + ',' + b.y.toFixed(1) + '@' + Math.round(Lv * 60);
+    if (pathCache.has(key)) return pathCache.get(key);
+    const p = FW.path(world, a, b, Lv); pathCache.set(key, p); return p;
+  }
+
+  // ---- buildings: 10 per lord via FurtWorld.suggest on a growing occupancy, in mixed states ----
+  const SEQ = ['hof', 'huette', 'holzfaeller', 'kornspeicher', 'lager', 'kaserne', 'hof', 'steinbruch', 'huette', 'brunnen', 'wachturm', 'hof', 'huette', 'lager'];
+  const buildings = [], byLord = [];
+  for (const l of lords) {
+    const site = world.sites[l.site], occ = new Uint8Array(GW * GH), mine = [];
+    buildings.push({ id: newId(), lord: l.i, kind: 'bergfried', i: site.keep.i, j: site.keep.j, rot: 0, build: 1, hp: 1, fire: 0, burnt: 0, ruined: false, growth: 1 });
+    byLord[l.i] = { site, mine, gate: snapWalk(site.x, site.y + 4.6, 0) };
+    for (const kind of SEQ) {
+      if (mine.length >= NB) break;
+      const sp = FW.suggest(world, kind, l.site, { L: 0, occ });
+      if (!sp) continue;
+      const fp = FW.footprintOf(kind, sp.rot), code = 1 + BK.indexOf(kind);
+      for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(sp.j + dj) * GW + sp.i + di] = code;
+      const b = { id: newId(), lord: l.i, kind, i: sp.i, j: sp.j, rot: sp.rot, build: 1, hp: 1, fire: 0, burnt: 0, ruined: false, growth: 1 };
+      const cx = -72 + sp.i + fp[0] / 2, cy = -45 + sp.j + fp[1] / 2, d = (sp.rot ? fp[0] : fp[1]) / 2 + 0.9;   // door: art convention, fronts face +z at rot 0, -x at rot 1
+      b.door = snapWalk(cx - d * sp.rot, cy + d * (1 - sp.rot), 0); b.cx = cx; b.cy = cy;
+      mine.push(b); buildings.push(b);
+    }
+    const hofs = mine.filter((b) => b.kind === 'hof'), rest = mine.filter((b) => b.kind !== 'hof' && b.kind !== 'holzfaeller' && b.kind !== 'steinbruch');
+    hofs.forEach((b, n) => { b.growth = [0.2, 0.6, 1][(n + l.i) % 3]; });
+    if (rest.length > 3) { rest[(1 + l.i) % rest.length].build = 0.3; rest[(3 + l.i) % rest.length].build = 0.8; }   // one at 0.3, one at 0.8
+    const done = (kinds) => mine.find((b) => kinds.includes(b.kind) && b.build >= 1);
+    if (l.i === 0) { const b = done(['huette']); if (b) { b.fire = 0.6; b.hp = 0.7; } }                                               // burning
+    else if (l.i === 1) { const b = done(['kornspeicher', 'lager']); if (b) { b.burnt = 1; b.ruined = true; b.hp = 0.2; } }          // burnt down
+    else if (l.i === 2) { const f = hofs[hofs.length - 1]; if (f) { f.burnt = 1; f.growth = 0.9; } }                                // burnt field
+    else { const b = done(['holzfaeller', 'huette']); if (b) { b.fire = 0.6; b.hp = 0.6; } }
+  }
+  const bState = () => buildings.map((b) => ({ id: b.id, lord: b.lord, kind: b.kind, i: b.i, j: b.j, rot: b.rot, build: b.build, hp: b.hp, fire: b.fire, burnt: b.burnt, ruined: b.ruined, growth: b.growth }));
+
+  // ---- walkers (peasants, woodcutters, torch-bearers): a loop of stops, walking along FurtWorld.path between them ----
+  const walkers = [];
+  const SPEED = { bauer: 1.7, fackel: 3.0, speer: 2.0, bogen: 2.0, ritter: 3.6 };
+  function mkWalker(lord, kind, pos, stops, o) {
+    const w = Object.assign({ id: newId(), lord, kind, x: pos.x, y: pos.y, px: pos.x, py: pos.y, h: hash(nextId) * TAU, ph: 0, anim: 'idle', carry: null, stops, si: 0, mode: 'wait', wait: hash(nextId * 3.1) * 2, path: null, pi: 0, home: pos, retry: 0 }, o || {});
+    w.ph = w.h; walkers.push(w); return w;
+  }
+  const nearest = (list, x, y) => list.reduce((best, b) => (!best || Math.hypot(b.cx - x, b.cy - y) < Math.hypot(best.cx - x, best.cy - y) ? b : best), null);
+  const woodTrees = (lordIdx) => {
+    const L0 = byLord[lordIdx], hut = L0.mine.filter((b) => b.kind === 'holzfaeller'), out = [];
+    world.trees.forEach((t, id) => { if ((t.kind === 'laub' || t.kind === 'nadel') && t.k >= 0 && world.cls[t.k] === FW.CI.T && hut.some((h) => Math.hypot(h.cx - t.x, h.cy - t.y) < 10)) out.push(id); });
+    return out;
+  };
+  for (const l of lords) {
+    const B = byLord[l.i], mine = B.mine, gate = B.gate, doors = mine.map((b) => b.door);
+    const stores = mine.filter((b) => (b.kind === 'kornspeicher' || b.kind === 'lager') && b.build >= 1);
+    const storeDoor = (kinds, x, y) => { const s = nearest(stores.filter((b) => kinds.includes(b.kind)), x, y); return s ? s.door : gate; };
+    let count = 0;
+    for (const b of mine) {
+      if (b.build < 1) { for (let n = 0; n < 2; n++) { const a = n * 3.1 + 0.8, p = snapWalk(b.cx + Math.cos(a) * 2.6, b.cy + Math.sin(a) * 2.2, 0); mkWalker(l.i, 'bauer', p, [{ x: p.x, y: p.y, anim: 'work', dur: 1e9 }]); count++; } continue; }
+      if (b.ruined) continue;
+      if (b.kind === 'hof') {
+        const sd = storeDoor(['kornspeicher'], b.cx, b.cy), fx = snapWalk(b.cx + 1.2, b.cy + 0.6, 0);
+        mkWalker(l.i, 'bauer', fx, [{ x: fx.x, y: fx.y, anim: 'work', dur: 3.5, after: 'korn' }, { x: sd.x, y: sd.y, anim: 'idle', dur: 1.2, after: null }]); count++;
+      } else if (b.kind === 'holzfaeller') {
+        const cand = woodTrees(l.i), sd = storeDoor(['lager'], b.cx, b.cy);
+        for (let n = 0; n < 2 && cand.length; n++) {
+          const w = mkWalker(l.i, 'bauer', b.door, [{ x: b.door.x, y: b.door.y, anim: 'idle', dur: 0.8 }, { tree: true, anim: 'work', dur: 4.5, after: 'holz' }, { x: sd.x, y: sd.y, anim: 'idle', dur: 1.0, after: null }], { cand, hut: b });
+          w.wait = n * 2.5; count++;
+        }
+      } else if (b.kind === 'steinbruch') {
+        const sd = storeDoor(['lager'], b.cx, b.cy);
+        for (let n = 0; n < 2; n++) { const p = snapWalk(b.cx + (n ? 2.4 : -2.4), b.cy + 0.5, 0); mkWalker(l.i, 'bauer', p, [{ x: p.x, y: p.y, anim: 'work', dur: 3.2, after: 'stein' }, { x: sd.x, y: sd.y, anim: 'idle', dur: 1.0, after: null }]); count++; }
+      } else if (b.kind === 'brunnen') {
+        const huts = mine.filter((q) => q.kind === 'huette' && q.build >= 1);
+        for (let n = 0; n < 2 && huts.length; n++) { const h = huts[(n + l.i) % huts.length]; mkWalker(l.i, 'bauer', b.door, [{ x: b.door.x, y: b.door.y, anim: 'idle', dur: 1.0, after: 'eimer' }, { x: h.door.x, y: h.door.y, anim: 'work', dur: 1.8, after: null }]); count++; }
+      }
+    }
+    // everyone else walks between doors and the keep gate
+    for (let n = count, g = 0; n < NP && doors.length; n++, g++) {
+      const a = doors[(n * 5 + l.i) % doors.length], b = n % 3 === 0 ? gate : doors[(n * 3 + 1 + l.i) % doors.length];
+      mkWalker(l.i, 'bauer', a, [{ x: a.x, y: a.y, anim: 'idle', dur: 1 + hash(n + l.i * 50) * 3 }, { x: b.x, y: b.y, anim: 'idle', dur: 1 + hash(n * 2.3) * 2.5, after: g % 4 === 0 ? 'korn' : null }, { x: gate.x, y: gate.y, anim: 'idle', dur: 1.5, after: null }]);
+    }
+  }
+  function nextStop(w) {
+    const st = w.stops[w.si];
+    if (st.tree) {   // pick a standing tree near the hut and stand at its foot, facing the hut
+      const live = w.cand.filter((id) => trees[id] >= 1);
+      if (!live.length) { w.mode = 'wait'; w.wait = 3; return; }
+      const id = live[Math.floor(hash(w.id * 9.7 + tick * 0.01) * live.length)], t = world.trees[id], a = Math.atan2(w.hut.cy - t.y, w.hut.cx - t.x);
+      const p = snapWalk(t.x + Math.cos(a) * 1.0, t.y + Math.sin(a) * 1.0, L); st.x = p.x; st.y = p.y; st.id = id;
+    }
+    const p = route({ x: w.x, y: w.y }, st, L, true);
+    if (!p) { w.mode = 'blocked'; w.retry = 1.2; w.anim = 'idle'; return; }
+    w.path = p; w.pi = 1; w.mode = 'walk';
+  }
+  function stepWalker(w, dt) {
+    w.px = w.x; w.py = w.y; w.ph = w.h;
+    if (w.stay) { w.anim = w.stay; return; }
+    const k = cellAt(w.x, w.y);
+    if (k >= 0 && FW.walk(world, k, L) === 0) {   // swallowed by the flood: back to the starting place
+      w.x = w.home.x; w.y = w.home.y; w.px = w.x; w.py = w.y; w.path = null; w.mode = 'wait'; w.wait = 2; w.anim = 'idle'; w.si = 0; return;
+    }
+    if (w.stops.length === 1) { w.anim = w.stops[0].anim; return; }
+    if (w.mode === 'wait') {
+      const st = w.stops[w.si]; w.anim = st.anim || 'idle'; w.wait -= dt;
+      if (w.wait <= 0) {
+        if (st.tree && st.id != null && trees[st.id] >= 1) { trees[st.id] = 0; stumpAt.set(st.id, simT); treeV++; }
+        if (st.after !== undefined) w.carry = st.after;
+        w.si = (w.si + 1) % w.stops.length; nextStop(w);
+      }
+      return;
+    }
+    if (w.mode === 'blocked') { w.anim = 'idle'; w.retry -= dt; if (w.retry <= 0) nextStop(w); return; }
+    // walking
+    let rem = (SPEED[w.kind] || 1.7) * walkAt(w.x, w.y, L) * dt, moved = false;
+    while (rem > 1e-4 && w.pi < w.path.length) {
+      const tg = w.path[w.pi], dx = tg.x - w.x, dy = tg.y - w.y, d = Math.hypot(dx, dy);
+      const f = Math.min(1, rem / (d || 1)), nx = w.x + dx * f, ny = w.y + dy * f;
+      if (walkAt(nx, ny, L) === 0) { w.mode = 'blocked'; w.retry = 1.0; break; }
+      w.h = lerpAngle(w.h, Math.atan2(dy, dx), Math.min(1, dt * 10)); w.x = nx; w.y = ny; moved = true;
+      if (d <= rem) { rem -= d; w.pi++; } else rem = 0;
+    }
+    w.anim = moved ? 'walk' : 'idle';
+    if (w.mode === 'walk' && w.pi >= w.path.length) { w.mode = 'wait'; w.wait = w.stops[w.si].dur; }
+  }
+
+  // ---- banners: two per lord, 8-14 soldiers each, marching along FurtWorld.path to crossings and an enemy castle and back ----
+  const banners = [], MIXES = [['speer', 'speer', 'bogen', 'speer', 'bogen', 'ritter', 'speer', 'bogen', 'speer', 'bogen', 'speer', 'ritter', 'bogen', 'speer'], ['bogen', 'speer', 'speer', 'bogen', 'ritter', 'speer', 'bogen', 'speer', 'speer', 'bogen', 'speer']];
+  const farEnd = (c, site) => { const e = c.joins.indexOf(site); return c.ends[e < 0 ? 1 : 1 - e]; };
+  const gateOf = (s) => { const st = world.sites[s]; return { x: st.x, y: st.y + 7 }; };
+  for (const l of lords) {
+    const B = byLord[l.i], mineC = world.crossings.filter((c) => c.joins.includes(l.site) && c.joins[0] !== c.joins[1]);
+    const bridgeFirst = mineC.slice().sort((a, b) => b.open - a.open), fordFirst = mineC.slice().sort((a, b) => a.open - b.open);
+    for (let n = 1; n <= 2; n++) {
+      const cs = n === 1 ? fordFirst : bridgeFirst, c = cs[0] || world.crossings[0], other = c.joins[0] === l.site ? c.joins[1] : c.joins[0];
+      const home = snapWalk(B.site.x + (n === 1 ? -4.5 : 4.5), B.site.y + 8.5, 0), mid = { x: c.x, y: c.y }, far = snapWalk(farEnd(c, l.site).x, farEnd(c, l.site).y, 0), enemy = snapWalk(gateOf(other).x, gateOf(other).y, 0);
+      const goals = n === 1 ? [home, mid, far, enemy, far, mid] : [home, mid, far, snapWalk(enemy.x + (n === 2 ? 3 : -3), enemy.y + 1.5, 0), far, mid];
+      const mix = MIXES[n - 1], cnt = n === 1 ? 12 + (l.i % 3) : 9 + (l.i % 3), id = newId();
+      const bn = { id, lord: l.i, n, x: home.x, y: home.y, px: home.x, py: home.y, h: Math.PI / 2, count: cnt, moving: false, goals, gi: 0, mode: 'wait', wait: 3 + l.i * 2.5 + n * 4, path: null, pi: 0, trail: [], soldiers: [], speed: 2.1 };
+      for (let s = 0; s < cnt; s++) bn.soldiers.push({ id: newId(), lord: l.i, kind: mix[s % mix.length], x: home.x - 1.4 - (s % 3) * 0.9, y: home.y + 1 + Math.floor(s / 3) * 1.0, px: 0, py: 0, h: Math.PI / 2, ph: Math.PI / 2, anim: 'idle', carry: null, row: Math.floor(s / 3), lat: (s % 3) - 1, k: s });
+      for (const s of bn.soldiers) { s.px = s.x; s.py = s.y; }
+      banners.push(bn);
+    }
+  }
+  const trailAt = (b, d) => {
+    let acc = 0, px = b.x, py = b.y;
+    for (let i = 0; i < b.trail.length; i++) {
+      const q = b.trail[i], seg = Math.hypot(px - q.x, py - q.y);
+      if (acc + seg >= d) { const f = (d - acc) / (seg || 1); return { x: px + (q.x - px) * f, y: py + (q.y - py) * f, ax: px - q.x, ay: py - q.y }; }
+      acc += seg; px = q.x; py = q.y;
+    }
+    return { x: px, y: py, ax: Math.cos(b.h), ay: Math.sin(b.h) };
+  };
+  function stepBanner(b, dt) {
+    b.px = b.x; b.py = b.y;
+    const k = cellAt(b.x, b.y);
+    if (k >= 0 && FW.walk(world, k, L) === 0) { const g = b.goals[0]; b.x = g.x; b.y = g.y; b.px = b.x; b.py = b.y; b.trail.length = 0; b.mode = 'wait'; b.wait = 3; b.gi = 0; b.path = null; for (const s of b.soldiers) { s.x = s.px = b.x; s.y = s.py = b.y; } }
+    b.moving = false;
+    if (b.mode === 'wait') { b.wait -= dt; if (b.wait <= 0) b.mode = 'plan'; }
+    if (b.mode === 'plan') {   // only march once a route exists at the current level
+      const tgt = b.goals[(b.gi + 1) % b.goals.length], p = FW.path(world, { x: b.x, y: b.y }, tgt, L);
+      if (p) { b.path = p; b.pi = 1; b.mode = 'march'; } else { b.mode = 'wait'; b.wait = 1.5; }
+    }
+    if (b.mode === 'march') {
+      let rem = b.speed * walkAt(b.x, b.y, L) * dt;
+      while (rem > 1e-4 && b.pi < b.path.length) {
+        const tg = b.path[b.pi], dx = tg.x - b.x, dy = tg.y - b.y, d = Math.hypot(dx, dy), f = Math.min(1, rem / (d || 1)), nx = b.x + dx * f, ny = b.y + dy * f;
+        if (walkAt(nx, ny, L) === 0) { b.mode = 'wait'; b.wait = 1.2; break; }
+        b.h = lerpAngle(b.h, Math.atan2(dy, dx), Math.min(1, dt * 8)); b.x = nx; b.y = ny; b.moving = true;
+        if (d <= rem) { rem -= d; b.pi++; } else rem = 0;
+      }
+      const last = b.trail[0];
+      if (!last || Math.hypot(last.x - b.x, last.y - b.y) > 0.35) { b.trail.unshift({ x: b.x, y: b.y }); if (b.trail.length > 90) b.trail.pop(); }
+      if (b.mode === 'march' && b.pi >= b.path.length) { b.gi = (b.gi + 1) % b.goals.length; b.mode = 'wait'; b.wait = b.gi === 0 ? 14 : b.gi === 3 ? 7 : 2.5; }
+    }
+    // soldiers: in a column behind the banner while it marches (on its trail, so bridges and fords are never left), a ring when it stands
+    const n = b.soldiers.length;
+    for (const s of b.soldiers) {
+      s.px = s.x; s.py = s.y; s.ph = s.h;
+      let tx, ty;
+      if (b.moving || b.mode === 'march') {
+        const tr = trailAt(b, 1.5 + s.row * 1.05), al = Math.hypot(tr.ax, tr.ay) || 1, ux = tr.ax / al, uy = tr.ay / al;
+        tx = tr.x; ty = tr.y;
+        const lx = tx - uy * s.lat * 0.95, ly = ty + ux * s.lat * 0.95;
+        if (walkAt(lx, ly, L) > 0.4) { tx = lx; ty = ly; }
+      } else {
+        const a = b.h + Math.PI + (s.k - (n - 1) / 2) * 0.55, r = 1.9 + (s.k % 2) * 0.9;
+        tx = b.x + Math.cos(a) * r; ty = b.y + Math.sin(a) * r;
+        if (walkAt(tx, ty, L) < 0.4) { tx = b.x + Math.cos(a) * 0.9; ty = b.y + Math.sin(a) * 0.9; }
+      }
+      const dx = tx - s.x, dy = ty - s.y, d = Math.hypot(dx, dy), maxStep = (SPEED[s.kind] + 1.2) * dt, f = d > maxStep ? maxStep / d : 1;
+      s.x += dx * f; s.y += dy * f;
+      const moved = Math.hypot(s.x - s.px, s.y - s.py);
+      if (moved > 0.01) { s.h = lerpAngle(s.h, Math.atan2(s.y - s.py, s.x - s.px), Math.min(1, dt * 9)); s.anim = 'walk'; } else { s.h = lerpAngle(s.h, b.h, Math.min(1, dt * 3)); s.anim = 'idle'; }
+    }
+  }
+
+  // ---- the skirmish in the Westfurt: two groups in `fight`, standing in the water (only while the ford is open) ----
+  const wf = world.crossings.find((c) => c.id === 'westfurt'), skLords = [0, Math.min(2, NL - 1)];
+  const skirmish = [];
+  for (let g = 0; g < 2; g++) for (let n = 0; n < 8; n++) {
+    const kind = (g ? ['speer', 'bogen', 'speer', 'ritter', 'bogen', 'speer', 'bogen', 'speer'] : ['speer', 'speer', 'bogen', 'speer', 'bogen', 'bogen', 'ritter', 'speer'])[n];
+    skirmish.push({ id: newId(), lord: skLords[g], kind, g, n, x: wf.x, y: wf.y, px: wf.x, py: wf.y, h: 0, ph: 0, anim: 'fight', carry: null, dead: 0 });
+  }
+  // ... and a smaller one on the dry north bank of the ford (clashes there raise dust instead of splashes)
+  const bf = (() => { for (let f = 0.3; f < 2.2; f += 0.05) { const x = wf.x + (wf.ends[0].x - wf.x) * f, y = wf.y + (wf.ends[0].y - wf.y) * f; if (FW.heightAt(world, x, y) > 0.4) return { x, y }; } return { x: wf.ends[0].x, y: wf.ends[0].y }; })();   // the first dry spot beyond the ford, on the north bank
+  for (let g = 0; g < 2; g++) for (let n = 0; n < 4; n++) skirmish.push({ id: newId(), lord: skLords[g], kind: ['speer', 'bogen', 'speer', 'ritter'][n], g, n, cx: bf.x, cy: bf.y, bank: true, x: bf.x, y: bf.y, px: bf.x, py: bf.y, h: 0, ph: 0, anim: 'fight', carry: null, dead: 0 });
+  function stepSkirmish() {
+    const dx = Math.cos(wf.rot), dy = Math.sin(wf.rot), ux = -dy, uy = dx;
+    for (const s of skirmish) {
+      s.px = s.x; s.py = s.y; s.ph = s.h;
+      const sgn = s.g ? 1 : -1, lat = (s.n - (s.bank ? 1.5 : 3.5)) * 1.0 + (s.n % 2) * 0.2, adv = 1.15 + (s.kind === 'ritter' ? 0.3 : 0) + 0.28 * Math.sin(simT * 1.9 + s.n * 1.7 + s.g * 2.1), cx = s.cx != null ? s.cx : wf.x, cy = s.cy != null ? s.cy : wf.y;
+      s.x = cx + dx * sgn * adv + ux * lat; s.y = cy + dy * sgn * adv + uy * lat;
+      s.h = Math.atan2(-dy * sgn, -dx * sgn) + 0.12 * Math.sin(simT + s.n);
+    }
+  }
+
+  // ---- torch-bearers: run from their keep to an enemy field and back ----
+  const torches = [];
+  for (const l of lords) {
+    if (l.i > 1 && NL > 2) continue;
+    const enemy = byLord.filter((q, i) => i !== l.i).flatMap((q) => q.mine.filter((b) => b.kind === 'hof'));
+    const tgt = nearest(enemy, byLord[l.i].site.x, byLord[l.i].site.y);
+    if (!tgt) continue;
+    for (let n = 0; n < 3; n++) {
+      const g = byLord[l.i].gate, home = snapWalk(g.x + n * 0.9 - 0.9, g.y + 1.6, 0), dst = snapWalk(tgt.door.x + n * 0.8 - 0.8, tgt.door.y + 0.4, 0);
+      const w = mkWalker(l.i, 'fackel', home, [{ x: home.x, y: home.y, anim: 'idle', dur: 9 + n * 1.5 }, { x: dst.x, y: dst.y, anim: 'fight', dur: 7, after: null }], {}); w.wait = n * 1.2; torches.push(w);
+    }
+  }
+
+
+  // =====================================================================
+  // Phase 1: scripted events (view.event + FurtSound.event) and the Phase 1 state fields (phase, prot, zorn, unit hp)
+  // =====================================================================
+  const CYCLE = 90, evq = [], delayed = [];
+  const emit = (ev) => evq.push(ev);
+  const plL = Math.min(2, NL - 1), atkL = 0, pactB = Math.min(1, NL - 1), bL = Math.min(1, NL - 1);       // plundered house, attacker, pact partner, the house with the dynamic buildings
+  const keepB = (l) => buildings.find((b) => b.lord === l && b.kind === 'bergfried');
+  const mineB = (l, f) => byLord[l].mine.find(f);
+  const hut0 = mineB(0, (b) => b.fire > 0 && b.kind === 'huette') || mineB(0, (b) => b.fire > 0);
+  const burnB = mineB(bL, (b) => b.kind === 'hof' && !b.burnt && b.build >= 1) || mineB(bL, (b) => b.kind === 'huette' && b.build >= 1 && !b.ruined);
+  const conB = mineB(bL, (b) => b.build > 0 && b.build < 0.5 && b !== burnB);
+  const hpMax = { bauer: 25, speer: 60, bogen: 40, ritter: 140, fackel: 30 };
+  const farOf = (id, site) => { const c = world.crossings.find((q) => q.id === id) || world.crossings[0]; return farEnd(c, site); };
+  if (P('fxdbg', '0') === '1') console.log(`FXDBG hut0 ${hut0 && hut0.cx.toFixed(0)},${hut0 && hut0.cy.toFixed(0)} burnB ${burnB && burnB.kind} ${burnB && burnB.cx.toFixed(0)},${burnB && burnB.cy.toFixed(0)} conB ${conB && conB.kind} ${conB && conB.cx.toFixed(0)},${conB && conB.cy.toFixed(0)} wf ${wf.x},${wf.y} bank ${bf.x.toFixed(1)},${bf.y.toFixed(1)}`);
+  let prevL = L, manualProt = 0, manualZorn = 0;      // the 💰 / 🗡️ buttons: seconds of sim time until which prot / zorn last
+  function scriptStep() {
+    const ct = (tick * DT) % CYCLE, pt = (((tick - 1) * DT) % CYCLE + CYCLE) % CYCLE, wrap = pt > ct;
+    const at = (x) => (wrap ? (x > pt || x <= ct) : (x > pt && x <= ct));
+    // ---- the Westfurt fight: shots, hits, clashes, deaths ----
+    if (L <= wf.open) {
+      const alive = skirmish.filter((q) => !(q.dead > simT));   // (bank fighters are in the list; shots and deaths use the river fighters only)
+      if (tick % 5 === 0) {
+        const arch = alive.filter((q) => q.kind === 'bogen' && !q.bank);
+        if (arch.length) { const a = arch[Math.floor(hash(tick * 1.3) * arch.length)], foes = alive.filter((q) => q.g !== a.g && !q.bank);
+          if (foes.length) { const f = foes[Math.floor(hash(tick * 2.1 + 1) * foes.length)], flight = 0.4 + 0.3 * hash(tick * 0.7);
+            emit({ t: 'shot', from: [a.x, a.y], to: [f.x, f.y], flight, src: 'bogen' }); delayed.push({ at: simT + flight, ev: { t: 'hit', id: f.id, x: f.x, y: f.y } }); } }
+      }
+      if (tick % 9 === 4) emit({ t: 'clash', x: bf.x + (hash(tick * 0.9) - 0.5) * 1.6, y: bf.y + (hash(tick * 1.7) - 0.5) * 1.6 });
+      if (tick % 6 === 0) { const a = alive.filter((q) => q.g === 0 && !q.bank && q.kind !== 'bogen'), b = alive.filter((q) => q.g === 1 && !q.bank && q.kind !== 'bogen');
+        if (a.length && b.length) { const p = a[Math.floor(hash(tick * 1.9) * a.length)], q = b[Math.floor(hash(tick * 3.3) * b.length)]; emit({ t: 'clash', x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }); } }
+      if (tick % 100 === 50 && alive.length > 8) { const riv = alive.filter((q) => !q.bank), v = riv[Math.floor(hash(tick * 0.37) * riv.length)]; v.dead = simT + 3.5; emit({ t: 'death', id: v.id, lord: v.lord, kind: v.kind, x: v.x, y: v.y, by: v.g ? skLords[0] : skLords[1] }); }
+    }
+    while (delayed.length && delayed[0].at <= simT) emit(delayed.shift().ev);
+    // ---- orders: a dashed arrow from the banner to its target ----
+    const bn = (l, n) => banners.find((b) => b.lord === Math.min(l, NL - 1) && b.n === n);
+    const order = (l, n, t) => { l = Math.min(l, NL - 1); emit({ t: 'order', lord: l, n, x: t.x, y: t.y }); };
+    if (at(4)) order(0, 1, farOf('westfurt', lords[0].site)); if (at(5.3)) order(1, 2, farOf('steinbruecke', lords[Math.min(1, NL - 1)].site)); if (at(6.4)) order(3, 1, farOf('ostfurt', lords[Math.min(3, NL - 1)].site));
+    void bn;
+    // ---- a building rises (lord bL), buildDone at 25 ----
+    if (conB) { conB.build = ct < 8 ? 0.3 : ct < 25 ? 0.3 + 0.7 * (ct - 8) / 17 : 1; if (at(8)) emit({ t: 'build', lord: conB.lord, id: conB.id, kind: conB.kind }); if (at(25)) emit({ t: 'buildDone', id: conB.id }); }
+    // ---- a farm burns up: ignite 12, ruined 36 ----
+    if (burnB) {
+      if (ct < 12) { burnB.fire = 0; burnB.hp = 1; burnB.ruined = false; burnB.burnt = 0; }
+      else if (ct < 36) { burnB.fire = clamp((ct - 12) / 20, 0.05, 1); burnB.hp = 1 - 0.9 * clamp((ct - 12) / 24, 0, 1); }
+      else { burnB.fire = 0; burnB.ruined = true; burnB.burnt = 1; burnB.hp = 0; }
+      if (at(12)) emit({ t: 'ignite', id: burnB.id, by: atkL }); if (at(36)) emit({ t: 'ruined', id: burnB.id, by: atkL });
+    }
+    // ---- lord 0's hut: burning, put out at 40 (bucket line), lit again at 70 ----
+    if (hut0) {
+      hut0.fire = ct < 40 ? 0.6 : ct < 70 ? 0 : 0.5; hut0.hp = ct < 40 ? 0.7 : 0.7;
+      if (at(38)) { const w = mineB(0, (b) => b.kind === 'brunnen'); if (w) emit({ t: 'bucket', brunnen: w.id, id: hut0.id }); }
+      if (at(40)) emit({ t: 'fireOut', id: hut0.id }); if (at(70)) emit({ t: 'ignite', id: hut0.id, by: 3 });
+    }
+    // ---- a crossing opens (demo), the house under siege falls and is plundered, crown, pact and betrayal ----
+    if (at(15)) emit({ t: 'crossingOpen', id: 'westfurt' });
+    const kp = keepB(plL);
+    if (kp) kp.hp = ct < 26 ? 1 : ct < 30 ? 1 - 0.95 * (ct - 26) / 4 : ct < 80 ? 0.3 + 0.2 * (ct - 30) / 50 : 0.5 + 0.5 * clamp((ct - 80) / 10, 0, 1) * 0;
+    if (at(29)) { const g = world.sites[lords[plL].site]; emit({ t: 'attack', lord: plL, x: g.x, y: g.y + (g.y > 0 ? -5 : 5) }); }
+    if (at(30)) emit({ t: 'plunder', lord: plL, by: atkL, loot: { korn: 10, holz: 12, stein: 4 } });
+    lords[plL].prot = Math.max(ct >= 30 ? Math.max(0, 60 - (ct - 30)) : 0, manualProt - simT, 0); if (at(89.9)) emit({ t: 'protEnd', lord: plL });
+    if (at(33)) { lords[atkL].crown = true; emit({ t: 'crown', lord: atkL }); }
+    if (at(45) && pactB !== atkL) emit({ t: 'pactOn', a: atkL, b: pactB, until: 180 });
+    if (at(60) && pactB !== atkL) { emit({ t: 'pactOff', a: atkL, b: pactB, reason: 'broken', by: atkL }); }
+    lords[pactB].zorn = Math.max(pactB !== atkL && ct >= 60 ? Math.max(0, 60 - (ct - 60)) : 0, manualZorn - simT, 0);
+    // ---- the flood: a crossing is opened when the falling water passes its `open` value ----
+    if (O.flood && L < prevL) for (const c of world.crossings) if (prevL > c.open && L <= c.open) emit({ t: 'crossingOpen', id: c.id });
+    prevL = L;
+    // hp of the fighters: they get hurt and recover (for the Phase 1 state field)
+    for (const q of skirmish) q.hp = Math.round(hpMax[q.kind] * (0.45 + 0.55 * (0.5 + 0.5 * Math.sin(simT * 0.5 + q.id))));
+  }
+
+  function advanceSim() {
+    tick++; simT = tick * DT; L = levelAt(simT);
+    if (O.auto) O.dayT = (O.dayT + DT / 90) % 1;
+    for (const w of walkers) stepWalker(w, DT);
+    for (const b of banners) stepBanner(b, DT);
+    stepSkirmish();
+    scriptStep();
+    // stumps regrow after a while (saplings grow back over 40 s); the view only hears about it through trees + treeV
+    if (tick % 15 === 0) for (const [id, t0] of stumpAt) { const f = clamp((simT - t0 - 25) / 40, 0, 1); if (f > 0) { trees[id] = f; treeV++; if (f >= 1) stumpAt.delete(id); } }
+  }
+  const unitOf = (u) => ({ id: u.id, lord: u.lord, kind: u.kind, x: u.x, y: u.y, px: u.px, py: u.py, h: u.h, ph: u.ph, hp: u.hp == null ? hpMax[u.kind] : u.hp, anim: u.anim, carry: u.carry, n: u.n == null ? -1 : u.n });
+  const phaseOf = () => (O.flood ? ((simT % 50) < 6 || (simT % 50) >= 46 ? 'frieden' : (simT % 50) < 31 ? 'ebbe' : 'fehde') : L > 0.95 ? 'frieden' : L > 0.02 ? 'ebbe' : 'fehde');
+  function fakeState() {
+    const st = { t: simT, dayT: O.dayT, level: L, phase: phaseOf(), lords, buildings: [], units: [], banners: [], trees, treeV };
+    if (!O.actors) return st;
+    st.buildings = bState();
+    for (const w of walkers) st.units.push(unitOf(w));
+    for (const b of banners) {
+      st.banners.push({ id: b.id, lord: b.lord, n: b.n, x: b.x, y: b.y, px: b.px, py: b.py, count: b.count, moving: b.moving, tx: b.goals[(b.gi + 1) % b.goals.length].x, ty: b.goals[(b.gi + 1) % b.goals.length].y });
+      for (const s of b.soldiers) { s.n = b.n; st.units.push(unitOf(s)); }
+    }
+    if (L <= wf.open) for (const s of skirmish) if (!(s.dead > simT)) st.units.push(unitOf(s));
+    return st;
+  }
+  let state = fakeState();
+
+  // =================== view ===================
+  const tests = new Set(P('test', '').split(',').filter(Boolean)), fxLog = { made: 0, updates: 0, events: 0, quality: 0, disposed: 0 };
+  if (tests.has('fx') && !window.FurtFx) window.FurtFx = class { constructor(T, o) { fxLog.made++; this.o = o; } update(st, a, o) { fxLog.updates++; this.last = o; } event() { fxLog.events++; } setQuality() { fxLog.quality++; } dispose() { fxLog.disposed++; } };
+  const view = new window.FurtView(THREE_, { width: W, height: H, quality });
+  window.__view = view;
+  const tW0 = performance.now(); view.setWorld(world, lords); const setWorldMs = performance.now() - tW0;
+  if (!fxOn && view.fx && view.fx.setEnabled) view.fx.setEnabled(false);
+  if (P('nodecks', '0') === '1') for (const v of view.land.U.uDeckB.value) v.x = 0;      // no deck rectangles for the water shader = no whitewater over bridges (measuring aid; a quality switch restores them)
+  const cvs = document.getElementById('c'), ctx = cvs.getContext('2d'), host = document.getElementById('host');
+  const placeCanvas = () => {
+    if (blit) { cvs.style.display = 'block'; cvs.width = view.W; cvs.height = view.H; }
+    else { cvs.style.display = 'none'; if (view.canvas.parentNode !== host) host.appendChild(view.canvas); }
+  };
+  placeCanvas();
+  // Interactive mode (no blit): fill the window. Internal size = window × devicePixelRatio, capped by the
+  // quality (low 960×600, high 1920×1200) and stretched by CSS; res=native (or the button) lifts the cap.
+  let resNative = P('res', '') === 'native', looping = false;
+  const benchBox = document.getElementById('benchBox');
+  const fit = () => {
+    if (blit) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    view.setCap(resNative ? 100000 : 0, resNative ? 100000 : 0);
+    view.resize(Math.round(innerWidth * dpr), Math.round(innerHeight * dpr));
+  };
+  if (!blit) { document.body.classList.add('fill'); fit(); }
+  addEventListener('resize', () => { fit(); if (!looping) drawFrame(1, 0, false); });   // a resize clears the canvas
+  function remeasure() { benchBox.style.display = 'block'; benchBox.innerHTML = '<b>⏱️ Messe …</b>'; setTimeout(benchRun, 60); }
+  if (P('cam', '')) {
+    const c = P('cam', '');
+    if (c.includes(',')) { const a = c.split(',').map(Number); view.debugCam({ x: a[0], y: a[1], dist: a[2], el: a[3], az: a[4] }); } else view.debugCam(c);
+  }
+  let vnow = 1000;
+  const gl = view.renderer.getContext();
+  // the scripted events of the fake sim go to the view (-> fx) and to FurtSound, right before the frame they belong to
+  function flushEvents(live) {
+    for (let i = 0; i < evq.length; i++) { const ev = evq[i]; if (!live) continue; view.event(ev, state); if (sndOn && window.FurtSound && window.FurtSound.event) window.FurtSound.event(ev); }
+    evq.length = 0;
+  }
+  const insetRect = () => { const w = Math.round(view.W * 0.3), h = Math.round(w * 0.625); return { x: Math.round((view.W - w) / 2), y: view.H - h - Math.round(view.H * 0.035), w, h }; };
+  const insetLab = document.getElementById('insetLabel');
+  function insetLabel() {      // the HUD's job in the game: a label above the frame, from view.insetRect
+    const r = view.insetRect, txt = '⚔️ Schlacht an der Westfurt';
+    if (!r) { insetLab.style.display = 'none'; return; }
+    if (blit) { ctx.save(); ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.fillStyle = '#fff'; ctx.strokeText(txt, r.x + r.w / 2, r.y - 10); ctx.fillText(txt, r.x + r.w / 2, r.y - 10); ctx.restore(); return; }
+    const k = view.canvas.clientWidth / view.W || 1, st = insetLab.style; st.display = 'block'; insetLab.textContent = txt; st.left = (r.x * k) + 'px'; st.width = (r.w * k) + 'px'; st.top = (r.y * k - 30) + 'px';
+  }
+  let sndAuto = true, sndTick = 0;
+  function autoSound() {      // what the glue does: the mood follows the water, the battle layer follows the number of fighters
+    const FS = window.FurtSound; if (!FS || !sndOn || !sndAuto || !looping || (++sndTick % 20)) return;
+    let nf = 0; for (const u of state.units) if (u.anim === 'fight') nf++;
+    FS.ambience(L > 0.45 ? 'flood' : nf >= 4 ? 'battle' : 'calm'); FS.battle(clamp(nf / 20, 0, 1));
+  }
+  function drawFrame(alpha, dtMs, snap, draw) {
+    const t0 = performance.now();
+    if (insetOn && quality === 'high') view.inset(insetRect(), { x: wf.x, y: wf.y, dist: 22 }); else view.inset(null);
+    flushEvents(true); autoSound();
+    view.render(state, alpha, { now: vnow, dt: dtMs / 1000, snap, draw });
+    if (draw !== false && blit) { ctx.drawImage(view.canvas, 0, 0); if (P('dbg', '0') !== '0') hud(); if (P('labels', '0') === '1') labels(); if (P('fxdbg', '0') === '1') fxHud(); }
+    if (draw !== false) insetLabel();
+    return performance.now() - t0;
+  }
+  function fxHud() {
+    const f = view.fx, st = f && f.stats ? f.stats : null, txt = st ? `fx: soft ${st.soft} add ${st.add} quads ${st.quads} domes ${st.domes} calls ${st.calls}` + (view.insetRect ? `  inset ${view.insetCalls} calls ${(view.insetTris / 1000).toFixed(0)}k ${view.insetMs.toFixed(1)} ms` : '') : 'fx: none';
+    ctx.font = '13px monospace'; ctx.textBaseline = 'top'; ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(4, 100, ctx.measureText(txt).width + 12, 20); ctx.fillStyle = '#bff'; ctx.fillText(txt, 9, 103);
+  }
+  function advance() { advanceSim(); state = fakeState(); }
+  function labels() {
+    ctx.save(); ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center'; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,.8)'; ctx.fillStyle = '#fff';
+    const tag = (txt, x, y, h) => { const p = view.project(x, y, h); if (!p.visible) return; ctx.strokeText(txt, p.x, p.y - 8); ctx.fillText(txt, p.x, p.y - 8); ctx.fillRect(p.x - 2, p.y - 2, 4, 4); };
+    for (const c of world.crossings) tag(c.name, c.x, c.y, 0.6);
+    for (const l of lords) { const s = world.sites[l.site]; tag(l.name, s.x, s.y, 11); }
+    ctx.restore();
+  }
+  function hud() {
+    const art = window.FurtArt, rows = { land: view.land.stats };
+    let bc = 0, bt = 0; for (const [, r] of view.bld) { const s = art.stats(r.obj.group); bc += s.calls; bt += s.tris; } rows.buildings = { calls: bc, tris: bt };
+    let kc = 0, kt = 0; for (const [, r] of view.keeps) { const s = art.stats(r.art.group); kc += s.calls; kt += s.tris; } rows.keeps = { calls: kc, tris: kt };
+    let uc = 0, ut = 0; for (const k in view.uk) { const s = art.stats(view.uk[k].mesh); uc += s.calls; ut += s.tris; } rows.units = { calls: uc, tris: ut };
+    let nc = 0, nt = 0; for (const [, r] of view.banners) { const s = art.stats(r.art.group); nc += s.calls; nt += s.tris; } rows.banners = { calls: nc, tris: nt };
+    const txt = Object.entries(rows).map(([k, v]) => `${k} ${v.calls}c/${(v.tris / 1000).toFixed(1)}k`).join('  ') + `  | total calls ${view.drawCalls} tris ${(view.triangles / 1000).toFixed(0)}k  units ${state.units.length} bld ${state.buildings.length}  setWorld ${setWorldMs.toFixed(0)} ms`;
+    if (blit) { ctx.font = '13px monospace'; ctx.textBaseline = 'top'; ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(4, 28, ctx.measureText(txt).width + 12, 20); ctx.fillStyle = '#fd9'; ctx.fillText(txt, 9, 31); }
+    if (P('dbg', '0') !== '0') { const hot = buildings.filter((b) => b.fire > 0 || b.ruined || b.burnt > 0 || b.kind === 'holzfaeller' || b.kind === 'steinbruch').map((b) => `${b.kind}${b.fire > 0 ? '*fire' : b.ruined ? '*ruin' : b.burnt > 0 ? '*burnt' : ''}@${b.cx.toFixed(0)},${b.cy.toFixed(0)}`).join(' '); if (blit) { ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(4, 76, ctx.measureText(hot).width + 12, 20); ctx.fillStyle = '#fc9'; ctx.fillText(hot, 9, 79); } }
+    if (P('dbg', '0') === '3') { const cnt = {}; for (const [, r] of view.bld) r.obj.group.traverse((o) => { if (o.isMesh) { let v = true, p = o; while (p && p !== r.obj.group.parent) { if (!p.visible) v = false; p = p.parent; } cnt[o.name + (v ? '+' : '-')] = (cnt[o.name + (v ? '+' : '-')] || 0) + 1; } }); const t3 = JSON.stringify(cnt); if (blit) { ctx.fillStyle = '#000'; ctx.fillRect(4, 54, 700, 20); ctx.fillStyle = '#9ff'; ctx.fillText(t3, 9, 57); } }
+    if (P('dbg', '0') === '2') { const parts = []; view.land.group.traverse((o) => { if (o.isMesh && o.visible) { const st = art.stats(o); parts.push((o.name || (o.geometry.type + (o.isInstancedMesh ? '*' + o.count : ''))) + ' ' + (st.tris / 1000).toFixed(1) + 'k'); } }); document.title = parts.join(' | '); console.log(parts.join(' | ')); }
+    console.log(txt); return txt;
+  }
+
+  // =================== UI ===================
+  const bar = document.getElementById('bar');
+  if (P('ui', '1') === '0') bar.style.display = 'none';
+  const mk = (txt, fn, cls) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = fn; if (cls) b.className = cls; bar.appendChild(b); return b; };
+  const lab = (txt, el, extra) => { const l = document.createElement('label'); l.append(txt, el); if (extra) l.append(extra); bar.appendChild(l); return l; };
+  const sd = document.createElement('input'); sd.type = 'number'; sd.value = seed; sd.onchange = () => { const o = Object.fromEntries(q); o.seed = sd.value; location.search = '?' + new URLSearchParams(o); };
+  lab('Seed ', sd);
+  const dsl = document.createElement('input'); dsl.type = 'range'; dsl.min = 0; dsl.max = 1; dsl.step = 0.005; dsl.value = O.dayT; dsl.style.width = '150px'; const dv = document.createElement('span');
+  const showDay = () => { dv.textContent = O.dayT.toFixed(2); dsl.value = O.dayT; }; dsl.oninput = () => { O.dayT = parseFloat(dsl.value); showDay(); }; showDay(); lab('dayT ', dsl, dv);
+  const lsl = document.createElement('input'); lsl.type = 'range'; lsl.min = 0; lsl.max = 1; lsl.step = 0.005; lsl.value = O.level; lsl.style.width = '150px'; const lv = document.createElement('span');
+  const bFl = mk('🌊 Flut ablaufen lassen', () => { O.flood = !O.flood; bFl.classList.toggle('on', O.flood); if (O.flood) { tick = 0; simT = 0; } }, O.flood ? 'on' : '');
+  lsl.oninput = () => { O.flood = false; bFl.classList.remove('on'); O.level = parseFloat(lsl.value); lv.textContent = O.level.toFixed(2); }; lv.textContent = O.level.toFixed(2); lab('Pegel ', lsl, lv);
+  const bQ = mk('Qualität: ' + quality, () => {
+    quality = quality === 'high' ? 'low' : 'high'; view.setQuality(quality); fit(); placeCanvas(); bQ.textContent = 'Qualität: ' + quality;
+    if (bench > 0) remeasure(); else if (!looping) drawFrame(1, 0, false);
+  });
+  const bR = mk('Auflösung: ' + (resNative ? 'nativ' : 'normal'), () => {
+    resNative = !resNative; fit(); bR.textContent = 'Auflösung: ' + (resNative ? 'nativ' : 'normal');
+    if (bench > 0) remeasure(); else if (!looping) drawFrame(1, 0, false);
+  });
+  if (blit) bR.style.display = 'none';
+  mk('⛶ Vollbild', () => { const d = document.documentElement; if (document.fullscreenElement) document.exitFullscreen(); else if (d.requestFullscreen) d.requestFullscreen(); });
+  // in fullscreen the bar fades out after 3 s without mouse movement; H toggles it any time
+  let barT = 0;
+  const pokeBar = () => { document.body.classList.remove('barHidden'); clearTimeout(barT); if (document.fullscreenElement) barT = setTimeout(() => document.body.classList.add('barHidden'), 3000); };
+  addEventListener('mousemove', pokeBar); document.addEventListener('fullscreenchange', pokeBar);
+  addEventListener('keydown', (e) => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('barHidden'); });
+  for (const c of ['ford', 'bridge', 'castle', 'stream']) mk(c, () => view.debugCam(c));
+  mk('Spielkamera', () => view.debugCam(null));
+  const bA = mk('Akteure', () => { O.actors = !O.actors; bA.classList.toggle('on', O.actors); }, O.actors ? 'on' : '');
+  const bP = mk('Pause', () => { paused = !paused; bP.classList.toggle('on', paused); }, paused ? 'on' : '');
+  // ---- Phase 1: Kampf-Kamera, fx on/off, event triggers, the sound panel ----
+  const bIn = mk('🎥 Kampf-Kamera', () => { insetOn = !insetOn; bIn.classList.toggle('on', insetOn); if (!looping) drawFrame(1, 0, false); }, insetOn ? 'on' : '');
+  const bFx = mk('✨ Fx', () => { fxOn = !fxOn; if (view.fx && view.fx.setEnabled) view.fx.setEnabled(fxOn); bFx.classList.toggle('on', fxOn); if (!looping) drawFrame(1, 0, false); }, fxOn ? 'on' : '');
+  if (!view.fx) bFx.style.display = 'none';
+  const keepPt = (l) => world.sites[lords[Math.min(l, NL - 1)].site];
+  const TRIG = {
+    '🏹 Salve': () => { const a = skirmish.filter((q) => q.kind === 'bogen' && !(q.dead > simT)); for (let k = 0; k < 6; k++) { const s0 = a[k % a.length], f = skirmish[(k * 5 + 3) % skirmish.length]; if (!s0) break; emit({ t: 'shot', from: [s0.x, s0.y], to: [f.x, f.y], flight: 0.45 + 0.05 * k, src: 'bogen' }); } },
+    '🔥 Brand': () => { const b = byLord[bL].mine.find((q) => q.kind === 'huette' && q.build >= 1) || byLord[bL].mine[0]; if (b) emit({ t: 'ignite', id: b.id, by: 0 }); },
+    '💥 Einsturz': () => { const b = byLord[bL].mine.find((q) => q.kind !== 'hof' && q.build >= 1 && !q.ruined); if (b) emit({ t: 'ruined', id: b.id, by: 0 }); },
+    '📜 Befehl': () => { const l = Math.min(1, NL - 1); emit({ t: 'order', lord: l, n: 1, x: world.sites[lords[l].site].x - 12, y: 0 }); },
+    '🌉 Furt öffnet': () => emit({ t: 'crossingOpen', id: world.crossings[(tick >> 3) % world.crossings.length].id }),
+    '💰 Plünderung': () => { emit({ t: 'plunder', lord: plL, by: atkL, loot: {} }); manualProt = simT + 60; },
+    '🤝 Pakt': () => emit({ t: 'pactOn', a: 0, b: Math.min(1, NL - 1), until: 180 }),
+    '🗡️ Verrat': () => { emit({ t: 'pactOff', a: 0, b: Math.min(1, NL - 1), reason: 'broken', by: 0 }); manualZorn = simT + 60; },
+    '🚨 Angriff': () => { const g = keepPt(plL); emit({ t: 'attack', lord: plL, x: g.x, y: g.y + (g.y > 0 ? -5 : 5) }); }
+  };
+  for (const k in TRIG) mk(k, () => { TRIG[k](); if (!looping) { drawFrame(1, 0, false); } });
+  const bSnd = mk('🔊 Klang', () => { sndPanel.classList.toggle('open'); bSnd.classList.toggle('on', sndPanel.classList.contains('open')); });
+  const sndPanel = document.getElementById('snd');
+  function buildSndPanel() {
+    const FS = window.FurtSound;
+    if (!FS) { sndPanel.innerHTML = '<div class="out">FurtSound fehlt (games/furtfehde/sound.js)</div>'; return; }
+    sndPanel.innerHTML = '<h4>🔊 Klang (FurtSound): der erste Klick auf die Seite schaltet Audio frei</h4><div class="row" id="sn1"></div><h4>Ambiente</h4><div class="row" id="sn2"></div><h4>Schlacht-Pegel</h4><div class="row" id="sn3"></div><div class="out" id="sn4"></div>';
+    const row = (id) => sndPanel.querySelector('#' + id), out = row('sn4'), btn = (par, txt, fn) => { const b = document.createElement('button'); b.textContent = txt; b.onclick = fn; par.appendChild(b); return b; };
+    FS.names.forEach((n) => btn(row('sn1'), n, () => { FS.unlock(); FS.play(n, { vol: 1 }); }));
+    const amb = ['calm', 'flood', 'battle', null].map((m) => btn(row('sn2'), m || 'aus', () => { sndAuto = false; autoBtn.classList.remove('on'); FS.unlock(); FS.ambience(m); amb.forEach((b, i) => b.classList.toggle('on', ['calm', 'flood', 'battle', null][i] === m)); }));
+    const autoBtn = btn(row('sn2'), 'auto (wie die Glue)', () => { sndAuto = !sndAuto; autoBtn.classList.toggle('on', sndAuto); FS.unlock(); }); autoBtn.classList.add('on');
+    const evBtn = btn(row('sn2'), 'Ereignisse → Ton', () => { sndOn = !sndOn; evBtn.classList.toggle('on', sndOn); }); evBtn.classList.toggle('on', sndOn);
+    btn(row('sn2'), '🔇 stumm', () => { if (window.sfx && sfx.setMuted) sfx.setMuted(!sfx.muted); out.textContent = 'sfx.muted = ' + (window.sfx && sfx.muted); });
+    const sl = document.createElement('input'); sl.type = 'range'; sl.min = 0; sl.max = 1; sl.step = 0.01; sl.value = 0; sl.style.width = '200px'; const sv = document.createElement('span'); sv.textContent = '0.00';
+    sl.oninput = () => { sndAuto = false; FS.unlock(); FS.battle(parseFloat(sl.value)); sv.textContent = parseFloat(sl.value).toFixed(2); }; row('sn3').append(sl, sv);
+    const log = () => { const st = FS.stats; out.textContent = `ctx ${FS.state()} · nodes ${st.nodes} · plays ${st.plays} · queued ${st.queued} · errors ${st.errors.length}${st.errors.length ? '\n' + st.errors.join('\n') : ''}`; };
+    btn(row('sn1'), '▶ alle testen', () => { out.dataset.lock = '1'; out.textContent = testAllSounds(); });
+    setInterval(() => { if (sndPanel.classList.contains('open') && !out.dataset.lock) log(); }, 700);
+  }
+  // plays every name once and checks that it creates audio nodes and throws nothing (you cannot hear it in a headless run). Synchronous: a real
+  // AudioContext validates every parameter at call time, so a bad ramp or a NaN shows up as an error here. Needs a running context
+  // (a click on the page, or Firefox with media.autoplay.default = 0).
+  function testAllSounds() {
+    const FS = window.FurtSound; if (!FS) return 'no FurtSound';
+    FS.unlock();
+    const lines = [`ctx ${FS.state()} supported ${FS.supported}`]; let bad = 0;
+    if (FS.state() !== 'running') lines.push('(context not running: click the page first; the sounds below are only queued)');
+    for (const n of FS.names) {
+      const n0 = FS.stats.nodes, e0 = FS.stats.errors.length; FS.play(n, { vol: 1, force: true });
+      const dn = FS.stats.nodes - n0, de = FS.stats.errors.length - e0; if (dn <= 0 || de > 0) bad++;
+      lines.push(`${n.padEnd(9)} nodes +${dn}${de ? '  ERRORS ' + FS.stats.errors.slice(-de).join(' | ') : ''}`);
+    }
+    for (const m of ['calm', 'flood', 'battle', null]) { const n0 = FS.stats.nodes; FS.ambience(m); FS._tick(); lines.push(`ambience ${String(m).padEnd(7)} nodes +${FS.stats.nodes - n0}`); }
+    { const n0 = FS.stats.nodes; FS.ambience('battle'); FS.battle(1); for (let i = 0; i < 6; i++) FS._tick(); lines.push(`battle(1)  nodes +${FS.stats.nodes - n0}`); FS.battle(0); FS.ambience(null); }
+    const evs = ['shot', 'clash', 'hit', 'order', 'attack', 'build', 'buildDone', 'chop', 'ignite', 'ruined', 'fireOut', 'crossingOpen', 'plunder', 'pactOn', 'crown', 'fehde', 'over'], p0 = FS.stats.plays;
+    evs.forEach((t) => FS.event({ t }, { force: true })); FS.event({ t: 'pactOff', reason: 'broken' }, { force: true });
+    lines.push(`events: ${evs.length + 1} sent, ${FS.stats.plays - p0} sounds played`);
+    lines.push(bad || FS.stats.errors.length ? `FAIL: ${bad} sounds without nodes, ${FS.stats.errors.length} errors ${FS.stats.errors.join(' | ')}` : `SOUND TEST OK (${FS.names.length} sounds, ${FS.stats.nodes} nodes, errors 0)`);
+    return lines.join('\n');
+  }
+  buildSndPanel();
+  const stats = document.createElement('span'); stats.id = 'stats'; bar.appendChild(stats);
+  const showStats = (fps) => { stats.textContent = `${quality} ${view.W}x${view.H} ${fps ? fps.toFixed(0) + ' fps ' : ''}CPU ${view.lastMs.toFixed(1)} ms calls ${view.drawCalls} tris ${(view.triangles / 1000).toFixed(0)}k units ${state.units.length} (setWorld ${setWorldMs.toFixed(0)} ms)`
+    + (view.fx && view.fx.stats && fxOn ? ` · fx ${view.fx.stats.calls} calls, ${view.fx.stats.soft + view.fx.stats.add} particles` : '') + (view.insetRect ? ` · inset ${view.insetCalls} calls ${view.insetMs.toFixed(1)} ms` : ''); };
+
+  // =================== run ===================
+  const target = parseFloat(P('t', '0'));
+  function benchRun() {
+    for (let k = 0; k < 20; k++) { advance(); vnow += 1000 / 30; drawFrame(1, 1000 / 30, false); }
+    const ts = [], cpu = []; let calls = 0, tris = 0, fxc = 0, ic = 0, it = 0, parts = 0;
+    for (let k = 0; k < bench; k++) {
+      advance(); vnow += 1000 / 30;
+      const t0 = performance.now(); drawFrame(1, 1000 / 30, false); gl.finish(); ts.push(performance.now() - t0); cpu.push(view.lastMs); calls = Math.max(calls, view.drawCalls); tris = Math.max(tris, view.triangles);
+      if (view.fx && fxOn) { const st = view.fx.stats; fxc = Math.max(fxc, st.calls); parts = Math.max(parts, st.soft + st.add); }
+      ic = Math.max(ic, view.insetCalls); it = Math.max(it, view.insetTris);
+    }
+    const avg = ts.reduce((a, b) => a + b, 0) / ts.length, mx = Math.max(...ts), cavg = cpu.reduce((a, b) => a + b, 0) / cpu.length;
+    const msg = `BENCH ${quality} ${view.W}x${view.H} n=${bench} avg ${avg.toFixed(1)} ms (cpu ${cavg.toFixed(1)}) max ${mx.toFixed(0)} ms calls ${calls} tris ${tris} fx ${fxOn && view.fx ? 'on' : 'off'} fxcalls ${fxc} particles ${parts} inset ${ic} calls ${it} tris fx-exceptions ${view._fxErr | 0}`;
+    console.log(msg); document.title = msg;
+    if (!blit) {
+      benchBox.style.display = 'block';
+      benchBox.innerHTML = `<b>⏱️ ${quality === 'high' ? 'Voll' : 'Sparsam'}: Ø ${avg.toFixed(1)} ms pro Bild</b> (max ${mx.toFixed(0)} ms, ≈ ${Math.min(999, 1000 / avg).toFixed(0)} fps)<br>`
+        + `${view.W}×${view.H} Pixel · ${calls} Draw-Calls · ${(tris / 1000).toFixed(0)}k Dreiecke<br>`
+        + '<small>unter 16 ms = flüssige 60 fps · unter 33 ms = 30 fps · die Knöpfe Qualität und Auflösung messen neu</small>';
+    }
+    if (blit) { ctx.fillStyle = 'rgba(0,0,0,.75)'; ctx.fillRect(4, 4, 640, 22); ctx.fillStyle = '#ffe9a0'; ctx.font = '14px monospace'; ctx.textBaseline = 'top'; ctx.fillText(msg, 9, 8); if (P('dbg', '0') !== '0') hud(); }
+    else showStats();
+  }
+  if (target > 0 || bench > 0) {
+    // virtual-clock fast-forward: step the sim, keep the level / wet-ground memory going, draw only the last frames
+    const N = Math.round(target * 30);
+    for (let i = 0; i < N; i++) {
+      advance(); vnow += 1000 / 30;
+      if (i < N - 150) { evq.length = 0; view.land.setLevel(L); view.land.update(vnow / 1000, DT, null); }
+      else drawFrame(1, 1000 / 30, false, i >= N - 2);
+    }
+    if (N === 0) drawFrame(1, 33, true);
+    if (bench > 0) benchRun(); else { showStats(); document.title = 'FFVIEW-READY'; if (P('dbg', '0') !== '0') hud(); }
+    if (P('live', '0') === '1' && bench === 0) loop();
+  } else { advance(); drawFrame(1, 33, true); showStats(); document.title = 'FFVIEW-RUNNING'; loop(); }
+  function runTests() {
+    const lines = [], mem = () => { const m = view.renderer.info.memory; return `geo ${m.geometries} tex ${m.textures}`; };
+    if (tests.has('qswitch')) {
+      const m0 = mem(), seq = [];
+      for (let r = 0; r < 3; r++) { for (const q2 of ['low', 'high']) { view.setQuality(q2); quality = q2; placeCanvas(); advance(); vnow += 33; drawFrame(1, 33, false, true); } seq.push(mem()); }
+      lines.push(`qswitch ok: ${m0} -> ${seq.join(' -> ')} calls ${view.drawCalls}`);
+    }
+    if (tests.has('fx')) { view.event({ t: 'test' }, state); lines.push(`fx made ${fxLog.made} updates ${fxLog.updates} events ${fxLog.events} quality ${fxLog.quality} sunDir ${view.fx && view.fx.last && view.fx.last.sunDir ? 'ok' : 'missing'}`); }
+    if (tests.has('trig')) {      // every trigger button once, then odd / incomplete events: the fx must never throw (the view counts exceptions in view._fxErr)
+      const e0 = view._fxErr | 0;
+      for (const k in TRIG) TRIG[k]();
+      const odd = [{ t: 'shot' }, { t: 'shot', from: [1, 2] }, { t: 'clash' }, { t: 'hit', x: NaN, y: 0 }, { t: 'death' }, { t: 'ignite', id: 99999 }, { t: 'ruined', id: 99999 }, { t: 'fireOut' }, { t: 'bucket', brunnen: 1, id: 2 },
+        { t: 'order', lord: 7, n: 9, x: 5, y: 5 }, { t: 'order' }, { t: 'plunder', lord: 9, by: 3 }, { t: 'plunder', lord: 0 }, { t: 'protEnd', lord: 12 }, { t: 'crossingOpen', id: 'nope' }, { t: 'crossingOpen' }, { t: 'chop', tree: -1 }, { t: 'chop', tree: 1e9 },
+        { t: 'pactOn', a: 0 }, { t: 'pactOff', reason: 'broken' }, { t: 'crown', lord: 9 }, { t: 'attack' }, { t: 'buildDone', id: 5 }, { t: 'harvest', id: 5 }, { t: 'sow', id: -3 }, { t: 'unknown' }, {}, null];
+      for (const ev of odd) view.event(ev, state);
+      for (let i = 0; i < 40; i++) { advance(); vnow += 33; drawFrame(1, 33, false, i === 39); }
+      lines.push(`trig: ${Object.keys(TRIG).length} triggers + ${odd.length} odd events, fx exceptions ${(view._fxErr | 0) - e0}, ${view.fx ? JSON.stringify(view.fx.stats) : 'no fx'}`);
+    }
+    if (tests.has('brecs') && view.fx) lines.push('brecs ' + view.fx.brecs.size + ' active ' + [...view.fx.brecs.values()].filter((r) => r.until > view.fx.now).length + ' now ' + view.fx.now.toFixed(0) + ' conB.build ' + (conB && conB.build.toFixed(3)));
+    if (tests.has('keeps')) {      // the gates face the river: sites 0/1 open south (+z), sites 2/3 north (-z); anchors follow the rotation
+      const v = new THREE_.Vector3(), c = new THREE_.Vector3();
+      for (const l of lords) {
+        const k = view.keepObj(l.i); if (!k) continue; k.group.updateMatrixWorld(true);
+        const gate = k.anchors.gate.getWorldPosition(v).clone(), top = k.anchors.top.getWorldPosition(c).clone(), s0 = world.sites[l.site], dz = gate.z - s0.y, ok = l.site < 2 ? dz > 2 : dz < -2;
+        lines.push(`keep ${l.i} site ${l.site} rotY ${k.group.rotation.y.toFixed(2)} gate dz ${dz.toFixed(2)} top (${(top.x - s0.x).toFixed(2)}, ${top.y.toFixed(1)}, ${(top.z - s0.y).toFixed(2)}) ${ok ? 'OK river side' : 'WRONG'}`);
+      }
+    }
+    if (tests.has('sound')) { const r = testAllSounds(); console.log(r); document.title = 'SOUND ' + (r.includes('SOUND TEST OK') ? 'OK' : 'FAIL'); if (blit) { ctx.font = '13px monospace'; ctx.textBaseline = 'top'; r.split('\n').forEach((l, i) => { ctx.fillStyle = 'rgba(0,0,0,.85)'; ctx.fillRect(4, 130 + i * 18, ctx.measureText(l).width + 12, 17); ctx.fillStyle = '#9ff'; ctx.fillText(l, 9, 132 + i * 18); }); } }
+    if (tests.has('dispose')) { const pre = view.renderer.info.memory; view.dispose(); lines.push(`dispose ok, fx disposed ${fxLog.disposed}`); document.title = 'DISPOSED'; }
+    if (blit && lines.length) { ctx.font = '14px monospace'; ctx.textBaseline = 'top'; lines.forEach((l, i) => { ctx.fillStyle = 'rgba(0,0,0,.8)'; ctx.fillRect(4, 80 + i * 22, ctx.measureText(l).width + 12, 20); ctx.fillStyle = '#9ff'; ctx.fillText(l, 9, 83 + i * 22); }); }
+    console.log(lines.join(' | '));
+  }
+  if (tests.size && target > 0) runTests();
+  function loop() {
+    looping = true;
+    let last = performance.now(), acc = 0, fn = 0, ft = last;
+    (function f() {
+      const n = performance.now(), dt = Math.min(100, n - last); last = n;
+      if (!paused) { vnow += dt; acc += dt / 1000; let steps = 0; while (acc >= DT && steps++ < 6) { acc -= DT; advance(); } if (acc > DT * 3) acc = 0; showDay(); if (O.flood) { lsl.value = L; lv.textContent = L.toFixed(2); } }
+      drawFrame(clamp(acc / DT, 0, 1), paused ? 0 : dt, false);
+      fn++; if (n - ft > 500) { showStats(fn * 1000 / (n - ft)); fn = 0; ft = n; }
+      requestAnimationFrame(f);
+    })();
+  }
+} catch (e) { showErr('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>
