@@ -104,6 +104,11 @@
   };
   // Screen only: one picture (data URL) for every "Mitschauen" viewer
   AirConsole.prototype.frame = function (data) { this._send({ type: 'frame', data: data }); };
+  // Screen only: false while the socket still holds unsent data. Pictures share the socket with the
+  // game's messages, so on a slow upload (online on Render) a picture must wait, never a message
+  AirConsole.prototype.frameReady = function () {
+    return !!this._ws && this._ws.readyState === 1 && (this._ws.bufferedAmount || 0) < 16384;
+  };
   AirConsole.prototype.getDeviceId = function () { return this.device_id; };
   // Nur der Screen darf kicken (der Server prueft den Absender ebenfalls)
   AirConsole.prototype.kick = function (id) { this._send({ type: 'kick', id: id }); };
