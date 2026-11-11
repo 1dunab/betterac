@@ -17,8 +17,9 @@
        &drag=1 (freeze a banner-I drag at 62 % of the way to the Westfurt, with its route and snap label; drag=0.9 = 90 %, &to=<crossing id>)  &view=all|mine  &mud=1 (L just fell from 1: damp mud)  &crown=1 (👑, Ruhm 134)  &still=1 (no animation, frozen clocks)  &target=1..3
        &state=frieden|ebbe|fehde|letzte   phase chip: Burgfrieden 1:12 · Ebbe at L 0.6 · Fehde 7:00 · Letzte Minute 0:42 (the water level follows unless L= is given; &left=12 sets the seconds left)
        &state=pact (Pakte panel: active, offered, none)  &state=offer (Pakte panel with an incoming offer; &mode=bauen shows the prompt over the map instead)
+       &state=renew (Pakte panel: the last minute of a pact, 0:44 left: the ⏳ countdown and „🔁 Verlängern“)  &state=renewin (the partner asked to renew: „✅ Verlängern“; &mode=bauen shows the prompt over the map instead)
        &ruin=kaserne (which own building is the ruin; default huette)  &state=card (card of the own Hof; &kind=holzfaeller|steinbruch|kaserne|… picks another)  &card=ruin|nowood|fire|<kind>  &state=cardruin (card of a ruin)
-       &alert=attack|fire|hunger|plunder|crossing|pact|crown (also &state=alert)  &hunger=1 (no grain)
+       &alert=attack|fire|hunger|plunder|crossing|pact|crown (also &state=alert)  &alert=pactwarn (⏳ Pakt endet in 30 s, with „🔁 Verlängern“)  &alert=pactrenew (🤝 will den Pakt verlängern, with „✅ Verlängern“)  &hunger=1 (no grain)
        &state=end (end screen as host, you come 2nd)  &state=endguest (as guest, you win)  &rank=1..4  &state=spectator (👀 Alle Burgen sind besetzt)
        &guide=1 (the ❓ guide, top)  &guide=gebaeude|korn|truppen|feuer|pakte|bots|ziel|ablauf (the guide scrolled to that section)
        &advice=1..10 (the advisor line shows tip n whatever the state says)   &food=low (the food balance turns red: +2 −9)   &card=paused (the card of a resting Steinbruch: 💤 ruht, ▶ Weiterarbeiten)
@@ -179,11 +180,11 @@ if (!IS_PHONE || STANDALONE) {
     return out;
   }
   const PRICES_FALLBACK = { sell: { korn: 1, holz: 1, stein: 2 }, buy: { korn: 3, holz: 3, stein: 5 } };   // the contract's numbers (docs "Phase 2", Gold and the Markt)
-  const RULES_FALLBACK = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, tradePack: 5, prices: PRICES_FALLBACK };
+  const RULES_FALLBACK = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, renewS: 60, tradePack: 5, prices: PRICES_FALLBACK };
   function simRules() {   // FurtSim.CONST → ffInfo.rules, like the real glue (screen.js); a sim without the Markt constants falls back to the contract's prices
     const C = FS && FS.CONST; if (!C || C.BUCKET_R == null) return JSON.parse(JSON.stringify(RULES_FALLBACK));   // (always a copy: the autotest changes a price and puts it back)
     const prices = C.TRADE_PRICE && C.TRADE_PRICE.sell && C.TRADE_PRICE.buy ? { sell: Object.assign({}, C.TRADE_PRICE.sell), buy: Object.assign({}, C.TRADE_PRICE.buy) } : JSON.parse(JSON.stringify(PRICES_FALLBACK));
-    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES, tradePack: C.TRADE_PACK > 0 ? C.TRADE_PACK : 5, prices };
+    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES, renewS: C.RENEW_S > 0 ? C.RENEW_S : 60, tradePack: C.TRADE_PACK > 0 ? C.TRADE_PACK : 5, prices };
   }
   const LEGACY = q.get('legacy') === '1';   // ?legacy=1: only the Phase 0 messages (no costs, phase, pacts, hunger, banners in ffYou, 9-field board rows): the phone must still cope
   const COSTS = simCosts(), SEND_COSTS = q.get('costs') !== '0' && !LEGACY, RULES = simRules();
@@ -195,7 +196,7 @@ if (!IS_PHONE || STANDALONE) {
   // ---- the clock and the phases (sim seconds): frieden → ebbe (the water falls) → fehde → over ----
   const CC = (FS && FS.CONST) || {};
   const BURG = q.get('burg') != null ? +q.get('burg') : CC.BURGFRIEDEN_S || 120, EBB = CC.EBB_S || 25, T_EBBE = BURG, T_FEHDE = BURG + EBB, T_END = Math.max(T_FEHDE + 90, (+q.get('dauer') || 12) * 60);
-  const PACT_S = CC.PACT_S || 180, OFFER_S = CC.OFFER_S || 30;
+  const PACT_S = CC.PACT_S || 180, OFFER_S = CC.OFFER_S || 30, RENEW_S = CC.RENEW_S || 60;
   const PHASE_AT = { frieden: Math.max(0, T_EBBE - 72), ebbe: T_EBBE + 10, fehde: T_END - 420, letzte: T_END - 42, over: T_END };
   const levelOf = (t) => t < T_EBBE ? 1 : t < T_FEHDE ? 1 - (t - T_EBBE) / EBB : 0;
   const phaseOf = (t) => t >= T_END ? 'over' : t >= T_FEHDE ? 'fehde' : t >= T_EBBE ? 'ebbe' : 'frieden';
@@ -291,7 +292,7 @@ if (!IS_PHONE || STANDALONE) {
   const r2 = (v) => Math.round(v * 100) / 100;
   const sendPhase = () => { $('phv').textContent = phase; if (!LEGACY) toPhone({ t: 'ffPhase', phase, endsAt: endsAtOf(phase), now: r2(simT) }); };
   const pstate = (i) => { const p = pact[i]; return p && p.state !== 'none' && p.until > simT ? p : { state: 'none', until: 0 }; };
-  const pactsForYou = () => LORDS.filter((l) => l.i !== me).map((l) => { const p = pstate(l.i); return { with: l.i, state: p.state, until: p.state === 'none' ? 0 : r2(p.until) }; });
+  const pactsForYou = () => LORDS.filter((l) => l.i !== me).map((l) => { const p = pstate(l.i); return { with: l.i, state: p.state, until: p.state === 'none' ? 0 : r2(p.until), renew: p.state === 'active' && p.renew ? p.renew : null }; });
   const ownBanners = () => banners.filter((b) => b.lord === me);
   const youBanners = () => [{ n: 0, count: 4, x: keepOf(LORDS[me].site).x, y: keepOf(LORDS[me].site).y + 7, tx: keepOf(LORDS[me].site).x, ty: keepOf(LORDS[me].site).y + 7 }].concat(ownBanners().map((b) => {
     const end = b.path && b.path.length ? b.path[b.path.length - 1] : b; return { n: b.n, count: b.count, x: r2(b.x), y: r2(b.y), tx: r2(end.x), ty: r2(end.y) };
@@ -314,7 +315,10 @@ if (!IS_PHONE || STANDALONE) {
     const o = LORDS.find((l) => l.i !== me) || LORDS[0], on = hname(o.i), k = keepOf(LORDS[me].site);
     const T = { attack: ['⚔️ ' + on + ' greift an!', k.x + 5, k.y + 9], fire: ['🔥 Dein Hof brennt!', k.x - 8, k.y + 8], hunger: ['🍞 Hunger! Dein Volk hat nichts zu essen.'], plunder: ['🏰 ' + hname(me) + ' wurde geplündert!', k.x, k.y],
       crossing: ['🌊 Die Steinbrücke ist frei!'], pact: ['🤝 ' + on + ' bietet dir einen Pakt an'], crown: ['👑 ' + on + ' trägt die Krone'] }[kind];
-    if (T) toPhone({ t: 'ffAlert', kind, text: T[0], x: T[1], y: T[2] });
+    if (T) { toPhone({ t: 'ffAlert', kind, text: T[0], x: T[1], y: T[2] }); return; }
+    // F2: the pact alerts with a „Verlängern“ button: the warning 30 s before the end, and the partner's renewal offer (`renew` = the partner's lord, `incoming` = he asked)
+    if (kind === 'pactwarn') toPhone({ t: 'ffAlert', kind: 'pact', text: '⏳ Pakt mit ' + on + ' endet in 30 s', renew: o.i });
+    else if (kind === 'pactrenew') toPhone({ t: 'ffAlert', kind: 'pact', text: '🤝 ' + on + ' will den Pakt verlängern', renew: o.i, incoming: true });
   }
   function makeResult() {   // the sim's ranking rows; you come `rank=N` (default 2)
     const others = LORDS.filter((l) => l.i !== me).map((l) => l.i), rk = Math.max(1, Math.min(LORDS.length, +q.get('rank') || (host ? 2 : 1))), order = others.slice(); order.splice(rk - 1, 0, me);
@@ -434,7 +438,15 @@ if (!IS_PHONE || STANDALONE) {
       const to = d.to | 0; if (to === me || !LORDS[to]) return;
       const p = pstate(to);
       if (d.on) {
-        if (p.state === 'incoming') { pact[to] = { state: 'active', until: simT + PACT_S }; toast('🤝 Pakt mit ' + hname(to)); }
+        if (p.state === 'active') {   // F2: in the last RENEW_S of a pact `on` is a renewal offer; when the partner has asked, or answers, the end moves PACT_S further
+          if (p.until - simT > RENEW_S + 1e-6) toast('⏳ Verlängern geht erst in der letzten Minute des Pakts');
+          else if (p.renew === 'incoming') { pact[to] = { state: 'active', until: p.until + PACT_S }; toPhone({ t: 'ffAlert', kind: 'pact', text: '🤝 Pakt mit ' + hname(to) + ' verlängert' }); }
+          else if (p.renew !== 'offered') {
+            pact[to] = { state: 'active', until: p.until, renew: 'offered' }; toast('🔁 Verlängerung an ' + hname(to) + ' gesendet');
+            if (LORDS[to].bot && !STILL && !autoRunning) setTimeout(() => { const q2 = pstate(to); if (q2.state === 'active' && q2.renew === 'offered') { pact[to] = { state: 'active', until: q2.until + PACT_S }; toPhone({ t: 'ffAlert', kind: 'pact', text: '🤝 Pakt mit ' + hname(to) + ' verlängert' }); sendYou(); } }, 1800);   // bots renew
+          }
+        }
+        else if (p.state === 'incoming') { pact[to] = { state: 'active', until: simT + PACT_S }; toast('🤝 Pakt mit ' + hname(to)); }
         else if (p.state === 'none') {
           pact[to] = { state: 'offered', until: simT + OFFER_S };
           if (LORDS[to].bot && !STILL && !autoRunning) setTimeout(() => { if (pstate(to).state === 'offered') { pact[to] = { state: 'active', until: simT + PACT_S }; toPhone({ t: 'ffAlert', kind: 'pact', text: '🤝 ' + hname(to) + ' nimmt deinen Pakt an' }); sendYou(); } }, 1800);   // bots accept
@@ -516,6 +528,8 @@ if (!IS_PHONE || STANDALONE) {
     LORDS.forEach((l) => { if (l.i === me) return; const n = hname(l.i).replace('Haus ', '');
       mkBtn('pactBtns', '📨 ' + n + ' bietet an', () => { pact[l.i] = { state: 'incoming', until: simT + OFFER_S }; fakeAlert('pact'); sendYou(); });
       mkBtn('pactBtns', '🤝 aktiv mit ' + n, () => { pact[l.i] = { state: 'active', until: simT + PACT_S }; sendYou(); });
+      mkBtn('pactBtns', '⏳ endet in 44 s · ' + n, () => { pact[l.i] = { state: 'active', until: simT + 44 }; sendYou(); });
+      mkBtn('pactBtns', '🔁 ' + n + ' will verlängern', () => { const cur = pstate(l.i); pact[l.i] = { state: 'active', until: cur.state === 'active' ? cur.until : simT + 38, renew: 'incoming' }; fakeAlert('pactrenew'); sendYou(); });
       mkBtn('pactBtns', '✖ ' + n, () => { pact[l.i] = { state: 'none', until: 0 }; sendYou(); }); });
   }
   const roleBtns = {};
@@ -537,7 +551,7 @@ if (!IS_PHONE || STANDALONE) {
   [['Bauen · Hof', 'mode=bauen&ghost=hof&L=0.4'], ['Bauen · ungültig', 'mode=bauen&ghost=hof&invalid=1&L=0.4'], ['Truppen', 'mode=truppen'], ['Banner', 'mode=banner'], ['Banner-Zug', 'mode=banner&drag=1&L=0'], ['Banner-Zug Flut', 'mode=banner&drag=0.98&to=steinbruecke&L=1'],
     ['Flut L=1', 'mode=banner&L=1&view=all'], ['Trocken L=0', 'mode=banner&L=0&view=all'], ['Hochformat', 'w=390&h=844&mode=bauen&ghost=hof&L=0.4'],
     ['Burgfrieden', 'state=frieden'], ['Ebbe', 'state=ebbe'], ['Fehde', 'state=fehde'], ['Letzte Minute', 'state=letzte'],
-    ['Pakte', 'state=pact'], ['Angebot (Tafel)', 'state=offer'], ['Angebot (Karte)', 'state=offer&mode=bauen'], ['Karte: Hof', 'state=card'], ['Karte: Ruine', 'state=cardruin'], ['Karte: Holzfäller', 'card=nowood'], ['Karte: Feuer', 'card=fire'], ['Karte: ruht', 'card=paused'], ['Karte: Lager voll', 'card=full'],
+    ['Pakte', 'state=pact'], ['Angebot (Tafel)', 'state=offer'], ['Angebot (Karte)', 'state=offer&mode=bauen'], ['Pakt endet (Tafel)', 'state=renew'], ['Verlängerung (Tafel)', 'state=renewin'], ['Verlängerung (Karte)', 'state=renewin&mode=bauen'], ['Alarm: Pakt endet', 'alert=pactwarn'], ['Alarm: Verlängerung', 'alert=pactrenew'], ['Karte: Hof', 'state=card'], ['Karte: Ruine', 'state=cardruin'], ['Karte: Holzfäller', 'card=nowood'], ['Karte: Feuer', 'card=fire'], ['Karte: ruht', 'card=paused'], ['Karte: Lager voll', 'card=full'],
     ['Brunnen-Abdeckung', 'place=brunnen&dash=1&state=fehde'], ['Brunnen-Karte', 'card=brunnen&state=fehde'], ['Burg-Karte', 'card=keep&state=fehde'], ['Lager', 'lager=1&state=fehde'], ['Lager voll', 'lager=full&state=fehde'],
     ['Mauer ziehen', 'wall=1&state=fehde'], ['Mauer fertig gezogen', 'wall=2&state=fehde'], ['Palisade', 'wall=1&wallkind=palisade&state=fehde'], ['Markt', 'markt=1&state=fehde'], ['Markt fehlt', 'markt=none&state=fehde'], ['Truppen: beide Häuser', 'truppen=2&state=fehde'], ['Truppen: nur Kaserne', 'truppen=1&state=fehde'],
     ['Besetzter Turm', 'garrison=1&state=fehde'], ['Besetztes Tor', 'garrison=2&state=fehde'], ['Mauern auf der Karte', 'garrison=map&state=fehde'], ['Tipp 11 Hunger kaufen', 'advice=11'], ['Tipp 12 verkaufen', 'advice=12'], ['Tipp 13 Rammbock', 'advice=13'],
@@ -593,6 +607,8 @@ if (!IS_PHONE || STANDALONE) {
     if (NL < 3) return;
     if (S0 === 'pact') { pact[1] = { state: 'active', until: simT + 161 }; if (LORDS[2]) pact[2] = { state: 'offered', until: simT + 21 }; }
     if (S0 === 'offer') { pact[1] = { state: 'incoming', until: simT + 24 }; if (LORDS[2]) pact[2] = { state: 'active', until: simT + 161 }; }
+    if (S0 === 'renew') { pact[1] = { state: 'active', until: simT + 44 }; if (LORDS[2]) pact[2] = { state: 'active', until: simT + 161 }; }   // F2: the last minute of a pact: the ⏳ countdown and „🔁 Verlängern“
+    if (S0 === 'renewin') { pact[1] = { state: 'active', until: simT + 38, renew: 'incoming' }; if (LORDS[2]) pact[2] = { state: 'active', until: simT + 161 }; }   // … and the partner has asked: „✅ Verlängern“
     if (q.get('pacts') === '1') { pact[1] = { state: 'active', until: simT + 161 }; }
   }
   const rulesEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -785,7 +801,7 @@ if (!IS_PHONE || STANDALONE) {
       const to = { x: pin.x + (c.x - pin.x) * frac, y: pin.y + (c.y - pin.y) * frac };
       dragPin(w, pin, to, false);
     }
-    if ((S0 === 'pact' || S0 === 'offer') && !mode) click(w, 'ffMode-pakte');   // &mode=bauen shows the offer prompt over the map instead
+    if ((S0 === 'pact' || S0 === 'offer' || S0 === 'renew' || S0 === 'renewin') && !mode) click(w, 'ffMode-pakte');   // &mode=bauen shows the offer prompt over the map instead
     if (q.get('place') === 'brunnen' && !spectator) placeDemo(w);
     if (q.get('truppen') && !spectator) truppenDemo(w, q.get('truppen'));
     if (q.get('markt') && !spectator) marktDemo(w, q.get('markt'));
@@ -966,6 +982,36 @@ if (!IS_PHONE || STANDALONE) {
       click(w, 'ffMode-pakte');
       must(doc.getElementById('ffPact-1').classList.contains('active') && shown(w, 'ffPBreak-1'), 'der Pakt steht nicht als aktiv mit „Pakt brechen“ in der Liste');
       must(doc.querySelector('#ffPact-1 .pt-s').textContent.indexOf('3:00') >= 0, 'die Pakt-Uhr steht nicht auf 3:00: «' + doc.querySelector('#ffPact-1 .pt-s').textContent + '»');
+      // 7b (F2): the last minute of the pact: the card shows the ⏳ countdown and „🔁 Verlängern“; the warning alert carries the same button; a renewal the partner asked for shows
+      // „✅ Verlängern“ on the card, on the alert and on the prompt over the map, and never an „Ablehnen“ (on:false on an active pact would be betrayal)
+      step = '7b Pakt verlängern: ⏳-Uhr und 🔁 in der letzten Minute, ✅ bei eingehender Verlängerung, ffPact on:true';
+      must(!shown(w, 'ffPRenew-1') && !shown(w, 'ffPRenewYes-1') && !doc.getElementById('ffPact-1').classList.contains('ending'), 'vor der letzten Minute zeigt die Pakt-Karte schon Verlängern');
+      pact[1].until = simT + 44; sendYou();
+      must(doc.getElementById('ffPact-1').classList.contains('ending') && shown(w, 'ffPRenew-1') && !shown(w, 'ffPRenewYes-1') && shown(w, 'ffPBreak-1'), 'in der letzten Minute fehlt „🔁 Verlängern“ (oder „Pakt brechen“ ist weg)');
+      must(doc.querySelector('#ffPact-1 .pt-s').textContent.indexOf('⏳ 0:4') === 0, 'die Pakt-Uhr zeigt nicht „⏳ 0:4…“: «' + doc.querySelector('#ffPact-1 .pt-s').textContent + '»');
+      must(doc.getElementById('ffPRenew-1').textContent === '🔁 Verlängern' && /endet bald/.test(doc.querySelector('#ffPact-1 .pt-t').textContent), 'Knopf oder Text der letzten Minute: «' + doc.getElementById('ffPRenew-1').textContent + '» · «' + doc.querySelector('#ffPact-1 .pt-t').textContent + '»');
+      fakeAlert('pactwarn');
+      must(doc.getElementById('ffAlert').classList.contains('show') && shown(w, 'ffAlertAct') && doc.getElementById('ffAlertAct').textContent === '🔁 Verlängern' && /endet in 30 s/.test(doc.querySelector('#ffAlert .tx').textContent), 'die Warnung hat keinen „🔁 Verlängern“-Knopf: «' + doc.querySelector('#ffAlert .tx').textContent + '»');
+      const nr0 = sent.filter((x) => x.t === 'ffPact').length;
+      click(w, 'ffAlertAct');
+      let pr = sent.filter((x) => x.t === 'ffPact'); must(pr.length === nr0 + 1 && pr[pr.length - 1].to === 1 && pr[pr.length - 1].on === true, 'der Alarm-Knopf sendet kein ffPact { to: 1, on: true }: ' + JSON.stringify(pr[pr.length - 1]));
+      must(!doc.getElementById('ffAlert').classList.contains('show'), 'der Alarm bleibt nach dem Knopf stehen');
+      must(pact[1].renew === 'offered' && !shown(w, 'ffPRenew-1') && !shown(w, 'ffPRenewYes-1') && /Verlängerung angeboten/.test(doc.querySelector('#ffPact-1 .pt-t').textContent), 'nach dem Angebot fehlt „Verlängerung angeboten“ (ohne Knopf): «' + doc.querySelector('#ffPact-1 .pt-t').textContent + '»');
+      // the partner asks to renew: ✅ on the card and the alert
+      pact[1] = { state: 'active', until: simT + 38, renew: 'incoming' }; fakeAlert('pactrenew'); sendYou();
+      must(shown(w, 'ffPRenewYes-1') && !shown(w, 'ffPRenew-1') && doc.getElementById('ffPact-1').classList.contains('renewin') && doc.getElementById('ffPRenewYes-1').textContent === '✅ Verlängern', 'bei eingehender Verlängerung fehlt „✅ Verlängern“ auf der Karte');
+      must(shown(w, 'ffAlertAct') && doc.getElementById('ffAlertAct').textContent === '✅ Verlängern' && /will den Pakt verlängern/.test(doc.querySelector('#ffAlert .tx').textContent), 'der Alarm der Verlängerung hat keinen „✅ Verlängern“-Knopf');
+      must(doc.getElementById('ffBd-pakte').textContent === '1', 'das Abzeichen am Pakte-Knopf zeigt die eingehende Verlängerung nicht: «' + doc.getElementById('ffBd-pakte').textContent + '»');
+      // … and on the prompt over the map (no „Ablehnen“ there), whose ✅ renews: the fake screen moves the end 180 s further
+      click(w, 'ffMode-bauen');
+      must(shown(w, 'ffOffer') && /will den Pakt verlängern/.test(doc.getElementById('ffOfTx').textContent) && doc.getElementById('ffOfYes').textContent === '✅ Verlängern' && !shown(w, 'ffOfNo'), 'die Karte über der Karte bietet keine Verlängerung an (oder noch „Ablehnen“)');
+      must(/^0:3[5-8]$/.test(doc.getElementById('ffOfT').textContent), 'die Uhr der Verlängerungs-Karte steht nicht auf 0:38: «' + doc.getElementById('ffOfT').textContent + '»');
+      const nr1 = sent.filter((x) => x.t === 'ffPact').length;
+      click(w, 'ffOfYes'); click(w, 'ffOfNo');   // (a click on the hidden „Ablehnen“ must not send anything)
+      pr = sent.filter((x) => x.t === 'ffPact'); must(pr.length === nr1 + 1 && pr[pr.length - 1].to === 1 && pr[pr.length - 1].on === true, 'Verlängern sendet kein einzelnes ffPact { to: 1, on: true }: ' + JSON.stringify(pr.slice(nr1)));
+      must(pact[1].state === 'active' && !pact[1].renew && pact[1].until === simT + 38 + PACT_S && !shown(w, 'ffOffer'), 'der falsche Fernseher hat den Pakt nicht um 180 s verlängert');
+      click(w, 'ffMode-pakte');
+      must(!doc.getElementById('ffPact-1').classList.contains('ending') && !shown(w, 'ffPRenew-1') && /^3:3[5-8]$/.test(doc.querySelector('#ffPact-1 .pt-s').textContent) && shown(w, 'ffPBreak-1'), 'nach der Verlängerung zeigt die Karte nicht die neue Restzeit 3:38: «' + doc.querySelector('#ffPact-1 .pt-s').textContent + '»');
       // 8: break → confirmation → ffPact { on: false }
       step = '8 Pakt brechen: erst Rückfrage, dann ffPact on:false';
       const npb = sent.filter((x) => x.t === 'ffPact').length, ruhm0 = ruhm;
@@ -1263,7 +1309,7 @@ if (!IS_PHONE || STANDALONE) {
         RULES.bucketR = 6; sendInfo(); click(w, 'ffCard-brunnen');
         { const gg = m.getGhost(), Tr = coverTruth({ i: gg.i, j: gg.j }); must(F.st.rules.bucketR === 6 && m.cover.r === 6 && m.coverage().discs.every((d) => d.kind === 'keep' || d.r === 6) && lineEl.textContent === lineOf(Tr), 'geänderte ffInfo.rules.bucketR kommt nicht an (' + JSON.stringify(m.cover) + ', «' + lineEl.textContent + '»)'); }
         click(w, 'ffNo'); RULES.bucketR = simRules().bucketR; sendInfo();
-        sendRules = false; sendInfo(); must(JSON.stringify(F.st.rules) === JSON.stringify({ bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, tradePack: 5, prices: PRICES_FALLBACK }), 'ohne ffInfo.rules gelten nicht 12, 12, 30, 60, 60, 8, 4 (und Paket 5, Preise 1/1/2 und 3/3/5): ' + JSON.stringify(F.st.rules));
+        sendRules = false; sendInfo(); must(JSON.stringify(F.st.rules) === JSON.stringify({ bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, renewS: 60, tradePack: 5, prices: PRICES_FALLBACK }), 'ohne ffInfo.rules gelten nicht 12, 12, 30, 60, 60, 8, 4 (und Verlängern ab 60 s, Paket 5, Preise 1/1/2 und 3/3/5): ' + JSON.stringify(F.st.rules));
         sendRules = true; sendInfo(); must(F.st.rules.bucketR === simRules().bucketR, 'ffInfo.rules kommt nach dem Wiederholen nicht zurück');
       }
 
@@ -1821,7 +1867,7 @@ if (!IS_PHONE || STANDALONE) {
           click(w, 'ffNo'); phase2Reset();
         }
       }
-      res.className = 'ok'; res.textContent = 'AUTOTEST OK'; const sub = document.createElement('div'); sub.style.cssText = 'font:600 12px system-ui;color:#9fd8aa'; sub.textContent = 'Schritte 1–30' + extra; res.appendChild(sub);
+      res.className = 'ok'; res.textContent = 'AUTOTEST OK'; const sub = document.createElement('div'); sub.style.cssText = 'font:600 12px system-ui;color:#9fd8aa'; sub.textContent = 'Schritte 1–30 (mit 7b: Pakt verlängern)' + extra; res.appendChild(sub);
       console.log('AUTOTEST OK' + extra); document.title = 'AUTOTEST OK';
     } catch (e) {
       res.className = 'fail'; res.textContent = 'AUTOTEST FAIL – Schritt ' + step + ': ' + e.message; console.log('AUTOTEST FAIL – Schritt ' + step + ': ' + e.message); document.title = 'AUTOTEST FAIL';

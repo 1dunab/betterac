@@ -48,7 +48,7 @@ registerGame({ key: 'furtfehde', screen: function () {
   let mapMsg = null, lordsMsg = null, costs = null, rules = null;
   let youAt = {}, boardAt = -1e9, boardSig = '', levelAt = -1e9, levelSent = null, phaseSentFor = null, phaseSentAt = -1e9;
   let feed = [], heraldLog = [], banners = [], endInfo = null, reported = false;   // heraldLog: every herald text of the match (the feed on screen expires)
-  let alertAt = {}, activePacts = {}, keepOf = {}, hungerAt = {}, attackedAt = {};
+  let alertAt = {}, activePacts = {}, warnedPacts = {}, keepOf = {}, hungerAt = {}, attackedAt = {};
   let samples = [], autoDone = false, curQuality = 'high', glitches = [], glitchUntil = 0, autoFrom = 0, autoEval = 0, capDropped = false;
   let gestureAt = -1e9, gestureFn = null;     // the last click or key on the TV page (the sound hint)
   let hudCache = { at: -1e9, lords: [] }, fightSeen = new Map(), fighters = 0, cluster = null, battle = 0;
@@ -188,6 +188,7 @@ registerGame({ key: 'furtfehde', screen: function () {
   function rulesOf() {
     const C = Sim.CONST, P = C.TRADE_PRICE || {}, side = (k) => ({ korn: (P[k] || {}).korn, holz: (P[k] || {}).holz, stein: (P[k] || {}).stein });
     return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES,
+      renewS: C.RENEW_S,   // (F2: the last seconds of a pact in which it can be renewed; the key order is the phone's, which the flow test compares as a string)
       tradePack: C.TRADE_PACK, prices: { sell: side('sell'), buy: side('buy') } };
   }
   function lordsOf() {
@@ -234,12 +235,13 @@ registerGame({ key: 'furtfehde', screen: function () {
   const toast = (id, text) => send(id, { t: 'ffToast', text });
   const toastHouse = (i, text) => sendHouse(i, { t: 'ffToast', text });
   // alerts: own-house kinds only to that house, crossing / pact / crown to everybody; `gap` = min seconds (sim time) between two of a kind per house
-  function alertHouse(i, kind, text, gap, x, y) {
+  function alertHouse(i, kind, text, gap, x, y, extra) {
     const key = kind + ':' + i, t = sim.state.t;
     if (gap && alertAt[key] != null && t - alertAt[key] < gap) return;
     alertAt[key] = t;
     const m = { t: 'ffAlert', kind, text };
     if (isNum(x) && isNum(y)) { m.x = r2(x, 10); m.y = r2(y, 10); }
+    if (extra) Object.assign(m, extra);   // F2: a pact alert may carry `renew` (the partner's lord) for its „Verlängern“ button
     sendHouse(i, m);
   }
   const alertAll = (kind, text) => sendAll({ t: 'ffAlert', kind, text });
@@ -366,7 +368,7 @@ registerGame({ key: 'furtfehde', screen: function () {
     for (const b of sim.state.buildings) if (b.kind === 'bergfried') keepOf[b.id] = b.lord;
     costs = costsOf(); rules = rulesOf(); mapMsg = null; lordsMsg = null;
     youAt = {}; boardSig = ''; boardAt = -1e9; levelSent = null; levelAt = -1e9; phaseSentFor = null; phaseSentAt = -1e9;
-    feed = []; heraldLog = []; banners = []; endInfo = null; reported = false; alertAt = {}; activePacts = {}; hungerAt = {}; attackedAt = {};
+    feed = []; heraldLog = []; banners = []; endInfo = null; reported = false; alertAt = {}; activePacts = {}; warnedPacts = {}; hungerAt = {}; attackedAt = {};
     samples = []; firstFrame = true; fightSeen = new Map(); fighters = 0; cluster = null; battle = 0; kk = { on: false, until: 0, cool: 0, x: 0, y: 0, dist: 28, label: '', src: '' };
     hudCache = { at: -1e9, lords: [] };
     safe('inset', () => view.inset(null));
@@ -440,6 +442,21 @@ registerGame({ key: 'furtfehde', screen: function () {
         if (!quiet) snd((S) => S.event(ev));
       }
       safe('event ' + ev.t, () => handleEvent(ev));
+    }
+    safe('pactWatch', pactWatch);
+  }
+  // F2 P1: 30 s before an active pact ends, both houses get an alert (and a buzz) with the „🔁 Verlängern“ button; a renewal moves the end, which arms the warning again.
+  // It reads the sim's pact list, not the events, so a skipped stretch of play cannot leave it stale.
+  const PACT_WARN_S = 30;
+  function pactWatch() {
+    const t = sim.state.t;
+    for (const p of sim.state.pacts) {
+      if (p.grace || !(p.until > 0) || p.until - t > PACT_WARN_S) continue;   // (an offer has `offerUntil`, the Abzug's grace entry `grace`)
+      const key = p.a + '-' + p.b;
+      if (warnedPacts[key] === p.until) continue;
+      warnedPacts[key] = p.until;
+      alertHouse(p.a, 'pact', '⏳ Pakt mit ' + houseName(p.b) + ' endet in ' + PACT_WARN_S + ' s', 0, null, null, { renew: p.b });
+      alertHouse(p.b, 'pact', '⏳ Pakt mit ' + houseName(p.a) + ' endet in ' + PACT_WARN_S + ' s', 0, null, null, { renew: p.a });
     }
   }
   // what a breach or a ram blow is about, for the herald and the Kampf-Kamera: the piece's kind and the house it belongs to
@@ -562,11 +579,21 @@ registerGame({ key: 'furtfehde', screen: function () {
       case 'pactOffer':
         alertHouse(ev.to, 'pact', '🤝 ' + houseName(ev.from) + ' bietet dir einen Pakt an', 0);
         break;
-      case 'pactOn':
-        activePacts[Math.min(ev.a, ev.b) + '-' + Math.max(ev.a, ev.b)] = 1;
+      case 'pactRenewOffer':   // F2 P1: the partner of an active pact asks to renew it (the offerer's own phone toasts in handleOrder)
+        alertHouse(ev.to, 'pact', '🤝 ' + houseName(ev.from) + ' will den Pakt verlängern', 0, null, null, { renew: ev.from, incoming: true });
+        break;
+      case 'pactOn': {
+        const key = Math.min(ev.a, ev.b) + '-' + Math.max(ev.a, ev.b), renewed = !!activePacts[key];   // (an active pact that gets a pactOn again was renewed)
+        activePacts[key] = 1;
+        if (renewed) {
+          herald('🤝 Pakt zwischen ' + houseName(ev.a) + ' und ' + houseName(ev.b) + ' um 3 Minuten verlängert', '#8fe0a0');
+          alertHouse(ev.a, 'pact', '🤝 Pakt mit ' + houseName(ev.b) + ' verlängert', 0); alertHouse(ev.b, 'pact', '🤝 Pakt mit ' + houseName(ev.a) + ' verlängert', 0);
+          break;
+        }
         herald('🤝 Pakt zwischen ' + houseName(ev.a) + ' und ' + houseName(ev.b) + ' für 3 Minuten', '#8fe0a0');
         alertHouse(ev.a, 'pact', '🤝 Pakt mit ' + houseName(ev.b) + ' geschlossen', 0); alertHouse(ev.b, 'pact', '🤝 Pakt mit ' + houseName(ev.a) + ' geschlossen', 0);
         break;
+      }
       case 'pactOff': {
         const key = Math.min(ev.a, ev.b) + '-' + Math.max(ev.a, ev.b), was = !!activePacts[key];
         if (ev.reason !== 'declined') delete activePacts[key];
@@ -575,9 +602,12 @@ registerGame({ key: 'furtfehde', screen: function () {
           herald('🗡️ Verrat! ' + houseName(ev.by) + ' bricht den Pakt mit ' + houseName(victim), '#ff6b6b');
           alertHouse(victim, 'pact', '🗡️ ' + houseName(ev.by) + ' hat den Pakt gebrochen!', 0);
           pushBanner(['🗡️ Verrat!', houseName(ev.by) + ' bricht den Pakt'], '#ff6b6b', 3600);
-        } else if (ev.reason === 'expired' && was) {
-          herald('🤝 Der Pakt zwischen ' + houseName(ev.a) + ' und ' + houseName(ev.b) + ' ist abgelaufen', '#b8c4a0');
-          toastHouse(ev.a, '🤝 Der Pakt ist abgelaufen'); toastHouse(ev.b, '🤝 Der Pakt ist abgelaufen');
+        } else if (ev.reason === 'expired' && was) {   // F2 P2: the pact ran out; the sim sends the banners aimed at the other's land home and keeps the peace for PACT_GRACE_S
+          herald('🤝 Der Pakt zwischen ' + houseName(ev.a) + ' und ' + houseName(ev.b) + ' ist abgelaufen – die Truppen ziehen ab', '#b8c4a0');
+          for (const [i, o] of [[ev.a, ev.b], [ev.b, ev.a]]) {
+            const text = '🤝 Der Pakt mit ' + houseName(o) + ' ist abgelaufen – eure Truppen ziehen ab';
+            alertHouse(i, 'pact', text, 0); toastHouse(i, text);
+          }
         } else if (ev.reason === 'declined') {
           const offerer = ev.by === ev.a ? null : ev.a;   // by === a: the offerer withdrew; otherwise the target declined
           if (offerer != null) toastHouse(offerer, '🤝 ' + houseName(ev.by) + ' lehnt den Pakt ab');
@@ -1016,6 +1046,8 @@ registerGame({ key: 'furtfehde', screen: function () {
         const r = sim.pact(h.i, d.to, d.on);
         if (!r.ok) reply(h, r.reason === 'zwei' ? '🤝 Mit nur zwei Häusern gibt es keine Pakte' : r.reason === 'none' ? '🤝 Da gibt es nichts zu beenden' : '❌ Das geht gerade nicht', id);
         else if (d.on && r.state === 'offered') reply(h, '🤝 Angebot an ' + houseName(d.to) + ' gesendet (30 Sek.)', id);
+        else if (d.on && r.state === 'active' && r.renew === 'offered') reply(h, '🔁 Verlängerung an ' + houseName(d.to) + ' gesendet', id);   // F2: the renewal window
+        else if (d.on && r.state === 'active' && r.renew === null) reply(h, '⏳ Verlängern geht erst in der letzten Minute des Pakts', id);   // (too early: the sim did nothing)
         return r;
       }
       default: return;

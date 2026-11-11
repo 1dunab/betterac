@@ -1481,10 +1481,157 @@ shows the swing with anim 2.
   flow test).
 - **🚦 Feedback:** a test round.
 
+## Phase 2a — feedback 4 (2026-11-11, first Phase 2 match online)
+
+**Feedback 4:**
+1. **The screen can be stolen.** Mitschauen is enough as a second view, but a running screen must
+   not be taken over by a second device („Trotzdem übernehmen“ ends everybody's game).
+2. **A pact turned into an attack.** The user sent troops to their partner, who was under
+   attack. The troops drove the attackers off, then attacked the partner's keep.
+   - **Cause:** pacts end after `PACT_S` (3 min) and cannot be renewed (`pact(on)` on an active
+     pact does nothing). When it expires, a banner standing next to the former partner's
+     buildings sieges them by itself.
+
+### S — one screen per server (shell: `server.js`, `airconsole-local.js`, `screen.html`)
+
+- **Registration:**
+  - The server hands the screen a **screen secret** with its welcome, and the screen keeps it in
+    `sessionStorage`.
+  - A `register` as screen is accepted only when no live screen socket exists, or when the
+    request carries the current secret: the same tab reloading or reconnecting, which takes
+    over silently as now.
+  - Otherwise the server answers `{ type: 'busy' }` and closes the new socket; the old screen
+    stays untouched.
+- **Dead screens:** a screen whose socket died (heartbeat) or closed frees the slot. A closed
+  screen gets the same short grace as a phone (8 s) before a stranger may register, so a
+  reload of the real TV wins the race.
+- **`screen.html`:**
+  - The busy dialog loses „Trotzdem übernehmen“. It says that a screen is already running and
+    offers „👀 Mitschauen“, plus „🔄 Nochmal versuchen“ (useful once the old screen is really
+    closed).
+  - A `busy` answer from the server, which can come from a race with `/info`, shows the same
+    dialog.
+- **`/info`** keeps saying `screen: true|false`.
+- **Tests:** the shell tests that cover takeover, reconnect and Mitschauen are updated:
+  - a second screen is refused while the first lives;
+  - the same tab's reload (with the secret) reclaims it;
+  - after the first closes and the grace passes, a new one is accepted;
+  - phones and viewers are unaffected.
+
+### P — pacts end peacefully (Furt & Fehde)
+
+| # | Rule | CONST |
+|---|---|---|
+| P1 | **Renewal.** During the last `RENEW_S` of an active pact, `pact(a, b, true)` is a renewal offer. When both sides have offered, the pact's end moves to `end + PACT_S`. Events: `pactRenewOffer { from, to }`, then `pactOn { a, b, until }` again. `youOf().pacts[]` entries gain `renew: 'offered' \| 'incoming' \| null`. | `RENEW_S: 60` |
+| P2 | **Abzug.** When a pact *expires* (not when it is broken), the two houses stay friends for `PACT_GRACE_S` more: no unit attacks the other's units or buildings, and partners still pass each other's gates. At expiry, every banner of either house whose target lies within `PACT_ZONE + 4` of the other's buildings is sent home, the same way plunder protection sends banners home. Event: `pactOff { reason: 'expired' }` as now, plus `grace` with its end time. | `PACT_GRACE_S: 30` |
+| P3 | **A broken pact** keeps today's behaviour, with no grace. | — |
+
+- **Glue and phone:**
+  - **30 s before the end:** both phones get an alert and vibration, „⏳ Pakt mit Haus X endet in
+    30 s“, with a „🔁 Verlängern“ button. The pact card shows the countdown and the button
+    during `RENEW_S`.
+  - **A renewal offer** reaches the partner as an alert, „🤝 Haus X will den Pakt verlängern“,
+    with „✅ Verlängern“.
+  - **On expiry:** „🤝 Der Pakt mit Haus X ist abgelaufen – eure Truppen ziehen ab“, and the TV
+    herald says the same.
+  - The guide's Pakte section explains renewal and Abzug.
+- **Bots:** a bot renews a pact it is happy with: the same judgement as accepting, plus not
+  planning an attack on that partner.
+- **Tests:**
+  - **sim:** a renewal from both sides, from one side only (no renewal), renewal outside the
+    window, the grace (no hits, gates open), the auto-home, a broken pact without grace, and
+    the event catalogue;
+  - **bots:** renewals happen;
+  - **flow:** the alerts, the renew round trip and the expiry toast.
+
 ## Implementation notes (interpretations)
 
 _Filled in by the main session from the agents' reports. Where a note contradicts the text
 above, the note wins._
+
+### Pacts — as built (Phase 2a, F2)
+
+**Tests:**
+- sim 3735 checks, bots 111, flow 408; the phone autotest gains step 7b (renewal);
+- mutation-checked;
+- the bots balance is identical to before (bots never offer new pacts, so bot-only games have
+  none).
+
+**`CONST`:** `RENEW_S` 60, `PACT_GRACE_S` 30, `ABZUG_PAD` 4 (Abzug radius = `PACT_ZONE + 4`).
+
+**Sim:**
+- **Renewal:** `pact(a, b, true)` on an active pact returns `renew: null` outside the window,
+  `'offered'`, or `'renewed'` once both have offered; the end moves to `end + PACT_S`.
+- **Grace:** `hostile()` is false and `friendly()` true during it. Its end closes the lanes
+  (`gridChanged`).
+- **Abzug:** at expiry, banners 1–3 of either house whose target lies within 10 of the other's
+  buildings go home (`sendHome`).
+- A break clears pending offers, with no grace and no Abzug. A new pact ends a running grace.
+
+**State and events:**
+- `pactRenewOffer { from, to }`;
+- `pactOn` again on a renewal (`a` = the first to offer);
+- `pactOff { reason: 'expired', grace }`;
+- `youOf().pacts[].renew` ∈ `'offered' | 'incoming' | null`;
+- `state.pacts` gains `{ a, b, until: graceEnd, grace: true }`, so the gates stay open in the view.
+
+**Glue:**
+- `pactWarn` once per `until` (glue constant `PACT_WARN_S` 30);
+- alerts „⏳ Pakt mit Haus X endet in 30 s“ and „🤝 Haus X will den Pakt verlängern“ (with a
+  button), „🤝 Pakt mit Haus X verlängert“, and „🤝 Der Pakt mit Haus X ist abgelaufen – eure
+  Truppen ziehen ab“ (as alert and toast);
+- the matching heralds;
+- `ffInfo.rules.renewS`.
+
+**Phone:**
+- the header „🤝 Pakte · 3 Min, verlängerbar“ and a countdown badge „⏳ 0:44“;
+- buttons „🔁 Verlängern“ and „✅ Verlängern“;
+- an incoming renewal shows an offer card without „Ablehnen“ (`on: false` on an active pact would
+  be a betrayal);
+- the guide gains paragraphs on Verlängern and Abzug.
+
+**Bots:** they renew when `pleased` (the same judgement as accepting) and not eyeing that
+partner (a ritter doesn't renew a crowned partner); new stat `stats.renews`.
+
+**Deviations:**
+- the zone refusal (`'pact'`) ends with the pact, so orders next to the former partner are
+  accepted during the grace and siege afterwards;
+- a renewal can't be declined, only ignored;
+- renewals count in `stats.pacts`;
+- bots renew on their own initiative.
+
+### One screen per server — as built (Phase 2a, F1 + main session)
+
+**Server:**
+- **Secret:** the seat is `clients.get(0)`, held by an open socket or by a closed one within its
+  8-s grace. The screen secret (18 random bytes, base64url) comes only in that screen's welcome.
+- **Registering as screen:**
+  - seat free → accepted with a fresh secret;
+  - secret matches → a silent takeover (the old socket is kicked);
+  - otherwise → `{ type: 'busy' }` and close, and the running screen is untouched.
+- **Release:** a closed screen frees the seat after 8 s. The heartbeat frees a dead one at once
+  (its 10–20 s already act as grace).
+- **Hardening:**
+  - messages from sockets without an id are dropped;
+  - phone secrets use `crypto`;
+  - every socket has an `error` handler (main session), so a broken frame can't crash the
+    server.
+
+**Client:**
+- `sessionStorage['ac_screen']` holds the secret. `busy` stops reconnecting and calls `onBusy`.
+- A tab with the secret connects directly; any other tab asks `/info` first.
+- The dialog offers „👀 Mitschauen“ and „🔄 Nochmal versuchen“; „Trotzdem übernehmen“ is gone.
+- A duplicated tab copies `sessionStorage` and does take over (documented).
+
+**Tests and texts:**
+- `test-screen-lock.js` (new, in `npm test`) covers the protocol, grace, heartbeat and pages.
+- `test-helpers` (`makeBus`, `makeDom` with a real WebSocket), `test-reload`, `test-gamenight`,
+  `test-viewer` and `test-controller-reconnect` are updated.
+- `docs/ONLINE.md`, `index.html` and `README.md` say that a running screen can't be taken over.
+
+**On Render:** after a wake-up or redeploy, whoever opens the screen first gets it. F5 on the
+TV is instant; a new tab needs about 8 s (or up to 20 s after a crash), then „Nochmal
+versuchen“.
 
 ### Bots — as built (Phase 2, E4)
 

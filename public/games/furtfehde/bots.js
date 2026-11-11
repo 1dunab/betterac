@@ -77,7 +77,7 @@
     opts = opts || {};
     const P = PROFILES[opts.strength] || PROFILES.ritter, strength = PROFILES[opts.strength] ? opts.strength : 'ritter';
     const rng = mulberry32(((opts.seed | 0) ^ Math.imul(lord + 1, 0x9E3779B1)) >>> 0);
-    const stats = { thinks: 0, builds: 0, buildFails: 0, rebuilds: 0, cancels: 0, recruits: 0, attacks: 0, retreats: 0, defends: 0, raids: 0, targets: 0, pactYes: 0, pactNo: 0, errors: 0, lastError: '',
+    const stats = { thinks: 0, builds: 0, buildFails: 0, rebuilds: 0, cancels: 0, recruits: 0, attacks: 0, retreats: 0, defends: 0, raids: 0, targets: 0, pactYes: 0, pactNo: 0, renews: 0, errors: 0, lastError: '',
       trades: 0, goldIn: 0, goldOut: 0, wallPieces: 0, rams: 0, garrisons: 0, sieges: 0 };
     const noop = { step() {}, stats, info() { return {}; }, strength, lord };
     if (!sim || !sim.state || !W) return noop;
@@ -936,10 +936,10 @@
       orderTo(n, h.x, h.y);
       s.mode = 'retreat'; s.def = false; s.cool = c.t + (n === 3 ? RAID_COOL : 12);
     }
-    function pickHouse(from, n) {
+    function pickHouse(from, n, plus) {   // plus: one more house to weigh (a pact partner, for the renewal's dry run: no dice are rolled then)
       const F = fieldsFrom(cellOf(from.x, from.y)).F, s = bn[n];
       let best = null, bs = Infinity;
-      for (const l of c.foes) {
+      for (const l of plus ? c.foes.concat(plus) : c.foes) {
         if ((hits.get(l.i) || 0) > c.t || (s.noHouse.get(l.i) || 0) > c.t) continue;
         const ls = world.sites[l.site], lo = l.site < 2 ? 1 : -1;
         const g = cellOf(ls.x + 0.5, ls.y + 3.5 * lo), tt = g >= 0 ? F[g] : Infinity;
@@ -948,7 +948,7 @@
         if (P.aim === 'crown' || P.aim === 'weak') { if (l.crown) score -= 1000; }
         if (P.aim === 'weak') score += (l.soldiers * 4 + l.people) * 1.5;
         if (focus.house === l.i && focus.until > c.t) score -= 40;
-        if (P.mist > 0 && rng() < P.mist) score += 60;
+        if (!plus && P.mist > 0 && rng() < P.mist) score += 60;
         if (score < bs) { bs = score; best = l; }
       }
       return best;
@@ -1159,18 +1159,33 @@
       return best;
     }
 
-    // ---- pacts: never offer, never break; answer offers ----
+    // ---- pacts: never offer a new one, never break one; answer offers, and (F2) renew a pact it is happy with ----
+    // the judgement of accepting: the offerer is stronger than this bot, or somebody else is at its throat
+    function pleased(from) {
+      let fought = false;
+      if (threat) for (const u of st.units) if (u.lord !== lord && u.lord !== from.i && u.kind !== 'bauer' && u.hp > 0 && hyp(u.x - threat.x, u.y - threat.y) <= 14) { fought = true; break; }
+      return from.soldiers > c.soldiers || fought;
+    }
+    // is this bot planning something against house h? a banner still on its way to it, the house it launched at last, or the house it would pick next if no pact held
+    // (pickHouse with h added to the foes, without the dice: a partner who is the crowned house or the nearest is the next target)
+    function eyeOn(h) {
+      for (let n = 1; n <= 3; n++) if (bn[n].house === h.i && (bn[n].mode === 'march' || bn[n].mode === 'siege')) return true;
+      if (focus.house === h.i && focus.until > c.t) return true;
+      return pickHouse(gate, 1, h) === h;   // (from the keep gate: a banner's own spot may be a cell between the farms)
+    }
     function pacts() {
       for (const p of c.y.pacts) {
-        if (p.state !== 'incoming') continue;
         const from = st.lords.find(l => l.i === p.with);
         if (!from) continue;
+        if (p.state === 'active') {   // the last RENEW_S of a pact: renew it (offer, or answer the partner's offer) when pleased with it and not planning an attack on the partner
+          if (p.renew === 'offered' || p.until - c.t > C.RENEW_S + 1e-9) continue;
+          if (pleased(from) && !eyeOn(from) && sim.pact(lord, from.i, true).ok) stats.renews++;
+          continue;
+        }
+        if (p.state !== 'incoming') continue;
         // accept from a stronger house, or while somebody else is at our throat
-        let fought = false;
-        if (threat) for (const u of st.units) if (u.lord !== lord && u.lord !== from.i && u.kind !== 'bauer' && u.hp > 0 && hyp(u.x - threat.x, u.y - threat.y) <= 14) { fought = true; break; }
-        const stronger = from.soldiers > c.soldiers;
-        const r = sim.pact(lord, from.i, stronger || fought);
-        if (stronger || fought) { if (r.ok) stats.pactYes++; } else stats.pactNo++;
+        const yes = pleased(from), r = sim.pact(lord, from.i, yes);
+        if (yes) { if (r.ok) stats.pactYes++; } else stats.pactNo++;
       }
     }
 

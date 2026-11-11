@@ -9,8 +9,8 @@
 // Needs world.js and warmap.js loaded before it. Protocol: docs/FURTFEHDE.md "Phone protocol (Phase 1, binding)" as interpreted in its Implementation notes:
 //   screen → phone  ffInfo { lord (index, −1 = spectator), color, host, lords [{ i, site, color, name, emblem, bot }], shared (co-player's name | false), costs { build: { kind: cost }, units: { unit: cost }, rebuild },
 //                           rules { bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses, tradePack, prices { sell { korn, holz, stein }, buy { … } } } (FurtSim.CONST: the well coverage, the 📦 Lager sheet and the Markt need them; without it the sim's defaults and the contract's 5 / 1-1-2 / 3-3-5) } · ffMap { grid, sites, crossings } · ffLevel { L }
-//                   ffPhase { phase 'frieden'|'ebbe'|'fehde'|'over', endsAt (sim s the CURRENT phase ends), now (sim s) } · ffYou { stock { korn, holz, stein, gold }, cap { korn, holz, stein } (gold has none), pop, popCap, idle, hunger, queue [{ unit, n, p, wait? }] (wait: no peasant has been sent to the Kaserne for this recruit yet), ruhm, crown, pacts [{ with, state, until }], banners? [{ n (0 = Burgwache), count, x, y, tx, ty }], now?, food? { prod, eat } (sacks per minute) }
-//                   ffBoard { b: [[id, lord, kind, i, j, rot, build, hp, fire, ruined, noWood?, workers?, rest?, len?, garrison?]], banners: [[lord, n, x, y, count]] } (rest: 0 works · 1 rests by order (💤) · 2 rests because its store is full; len = the length of a wall piece, garrison = the archers inside; old rows with 9 – 14 fields mean: works, len 1, garrison 0) · ffAlert { kind, text, x?, y? } · ffToast { text } · ffResult { ranking, you? }
+//                   ffPhase { phase 'frieden'|'ebbe'|'fehde'|'over', endsAt (sim s the CURRENT phase ends), now (sim s) } · ffYou { stock { korn, holz, stein, gold }, cap { korn, holz, stein } (gold has none), pop, popCap, idle, hunger, queue [{ unit, n, p, wait? }] (wait: no peasant has been sent to the Kaserne for this recruit yet), ruhm, crown, pacts [{ with, state, until, renew? ('offered' | 'incoming' | null) }], banners? [{ n (0 = Burgwache), count, x, y, tx, ty }], now?, food? { prod, eat } (sacks per minute) }
+//                   ffBoard { b: [[id, lord, kind, i, j, rot, build, hp, fire, ruined, noWood?, workers?, rest?, len?, garrison?]], banners: [[lord, n, x, y, count]] } (rest: 0 works · 1 rests by order (💤) · 2 rests because its store is full; len = the length of a wall piece, garrison = the archers inside; old rows with 9 – 14 fields mean: works, len 1, garrison 0) · ffAlert { kind, text, x?, y?, renew? (the partner's lord: the alert gets a „Verlängern“ button), incoming? (that partner offered: „✅“ instead of „🔁“) } · ffToast { text } · ffResult { ranking, you? }
 //   phone → screen  ffBuild { kind, i, j, rot, len? } (also = rebuild a ruin; len only for a wall piece's ruin) · ffWall { kind, pieces [[i, j, rot, len], …] } (the good pieces of a line, in order) · ffTrade { good, side 'sell'|'buy', packs } · ffCancel { id } · ffRecruit { unit, n }
 //                   · ffBanner { n, x, y } (a drop within 1 cell of an own Mauer, Torhaus or Wachturm keeps its exact point: it is a garrison order) · ffHome · ffPact { to, on } · ffPause { id, on } (a workplace rests / works again) · ffAgain (host, end screen)
 (function () {
@@ -178,6 +178,9 @@
   .pt-b .go { background:#2f9a44; color:#fff; } .pt-b .no { background:#8a3a2e; color:#fff; } .pt-b .brk { background:#7a2a2a; color:#fff; }
   .pt-b button[hidden] { display:none; }
   .ff-pact.busy .pt-b button { opacity:.45; pointer-events:none; }
+  .ff-pact.ending { border-color:#e0a030; box-shadow:0 0 12px rgba(224,160,48,.3); } .ff-pact.ending .pt-s { background:#a8701c; }   /* the last minute of a pact: it can be renewed */
+  .ff-pact.renewin { border-color:#e6b830; box-shadow:0 0 14px rgba(230,184,48,.4); }
+  .pt-b .rn { background:#c98a1c; color:#fff; }
   #ffPNote { flex:none; display:none; font-size:11px; line-height:1.35; opacity:.62; padding:0 3px; }
   #ffOffer { position:absolute; left:8px; right:8px; bottom:8px; z-index:8; display:none; flex-direction:column; gap:6px; padding:7px 9px 10px; border:2px solid #e6b830; border-radius:16px; overflow:hidden;
              background:linear-gradient(#5a4528,#3a2a1a); box-shadow:0 6px 22px rgba(0,0,0,.55), 0 0 18px rgba(230,184,48,.4); }
@@ -293,6 +296,8 @@
   @keyframes ffWob { 0%,100% { transform:rotate(0); } 25% { transform:rotate(-16deg) scale(1.15); } 75% { transform:rotate(16deg) scale(1.15); } }
   #ffAlert .tx { flex:1; min-width:0; }
   #ffAlert .x { flex:none; opacity:.7; font-size:15px; }
+  #ffAlert .act { flex:none; min-height:40px; padding:4px 11px; border:2px solid rgba(255,255,255,.85); border-radius:11px; background:rgba(0,0,0,.3); color:#fff; font-size:14px; font-weight:900; text-shadow:none; white-space:nowrap; }
+  #ffAlert .act[hidden] { display:none; }
   #ffAlert.attack { background:#b3261e; } #ffAlert.fire { background:#d9531e; } #ffAlert.hunger { background:#8a5a1c; } #ffAlert.plunder { background:#7d1f5a; }
   #ffAlert.crossing { background:#1f6fa8; } #ffAlert.pact { background:#2a8a45; } #ffAlert.crown { background:#e0a820; color:#2b1d0e; text-shadow:none; border-bottom-color:rgba(255,255,255,.8); }
   @keyframes ffDrop { from { transform:translateY(-100%); opacity:0; } to { transform:none; opacity:1; } }
@@ -448,9 +453,9 @@
         <button class="ff-home" id="ffHome">🏰 Alle heim</button>
       </div>
       <div class="ff-sec" id="ffPPak">
-        <div class="ff-h">🤝 Pakte <small>· 3 Min, dann ist Schluss</small></div>
+        <div class="ff-h">🤝 Pakte <small>· 3 Min, verlängerbar</small></div>
         <div id="ffPacts"></div>
-        <div id="ffPNote">Verbündete greifen sich nicht an und betreten ihr Land nicht. Wer einen Pakt bricht, verliert 5 Ruhm und der Verratene wird zornig.</div>
+        <div id="ffPNote">Verbündete greifen sich nicht an und betreten ihr Land nicht. Läuft ein Pakt ab, ziehen die Fahnen heim und es gibt 30 Sekunden Waffenruhe. Wer einen Pakt bricht, verliert 5 Ruhm und der Verratene wird zornig.</div>
       </div>
       <div class="ff-sec" id="ffPSpec">
         <div id="ffSpecT">👀 Alle Burgen sind besetzt</div>
@@ -494,7 +499,7 @@
       <div class="lg-body" id="ffMarktBody" hidden></div>
     </div>
   </div>
-  <div id="ffAlert"><span class="ic"></span><span class="tx"></span><span class="x">✕</span></div>
+  <div id="ffAlert"><span class="ic"></span><span class="tx"></span><button class="act" id="ffAlertAct" hidden></button><span class="x">✕</span></div>
   <div id="ffFlash"></div>
   <div id="ffWait" class="ff-over show">🏰 Warte auf die Karte…<div class="sub">Der Fernseher zeichnet gerade das Tal.</div></div>
   <div id="ffEnd" class="ff-over">
@@ -628,7 +633,9 @@
       '**💧 Schutz-Ansicht:** Wenn du einen Brunnen platzierst oder deinen Brunnen oder die Burg antippst, malt die Karte blaue Kreise dorthin, wo schon gelöscht wird. Ein **blauer 💧-Ring** an einem Holzgebäude heißt „geschützt“, ein **oranger Ring** heißt „ungeschützt“.'] },
     { id: 'pakte', nav: '🤝 Pakte', t: '🤝 Pakte', lines: [
       'Ab drei Häusern kannst du unter 🤝 Pakte einem Haus einen Pakt anbieten (3 Minuten). Nimmt es an, greifen sich beide nicht an und betreten das Land des anderen nicht.',
-      '**🗡️ Wer einen Pakt bricht**, verliert 5 Ruhm. Der Verratene wird zornig: +25 % Schaden für 1 Minute.'] },
+      '**🔁 Verlängern:** In der letzten Minute eines Pakts zeigt seine Pakt-Karte den Knopf „🔁 Verlängern“, 30 Sekunden vor dem Ende kommt dazu eine Warnung. Verlängern beide, gilt der Pakt 3 Minuten länger. Reicht es nur einem, läuft er einfach aus.',
+      '**🕊️ Abzug:** Läuft ein Pakt ab, ziehen deine Fahnen, die auf das Land des Ex-Partners zielen, von selbst heim. Danach gibt es noch 30 Sekunden Waffenruhe: niemand greift an, die Tore bleiben offen. Dann ist wieder Fehde.',
+      '**🗡️ Wer einen Pakt bricht**, verliert 5 Ruhm. Der Verratene wird zornig: +25 % Schaden für 1 Minute. Nach einem Bruch gibt es keine Waffenruhe.'] },
     { id: 'bots', nav: '🤖 Bots', t: '🤖 Bot-Stärken', lines: [
       'Leere Häuser spielt ein Bot. Der Gastgeber stellt vor dem Start die **Bot-Stärke** ein:',
       '🛡️ **Knappe:** leicht.',
@@ -638,7 +645,7 @@
   ];
   const SLOTS = { hof: 1, holzfaeller: 1, steinbruch: 2 };   // worker slots (the screen sends `workers`)
   // The numbers of the rules (docs "Phase 1b addendum"): the screen sends them as ffInfo.rules (FurtSim.CONST); without them these, the sim's defaults
-  const RULES0 = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4 };
+  const RULES0 = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, renewS: 60 };   // renewS (F2): a pact can be renewed in its last 60 s
   // Phase 2: the Markt's prices (💰 per pack of `tradePack` goods) are ffInfo.rules.prices { sell: { korn, holz, stein }, buy: { … } } and ffInfo.rules.tradePack; without them the contract's numbers
   const PRICES0 = { sell: { korn: 1, holz: 1, stein: 2 }, buy: { korn: 3, holz: 3, stein: 5 } }, PACK0 = 5;
   const rulesFrom = (r) => {
@@ -1065,19 +1072,33 @@
   $('ffTipX').addEventListener('click', (e) => { e.stopPropagation(); const t = st.tip; if (!t) return; st.tipSnooze[t.id] = nowMs() + TIP_SNOOZE_MS; if (st.forceTip === t.id) st.forceTip = 0; renderTip(); });
 
   // ---------- alerts: a full-width banner, a colour and a vibration pattern per kind ----------
-  function alertShow(kind, text, x, y) {
+  // `renew` (F2): the partner's lord of an active pact: the alert gets the button „🔁 Verlängern“ (the warning 30 s before the end) or „✅ Verlängern“ (`incoming`: the partner asked)
+  function alertShow(kind, text, x, y, renew, incoming) {
     const a = ALERTS[kind]; if (!a) return;
     const box = $('ffAlert'), clean = String(text || '').replace(/^[^\p{L}\p{N}„"(]+/u, '').slice(0, 90) || a.dflt;   // the icon is ours: drop the herald's leading emoji
-    box.className = 'show ' + kind; box.querySelector('.ic').textContent = a.ic; box.querySelector('.tx').textContent = clean;
+    const act = $('ffAlertAct'), btn = kind === 'pact' && typeof renew === 'number' && !isSpec() && !!st.lords[renew] && pactsOn(), ms = btn ? Math.max(a.ms, 9000) : a.ms;
+    box.className = 'show ' + kind; box.querySelector('.ic').textContent = kind === 'pact' && /^⏳/.test(String(text || '')) ? '⏳' : a.ic; box.querySelector('.tx').textContent = clean;   // (the warning „⏳ Pakt endet in 30 s“ keeps its hourglass)
+    act.hidden = !btn; if (btn) { act.textContent = incoming ? '✅ Verlängern' : '🔁 Verlängern'; act.dataset.to = renew; }
     box.style.setProperty('--sh', $('ffTop').offsetHeight + 'px');
-    clearTimeout(alertT); st.alert = { kind, until: nowMs() + a.ms };
-    if (!STILL) alertT = setTimeout(alertHide, a.ms);
+    clearTimeout(alertT); st.alert = { kind, until: nowMs() + ms, renew: btn ? renew : null };
+    if (!STILL) alertT = setTimeout(alertHide, ms);
     vib(a.buzz);
     if (kind === 'attack') { const f = $('ffFlash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); }
     if (map && typeof x === 'number' && typeof y === 'number') map.ping(x, y, kind === 'fire' ? '#e8601c' : kind === 'attack' ? '#d93025' : '#7d1f5a');
   }
   function alertHide() { clearTimeout(alertT); alertT = 0; st.alert = null; $('ffAlert').classList.remove('show'); }
   $('ffAlert').addEventListener('click', alertHide);
+  $('ffAlertAct').addEventListener('click', (e) => {   // „Verlängern“ on an alert: only while the pact is still active (a stale alert must not turn into a new offer)
+    e.stopPropagation();
+    const to = +$('ffAlertAct').dataset.to, p = pactOf(to);
+    if (p.state === 'active' && p.renew !== 'offered') pactSend(to, true); else if (p.state !== 'active') toast('🤝 Der Pakt ist schon abgelaufen');
+    alertHide();
+  });
+  function refreshAlertAct() {   // the alert's button goes when its pact is gone or our renewal is out
+    if (!st.alert || st.alert.renew == null || $('ffAlertAct').hidden) return;
+    const p = pactOf(st.alert.renew);
+    if (p.state !== 'active' || p.renew === 'offered') $('ffAlertAct').hidden = true;
+  }
 
   // ---------- costs ----------
   function affordance(cost) {   // → list of missing resources
@@ -1361,11 +1382,12 @@
 
   // ---------- 🤝 Pakte ----------
   const pactsOn = () => !isSpec() && st.lords.filter(Boolean).length > 2;
+  // F2: `win` = an active pact in its last renewS seconds (it can be renewed); `renew` = 'offered' (we asked) | 'incoming' (the partner asked) | null
   const pactOf = (i) => {
     const p = st.pacts.find((x) => x.with === i);
-    if (!p) return { with: i, state: 'none', until: 0, left: null };
-    const left = typeof p.left === 'number' ? p.left : remaining(p.until);
-    return { with: i, state: left != null && left <= 0 ? 'none' : p.state, until: p.until, left };
+    if (!p) return { with: i, state: 'none', until: 0, left: null, renew: null, win: false };
+    const left = typeof p.left === 'number' ? p.left : remaining(p.until), state = left != null && left <= 0 ? 'none' : p.state;
+    return { with: i, state, until: p.until, left, renew: state === 'active' && (p.renew === 'offered' || p.renew === 'incoming') ? p.renew : null, win: state === 'active' && left != null && left <= st.rules.renewS };
   };
   function buildPactRows() {
     const box = $('ffPacts'); box.innerHTML = '';
@@ -1381,6 +1403,8 @@
       mk('ffPWithdraw', '', '↩️ Angebot zurückziehen', () => pactSend(i, false));
       mk('ffPYes', 'go', '✅ Annehmen', () => pactSend(i, true));
       mk('ffPNo', 'no', '✖ Ablehnen', () => pactSend(i, false));
+      mk('ffPRenew', 'rn', '🔁 Verlängern', () => pactSend(i, true));   // F2: in the last minute of an active pact; „on: true“ there is the renewal offer
+      mk('ffPRenewYes', 'go', '✅ Verlängern', () => pactSend(i, true));   // … and when the partner has asked for it
       mk('ffPBreak', 'brk', '🗡️ Pakt brechen', () => { st.breaking = i; renderPacts(); });
       mk('ffPBack', '', 'Zurück', () => { st.breaking = null; renderPacts(); });
       mk('ffPSure', 'brk', '🗡️ Ja, brechen', () => { st.breaking = null; pactSend(i, false); vib([60, 40, 160]); });
@@ -1400,15 +1424,17 @@
       if (!l || l.i === st.lord) return;
       const i = l.i, row = $('ffPact-' + i); if (!row) return;
       const p = pactOf(i), left = p.left, busy = (st.busy[i] || 0) > nowMs(), brk = st.breaking === i && p.state === 'active';
-      if (p.state === 'incoming') incoming++; if (p.state === 'active') active.push(i);
-      row.className = 'ff-pact ' + p.state + (busy ? ' busy' : '');
+      if (p.state === 'incoming' || p.renew === 'incoming') incoming++; if (p.state === 'active') active.push(i);
+      row.className = 'ff-pact ' + p.state + (p.win ? ' ending' : '') + (p.renew === 'incoming' ? ' renewin' : '') + (busy ? ' busy' : '');
       row.querySelector('.nm').textContent = houseName(l) || 'Haus ' + (i + 1);
-      row.querySelector('.pt-s').textContent = p.state === 'none' || left == null ? '' : mmss(left);
+      row.querySelector('.pt-s').textContent = p.state === 'none' || left == null ? '' : (p.win ? '⏳ ' : '') + mmss(left);   // the last minute of a pact: the countdown gets the hourglass
+      const state = p.win ? { offered: '🔁 Verlängerung angeboten …', incoming: '🔁 will den Pakt verlängern' }[p.renew] || '⏳ Der Pakt endet bald – verlängern?' : 'ihr seid verbündet';
       const pl = playerNames(l), msg = brk ? 'Verrat kostet 5 Ruhm, und das Haus wird zornig (+25 % Schaden, 1 Min).' :
-        { none: '', offered: 'Angebot läuft …', incoming: 'bietet einen Pakt an', active: 'ihr seid verbündet' }[p.state];
+        { none: '', offered: 'Angebot läuft …', incoming: 'bietet einen Pakt an', active: state }[p.state];
       row.querySelector('.pt-t').textContent = brk ? msg : pl && msg ? pl + ' · ' + msg : pl || msg;
       const show = (id, v) => { $(id + '-' + i).hidden = !v; };
       show('ffPOffer', p.state === 'none'); show('ffPWithdraw', p.state === 'offered'); show('ffPYes', p.state === 'incoming'); show('ffPNo', p.state === 'incoming');
+      show('ffPRenew', p.win && !p.renew && !brk); show('ffPRenewYes', p.win && p.renew === 'incoming' && !brk);   // (an offer of ours waits for the answer: no button)
       show('ffPBreak', p.state === 'active' && !brk); show('ffPBack', brk); show('ffPSure', brk);
     });
     const bd = $('ffBd-pakte');
@@ -1416,28 +1442,29 @@
     else if (active.length) { bd.textContent = active.length; bd.className = 'bd ok'; bd.style.display = 'block'; }
     else bd.style.display = 'none';
     if (map) map.setPartners(active);
-    updateOffer();
+    updateOffer(); refreshAlertAct();
   }
   function updateOffer() {   // the prompt: an incoming offer, whatever mode the player is in
     const box = $('ffOffer');
     let best = null;
     if (pactsOn()) for (const l of st.lords) {
       if (!l || l.i === st.lord) continue;
-      const p = pactOf(l.i);
-      if (p.state === 'incoming' && !(st.snooze[l.i] && st.snooze[l.i] === p.until) && (!best || (p.left == null ? 99 : p.left) < (best.p.left == null ? 99 : best.p.left))) best = { l, p };
+      const p = pactOf(l.i);   // F2: a partner's renewal offer („Verlängern“, no „Ablehnen“: ignoring it ends the pact in peace) is prompted like an incoming offer
+      if ((p.state === 'incoming' || p.renew === 'incoming') && !(st.snooze[l.i] && st.snooze[l.i] === p.until) && (!best || (p.left == null ? 99 : p.left) < (best.p.left == null ? 99 : best.p.left))) best = { l, p };
     }
-    st.offerTo = best ? best.l.i : null;
+    st.offerTo = best ? best.l.i : null; st.offerRenew = !!best && best.p.renew === 'incoming';
     const vis = !!best && st.mode !== 'pakte';
     root.classList.toggle('offer', vis); box.classList.toggle('show', vis);
     if (!best) return;
     $('ffOfDot').style.setProperty('--hc', best.l.color || '#8a7656');
-    const tx = $('ffOfTx'), name = houseName(best.l) || 'Ein Haus', html = '🤝 <b></b> bietet dir einen Pakt an';
-    if (tx.dataset.k !== name) { tx.dataset.k = name; tx.innerHTML = html; tx.querySelector('b').textContent = name; }
+    const tx = $('ffOfTx'), name = houseName(best.l) || 'Ein Haus', rn = st.offerRenew, html = rn ? '🤝 <b></b> will den Pakt verlängern' : '🤝 <b></b> bietet dir einen Pakt an';
+    if (tx.dataset.k !== name + rn) { tx.dataset.k = name + rn; tx.innerHTML = html; tx.querySelector('b').textContent = name; }
+    $('ffOfYes').textContent = rn ? '✅ Verlängern' : '✅ Annehmen'; $('ffOfNo').hidden = rn;
     $('ffOfT').textContent = best.p.left != null ? mmss(best.p.left) : '';
-    $('ffOfBar').style.width = best.p.left != null ? Math.max(0, Math.min(100, best.p.left / 30 * 100)) + '%' : '100%';
+    $('ffOfBar').style.width = best.p.left != null ? Math.max(0, Math.min(100, best.p.left / (rn ? st.rules.renewS : 30) * 100)) + '%' : '100%';
   }
   $('ffOfYes').addEventListener('click', () => { if (st.offerTo != null) pactSend(st.offerTo, true); });
-  $('ffOfNo').addEventListener('click', () => { if (st.offerTo != null) pactSend(st.offerTo, false); });
+  $('ffOfNo').addEventListener('click', () => { if (st.offerTo != null && !st.offerRenew) pactSend(st.offerTo, false); });   // (never for a renewal: „on: false“ on an active pact is betrayal)
   $('ffOfLater').addEventListener('click', () => { if (st.offerTo != null) { st.snooze[st.offerTo] = pactOf(st.offerTo).until; updateOffer(); } });
 
   // ---------- well coverage (docs "W1") ----------
@@ -1846,7 +1873,7 @@
           break;
         }
         case 'ffBoard': applyBoard(d); break;
-        case 'ffAlert': alertShow(d.kind, d.text, d.x, d.y); break;
+        case 'ffAlert': alertShow(d.kind, d.text, d.x, d.y, d.renew, d.incoming === true); break;
         case 'ffResult': showEnd(d); break;
         case 'ffToast': if (d.text) toast(d.text); break;
       }

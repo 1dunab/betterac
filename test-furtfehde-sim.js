@@ -7,6 +7,8 @@
 // Durchbruch (Feld mit BREACH_COST, Rammbock, VS_WALL, Pfeile gegen Stein und Holz), Palisadenbrand, Markt und Gold (trade, Plünderung), Söldnerlager (Rekrutierung nach Haus, TRAIN_PAR je Haus),
 // Reiterschütze (Ausweichen, Schuss im Ritt), Rammbock (nur Gebäude, Pfeile × 0.25), Wehrgang (Besetzen, Reichweite, Rüstung, Abstieg, Sturz, Burgwache), Zustandsform, Zwischenspeicher der Sichten,
 // eine 4-Minuten-Belagerung (Determinismus, Invarianten) und die Leistung mit Mauern auf der Karte.
+// Phase 2a (F2, Pakte enden friedlich): P1 Verlängern (RENEW_S, beide / einer / außerhalb des Fensters, pactRenewOffer, youOf().pacts[].renew), P2 Abzug (PACT_GRACE_S: keine Schläge, keine Pfeile,
+// Tore offen; die Banner mit Ziel nahe den Gebäuden des anderen ziehen heim) und P3 (ein gebrochener Pakt gibt keine Waffenruhe).
 const fs = require('fs');
 const W = require('./public/games/furtfehde/world.js');
 const Sim = require('./public/games/furtfehde/sim.js');
@@ -100,6 +102,7 @@ function stage(sim, l, kind, p, n) {
   const bb = (k) => { const x = C.BUILD[k], c = x.cost || {}; return (c.holz || 0) + 'h' + (c.stein || 0) + 's/' + x.buildS + 's/' + x.hp + 'hp' + (x.perCell ? '/je Zelle' : ''); };
   eq(['palisade', 'mauer', 'torhaus', 'markt', 'soeldnerlager'].map(bb).join(' '), '1h0s/2s/150hp/je Zelle 0h2s/4s/450hp/je Zelle 4h12s/20s/1400hp 10h0s/14s/300hp 12h0s/16s/350hp', 'Phase-2-Gebäude: Kosten, Bauzeit, HP');
   eq([C.WADE_DEALT, C.WADE_TAKEN, C.ZORN_MUL, C.ZORN_S].join(), '0.7,1.25,1.25,60', 'Waten und Zorn');
+  eq([C.RENEW_S, C.PACT_GRACE_S, C.ABZUG_PAD, C.PACT_ZONE].join(), '60,30,4,6', 'Phase 2a (F2): Verlängern in den letzten 60 s, 30 s Waffenruhe, Abzug-Reichweite PACT_ZONE + 4');
   eq([C.SCAN_S, C.AGGRO_MELEE, C.AGGRO_BOGEN, C.LEASH, C.GUARD_R, C.GUARD_SELF_R, C.SLOT_GAP, C.SLOT_ROW, C.SNAP_R, C.SIEGE_R, C.TORCH_R, C.TORCH_DODGE_R].join(), '0.5,6,10,12,16,8,1.3,6,12,3,15,3', 'Heer');
   eq([C.KEEP.range, C.KEEP.dmg, C.KEEP.cd, C.TOWER.range, C.TOWER.dmg, C.TOWER.cd, C.FLIGHT_MIN, C.FLIGHT_MAX].join(), '12,6,2,12,7,1.5,0.35,0.7', 'Pfeile');
   eq([C.FIRE_GROW, C.FIRE_DMG, C.SPREAD_AT, C.SPREAD_AFTER_S, C.SPREAD_FIRE, C.SPREAD_R, C.SPREAD_R_HOF, C.CROP_BURN_AT, C.BURNT_FADE_S].join(), '0.03,20,0.6,8,0.2,3,4,0.3,60', 'Feuer');
@@ -144,7 +147,7 @@ function stage(sim, l, kind, p, n) {
   const y = sim.youOf(1);
   eq(Object.keys(y).join(), 'stock,cap,pop,popCap,idle,hunger,queue,ruhm,crown,banners,pacts,food', 'youOf-Felder');
   eq(JSON.stringify(y.stock) + JSON.stringify(y.cap) + y.pop + '/' + y.popCap + '/' + y.idle, '{"korn":20,"holz":25,"stein":0,"gold":0}{"korn":30,"holz":30,"stein":30}6/8/6', 'youOf am Anfang');
-  eq(y.hunger, false, 'youOf.hunger'); eq(JSON.stringify(y.queue), '[]', 'youOf.queue'); eq(y.pacts.length, 3, 'youOf.pacts: die drei anderen Häuser'); ok(y.pacts.every(p => p.state === 'none' && p.until === 0), 'youOf.pacts: keine Pakte');
+  eq(y.hunger, false, 'youOf.hunger'); eq(JSON.stringify(y.queue), '[]', 'youOf.queue'); eq(y.pacts.length, 3, 'youOf.pacts: die drei anderen Häuser'); ok(y.pacts.every(p => p.state === 'none' && p.until === 0 && p.renew === null && Object.keys(p).join() === 'with,state,until,renew'), 'youOf.pacts: keine Pakte, Felder with,state,until,renew');
   eq(sim.youOf(7), null, 'youOf(unbekannt) = null');
   // 3 and 2 houses: the glue passes lords [{i, site}]
   const s3 = mk({ lords: [{ i: 0, site: 0 }, { i: 1, site: 1 }, { i: 2, site: 3 }] }), s2 = mk({ lords: [{ i: 0, site: 0 }, { i: 1, site: 3 }] });
@@ -1653,9 +1656,11 @@ function spotBetween(sim, l, kind, lo, hi) {
   const c = clearing(sim, 0), A = stage(sim, 0, 'speer', c), B = stage(sim, 1, 'speer', { x: c.x + 1.1, y: c.y }), Bg = stage(sim, 1, 'bogen', { x: c.x + 3, y: c.y }, 2); A.hp = B.hp = Bg.hp = 1e5;
   const calm = run(sim, secs(8)); eq(ofType(calm, 'hit').length, 0, 'im Pakt keine Schläge und Treffer'); eq(ofType(calm, 'shot').length, 0, 'im Pakt keine Pfeile');
   const peas = sim.dev.spawn(0, 'bauer', c.x - 2, c.y, -1); run(sim, secs(2)); ok(peas._.job !== JOB.FLEE, 'Bauern fliehen nicht vor dem Partner');
-  // Zorn aside, the pact expires after 180 s; they fight again
-  const t0 = st.t, ex = until(sim, () => st.pacts.length === 0, secs(200)); const off = ofType(ex.log, 'pactOff'); eq(off.length, 1, 'pactOff'); eq(off[0].reason, 'expired', 'reason expired'); near(st.t, on[0].until, 0.2, 'der Pakt endet zur angekündigten Zeit until (' + st.t.toFixed(1) + ' vs ' + on[0].until.toFixed(1) + ')');
-  const fight = run(sim, secs(6)); ok(ofType(fight, 'hit').length > 0, 'nach Ablauf wird wieder gekämpft');
+  // the pact runs out after 180 s; P2: the houses stay friends for PACT_GRACE_S more (no blow), and only then do they fight again
+  const ex = until(sim, () => sim.youOf(0).pacts.find(p => p.with === 1).state === 'none', secs(200)); const off = ofType(ex.log, 'pactOff'); eq(off.length, 1, 'pactOff'); eq(off[0].reason, 'expired', 'reason expired'); near(st.t, on[0].until, 0.2, 'der Pakt endet zur angekündigten Zeit until (' + st.t.toFixed(1) + ' vs ' + on[0].until.toFixed(1) + ')');
+  near(off[0].grace, st.t + C.PACT_GRACE_S, 1e-6, 'pactOff.grace = Ende der Waffenruhe (30 s nach dem Ablauf)');
+  const calm2 = run(sim, secs(C.PACT_GRACE_S - 2)); eq(ofType(calm2, 'hit').length, 0, 'Waffenruhe: 28 s nach dem Ablauf noch kein Schlag'); eq(ofType(calm2, 'shot').length, 0, 'Waffenruhe: kein Pfeil');
+  const fight = run(sim, secs(8)); ok(ofType(fight, 'hit').length > 0, 'nach der Waffenruhe wird wieder gekämpft');
 }
 {
   // offers expire after 30 s; decline and withdraw; breaking: −5 Ruhm, Zorn for the victim (damage × 1.25 for 60 s)
@@ -2475,6 +2480,206 @@ function battleScene(nSold, nPeas, seed) {
   }
 }
 
+// =====================================================================================================================
+// Phase 2a — F2 (docs/FURTFEHDE.md "P — pacts end peacefully"): P1 renewal, P2 Abzug and its grace, P3 a broken pact gets none
+// =====================================================================================================================
+const pactEntry = (sim, a, b) => sim.youOf(a).pacts.find(p => p.with === b);
+const startPact = (sim, a, b) => { sim.pact(a, b, true); sim.pact(b, a, true); run(sim, 1); return sim.state.pacts.find(p => p.a === Math.min(a, b) && p.b === Math.max(a, b) && !p.grace && p.until > 0).until; };   // → the pact's end
+const toLeft = (sim, U, s) => until(sim, () => U - sim.state.t <= s + 1e-9, secs(400));                                                                         // run until `s` seconds remain
+const ended = (sim, a, b, max) => until(sim, () => pactEntry(sim, a, b).state === 'none', max || secs(400));                                                    // run until the pact is gone
+{
+  // P1 — in the last RENEW_S of an active pact `pact(a, b, true)` is a renewal offer; once both houses have offered, the pact's end moves PACT_S further
+  const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+  const U = startPact(sim, 0, 1); near(U, st.t - 1 / 15 + C.PACT_S, 0.2, 'Pakt gilt PACT_S');
+  // outside the window `on` does nothing: no offer, no event, the end stays
+  toLeft(sim, U, C.RENEW_S + 1);
+  let r = sim.pact(0, 1, true); eq(r.ok, true, 'außerhalb des Fensters: ok'); eq(r.state, 'active', 'außerhalb: state bleibt active'); eq(r.renew, null, 'außerhalb: renew null');
+  eq(sim.pact(1, 0, true).renew, null, 'auch die Gegenseite außerhalb: nichts');
+  let l = run(sim, 3); eq(ofType(l, 'pactRenewOffer').length + ofType(l, 'pactOn').length, 0, 'außerhalb der letzten RENEW_S: weder Angebot noch pactOn'); eq(st.pacts[0].until, U, 'das Ende bleibt'); eq(pactEntry(sim, 0, 1).renew, null, 'youOf: renew null'); eq(pactEntry(sim, 1, 0).renew, null, 'youOf (Gegenseite): renew null');
+  // the window opens exactly RENEW_S before the end: one step earlier nothing, then an offer
+  until(sim, () => U - st.t < C.RENEW_S + 1.5 / 15, secs(10)); eq(sim.pact(0, 1, true).renew, null, 'eine Zeitscheibe vor dem Fenster: nichts'); run(sim, 1);
+  near(U - st.t, C.RENEW_S, 1e-6, 'jetzt bleiben genau RENEW_S'); r = sim.pact(0, 1, true); eq(r.ok, true, 'im Fenster: ok'); eq(r.state, 'active', 'der Pakt bleibt aktiv'); eq(r.renew, 'offered', 'genau RENEW_S vor dem Ende: Verlängerungsangebot');
+  l = run(sim, 1); const ro = ofType(l, 'pactRenewOffer'); eq(ro.length, 1, 'ein pactRenewOffer'); eq(JSON.stringify(ro[0]), JSON.stringify({ t: 'pactRenewOffer', from: 0, to: 1 }), 'pactRenewOffer { from, to }');
+  eq(sim.pact(0, 1, true).renew, 'offered', 'nochmal anbieten ändert nichts'); eq(ofType(run(sim, 1), 'pactRenewOffer').length, 0, 'kein zweites pactRenewOffer');
+  const y0 = pactEntry(sim, 0, 1), y1 = pactEntry(sim, 1, 0);
+  eq(y0.renew, 'offered', 'youOf(0): renew offered'); eq(y1.renew, 'incoming', 'youOf(1): renew incoming'); eq(y0.state + y1.state, 'activeactive', 'beide weiter active'); eq(y0.until + y1.until, 2 * U, 'until bleibt das alte Ende');
+  eq(sim.youOf(2).pacts.find(p => p.with === 0).renew, null, 'ein Dritter sieht kein renew'); eq(Object.keys(y0).join(), 'with,state,until,renew', 'youOf.pacts-Felder: with,state,until,renew');
+  eq(st.pacts.length, 1, 'state.pacts: ein Eintrag'); eq(Object.keys(st.pacts[0]).join(), 'a,b,until', 'state.pacts: a,b,until (das Angebot steht nur in youOf)');
+  // the partner answers: the end moves to end + PACT_S, `pactOn` again (a = the first to offer)
+  const ans = sim.pact(1, 0, true); eq(ans.state, 'active', 'Antwort: active'); eq(ans.renew, 'renewed', 'Antwort: renewed');
+  l = run(sim, 1); const on = ofType(l, 'pactOn'); eq(on.length, 1, 'pactOn noch einmal'); eq(on[0].a, 0, 'pactOn.a = wer zuerst anbot'); eq(on[0].b, 1, 'pactOn.b'); near(on[0].until, U + C.PACT_S, 1e-6, 'das neue Ende = altes Ende + PACT_S'); eq(Object.keys(on[0]).join(), 't,a,b,until', 'pactOn: dieselben Felder'); eq(ofType(l, 'pactOff').length, 0, 'keine pactOff');
+  eq(st.pacts.length, 1, 'ein Pakt'); eq(st.pacts[0].until, on[0].until, 'state.pacts folgt dem neuen Ende'); eq(pactEntry(sim, 0, 1).until, on[0].until, 'youOf(0).until'); eq(pactEntry(sim, 1, 0).until, on[0].until, 'youOf(1).until');
+  eq(pactEntry(sim, 0, 1).renew, null, 'nach der Verlängerung: renew null'); eq(pactEntry(sim, 1, 0).renew, null, 'auch bei der Gegenseite'); eq(sim.pact(1, 0, true).renew, null, 'danach wieder außerhalb des Fensters');
+  eq(sim.dev.lord(0).stats.pacts + '/' + sim.dev.lord(1).stats.pacts, '2/2', 'stats.pacts zählt das Verlängern wie jedes pactOn');
+  // nothing happens at the old end: the pact is still on a few seconds later
+  const cont = until(sim, () => st.t > U + 3, secs(100)); eq(ofType(cont.log, 'pactOff').length, 0, 'am alten Ende kein pactOff'); eq(pactEntry(sim, 0, 1).state, 'active', 'der Pakt gilt weiter');
+  // and the new term can be renewed in the same way: a renewal by the other side first, then the answer
+  const U2 = on[0].until; toLeft(sim, U2, C.RENEW_S - 10); eq(sim.pact(1, 0, true).renew, 'offered', 'zweites Verlängern: diesmal bietet Haus 1 an'); eq(pactEntry(sim, 0, 1).renew, 'incoming', 'Haus 0 sieht es'); eq(sim.pact(0, 1, true).renew, 'renewed', 'Haus 0 antwortet');
+  l = run(sim, 1); const on2 = ofType(l, 'pactOn'); eq(on2.length, 1, 'zweites pactOn'); eq(on2[0].a, 1, 'a = Haus 1 (wer zuerst anbot)'); near(on2[0].until, U2 + C.PACT_S, 1e-6, 'wieder + PACT_S (' + (U2 + C.PACT_S).toFixed(1) + ')');
+  // a pact that is renewed keeps its soldiers' peace across the old end: partners still ignore each other 10 s after it
+  const c = clearing(sim, 0), A = stage(sim, 0, 'speer', c), B = stage(sim, 1, 'speer', { x: c.x + 1.1, y: c.y }); A.hp = B.hp = 1e5;
+  eq(ofType(run(sim, secs(8)), 'hit').length, 0, 'im verlängerten Pakt weiter keine Schläge');
+}
+{
+  // P1 — from one side only there is no renewal: the pact runs out, the old offer is void (a later offer is a new pact for PACT_S from then on)
+  const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+  const U = startPact(sim, 0, 1); toLeft(sim, U, 40); eq(sim.pact(0, 1, true).renew, 'offered', 'nur Haus 0 bietet an');
+  const ex = ended(sim, 0, 1, secs(60)); const off = ofType(ex.log, 'pactOff'); eq(off.length, 1, 'der Pakt läuft aus'); eq(off[0].reason, 'expired', 'reason expired'); eq(ofType(ex.log, 'pactOn').length, 0, 'ohne Antwort keine Verlängerung'); near(st.t, U, 0.2, 'zur angekündigten Zeit');
+  eq(pactEntry(sim, 0, 1).renew, null, 'danach kein renew mehr'); eq(pactEntry(sim, 1, 0).renew, null, 'auch nicht bei der Gegenseite');
+  const r = sim.pact(1, 0, true); eq(r.state, 'offered', 'Haus 1 antwortet zu spät: das ist ein neues Angebot, kein Verlängern'); eq(r.renew, undefined, 'ohne renew-Feld');
+  let l = run(sim, 1); eq(ofType(l, 'pactOffer').length, 1, 'ein pactOffer'); eq(ofType(l, 'pactRenewOffer').length, 0, 'kein pactRenewOffer');
+  eq(sim.pact(0, 1, true).state, 'active', 'Haus 0 nimmt an: ein neuer Pakt'); l = run(sim, 1); const on = ofType(l, 'pactOn'); eq(on.length, 1, 'pactOn'); near(on[0].until, st.t - 1 / 15 + C.PACT_S, 0.2, 'neuer Pakt: PACT_S ab jetzt, nicht das alte Ende + PACT_S');
+  eq(st.pacts.length, 1, 'ein neuer Pakt beendet die laufende Waffenruhe (kein grace-Eintrag mehr)'); eq(st.pacts[0].grace, undefined, 'der Eintrag ist ein gewöhnlicher Pakt');
+  // the old offer left nothing behind: the new pact starts without a renewal, and in its window one house's offer is only an offer
+  eq(pactEntry(sim, 0, 1).renew, null, 'der neue Pakt trägt kein altes Verlängern'); eq(pactEntry(sim, 1, 0).renew, null, '… auch nicht bei der Gegenseite');
+  const U2 = on[0].until; toLeft(sim, U2, 30); eq(sim.pact(1, 0, true).renew, 'offered', 'im Fenster des neuen Pakts ist ein einzelnes `true` nur ein Angebot (das alte Angebot von Haus 0 ist verfallen)'); eq(ofType(run(sim, 1), 'pactOn').length, 0, 'kein pactOn');
+}
+{
+  // P1 — the partner may offer first; and the answer of the first side is no „accept“: only a second `true` renews
+  const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+  const U = startPact(sim, 0, 1); toLeft(sim, U, C.RENEW_S - 20); eq(sim.pact(1, 0, true).renew, 'offered', 'Haus 1 bietet zuerst an'); eq(pactEntry(sim, 0, 1).renew, 'incoming', 'Haus 0: incoming');
+  eq(sim.pact(1, 0, true).renew, 'offered', 'Haus 1 nochmal: bleibt offered (kein Selbst-Verlängern)'); eq(ofType(run(sim, 2), 'pactOn').length, 0, 'ein Haus allein verlängert nicht');
+  eq(sim.pact(0, 1, true).renew, 'renewed', 'Haus 0 verlängert'); const on = ofType(run(sim, 1), 'pactOn'); eq(on.length, 1, 'pactOn'); eq(on[0].a, 1, 'a = Haus 1'); near(on[0].until, U + C.PACT_S, 1e-6, 'U + PACT_S');
+  // three houses: a renewal concerns only its two; a third house's pact with one of them runs its own course
+  const s3 = mk({ burgfrieden: 0 }); toFehde(s3); const Ua = startPact(s3, 0, 1); run(s3, secs(30)); const Ub = startPact(s3, 0, 2);
+  toLeft(s3, Ua, 30); s3.pact(0, 1, true); s3.pact(1, 0, true); const o3 = ofType(run(s3, 1), 'pactOn'); eq(o3.length, 1, 'nur der Pakt 0–1 wurde verlängert'); near(pactEntry(s3, 0, 1).until, Ua + C.PACT_S, 1e-6, '0–1: + PACT_S'); eq(pactEntry(s3, 0, 2).until, Ub, '0–2: unverändert'); eq(pactEntry(s3, 0, 2).renew, null, '0–2: kein renew');
+}
+{
+  // P1 — a pending renewal is void when the pact is broken (and there is no grace, P3); ids that are not partners cannot renew
+  const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+  const U = startPact(sim, 0, 1); toLeft(sim, U, 30); sim.pact(0, 1, true); eq(pactEntry(sim, 1, 0).renew, 'incoming', 'Angebot steht');
+  const bk = sim.pact(1, 0, false); eq(bk.ok, true, 'Haus 1 bricht den Pakt'); eq(bk.state, 'none', 'state none'); const bo = ofType(run(sim, 1), 'pactOff'); eq(bo.length, 1, 'ein pactOff'); eq(bo[0].reason, 'broken', 'broken'); eq(bo[0].by, 1, 'by = Haus 1'); eq(Object.keys(bo[0]).join(), 't,a,b,reason,by', 'ohne grace');
+  eq(pactEntry(sim, 0, 1).renew, null, 'das Angebot ist hinfällig'); eq(st.pacts.length, 0, 'P3: keine Waffenruhe, kein Eintrag');
+  eq(sim.pact(2, 3, true).state, 'offered', 'Haus 2 und 3 ohne Pakt: ein Angebot, kein Verlängern'); eq(sim.pact(2, 3, true).renew, undefined, 'ohne renew');
+  eq(sim.pact(0, 1, true).state, 'offered', 'nach dem Bruch ist `true` ein neues Angebot'); sim.pact(0, 1, false); run(sim, 2);
+  // the broken pact's offer is gone for good: a new pact has no renewal pending, and one house's `true` in its window is only an offer
+  const U2 = startPact(sim, 0, 1); eq(pactEntry(sim, 0, 1).renew, null, 'der neue Pakt: kein renew'); eq(pactEntry(sim, 1, 0).renew, null, '… bei der Gegenseite auch nicht');
+  toLeft(sim, U2, 30); eq(sim.pact(1, 0, true).renew, 'offered', 'ein einzelnes `true` im Fenster ist nur ein Angebot (kein Rest des alten Angebots von Haus 0)'); eq(ofType(run(sim, 1), 'pactOn').length, 0, 'kein pactOn');
+}
+{
+  // P2 — the Abzug: after a pact has run out the houses stay friends for PACT_GRACE_S (no blow, no arrow, no death); a broken pact (P3) gets no grace
+  const scene = () => {
+    const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+    const c = clearing(sim, 0), A = stage(sim, 0, 'speer', c), B = stage(sim, 1, 'speer', { x: c.x + 1.1, y: c.y }), Ba = stage(sim, 1, 'bogen', { x: c.x + 3, y: c.y }, 2), Aa = stage(sim, 0, 'bogen', { x: c.x - 3, y: c.y }, 2);
+    for (const u of [A, B, Ba, Aa]) u.hp = 1e5;
+    return { sim, st, c, A, B };
+  };
+  { const { sim, st, A, B } = scene(); const U = startPact(sim, 0, 1);
+    eq(ofType(run(sim, secs(5)), 'hit').length, 0, 'im Pakt keine Schläge');
+    const ex = ended(sim, 0, 1, secs(200)); const off = ofType(ex.log, 'pactOff'); eq(off.length, 1, 'pactOff'); eq(JSON.stringify(Object.keys(off[0])), JSON.stringify(['t', 'a', 'b', 'reason', 'grace']), 'pactOff: t,a,b,reason,grace'); eq(off[0].reason, 'expired', 'expired'); near(off[0].grace, U + C.PACT_GRACE_S, 1e-6, 'grace = Ende + PACT_GRACE_S');
+    eq(ofType(ex.log, 'hit').length, 0, 'bis zum Ablauf kein Schlag');
+    // during the grace: state.pacts carries the Abzug entry (the view keeps the gates open for the two), youOf says „none“
+    eq(st.pacts.length, 1, 'Waffenruhe: ein Eintrag in state.pacts'); eq(JSON.stringify(Object.keys(st.pacts[0])), JSON.stringify(['a', 'b', 'until', 'grace']), 'Eintrag: a,b,until,grace'); eq(st.pacts[0].grace, true, 'grace: true'); near(st.pacts[0].until, off[0].grace, 1e-9, 'until = Ende der Waffenruhe');
+    eq(pactEntry(sim, 0, 1).state, 'none', 'youOf: kein Pakt mehr'); eq(pactEntry(sim, 0, 1).until, 0, 'until 0'); eq(pactEntry(sim, 0, 1).renew, null, 'renew null');
+    const calm = run(sim, secs(C.PACT_GRACE_S - 1)); eq(ofType(calm, 'hit').length, 0, 'Waffenruhe: kein Schlag'); eq(ofType(calm, 'shot').length, 0, 'Waffenruhe: kein Pfeil'); eq(ofType(calm, 'death').length, 0, 'Waffenruhe: kein Toter'); eq(ofType(calm, 'attack').length, 0, 'Waffenruhe: kein Angriffsalarm');
+    eq(A.hp, 1e5, 'A unversehrt'); eq(B.hp, 1e5, 'B unversehrt'); eq(st.pacts.length, 1, 'die Waffenruhe läuft noch');
+    const end = until(sim, () => st.pacts.length === 0, secs(5)); eq(end.hit, true, 'die Waffenruhe endet'); near(st.t, off[0].grace, 0.2, 'zur angekündigten Zeit (' + st.t.toFixed(2) + ' vs ' + off[0].grace.toFixed(2) + ')'); eq(ofType(end.log, 'pactOff').length, 0, 'ihr Ende meldet kein Ereignis');
+    ok(ofType(run(sim, secs(8)), 'hit').length > 0, 'danach wird wieder gekämpft'); ok(A.hp < 1e5 || B.hp < 1e5, 'Treffer fallen');
+    // after it a new pact is possible again, as always
+    eq(sim.pact(0, 1, true).state, 'offered', 'danach ein neues Angebot möglich'); }
+  { // P3: a broken pact leaves no grace — they fight at once, and no banner is sent home
+    const { sim, st, A, B } = scene(); startPact(sim, 0, 1); run(sim, secs(3));
+    const t0 = sim.youOf(0).banners.find(b => b.n === 1);
+    const bk = sim.pact(0, 1, false); eq(bk.state, 'none', 'Bruch'); const lb = run(sim, secs(3));
+    eq(ofType(lb, 'order').length, 0, 'P3: kein Banner wird heimgeschickt'); eq(st.pacts.length, 0, 'P3: keine Waffenruhe'); ok(ofType(lb, 'hit').length > 0, 'P3: sofort wird gekämpft (' + ofType(lb, 'hit').length + ' Treffer in 3 s)');
+    eq(sim.youOf(0).banners.find(b => b.n === 1).tx, t0.tx, 'P3: das Banner behält sein Ziel'); }
+}
+{
+  // P2 — the gate lanes stay open for the former partner during the grace, and close with it; its walls are no breach target meanwhile
+  const { sim, ci, cj } = patch(0), st = sim.state, R = ringOf(sim, 0, ci, cj, 'mauer', true), lk = laneKs(R.th), wk = R.pieces[0].j * GW + R.pieces[0].i;
+  startPact(sim, 0, 1); ok(lk.every(k => sim.dev.view(1)[k] === 0), 'Pakt: die Gasse ist offen für Haus 1');
+  const ex = ended(sim, 0, 1, secs(200)); eq(ofType(ex.log, 'pactOff').length, 1, 'der Pakt ist abgelaufen');
+  ok(lk.every(k => sim.dev.view(1)[k] === 0), 'Waffenruhe: die Gasse bleibt offen'); ok(lk.every(k => sim.dev.view(2)[k] === 1), '… für Haus 2 nicht'); eq(sim.dev.fview(1).B[wk], 1, 'Waffenruhe: die Mauer ist für Haus 1 kein Durchbruchsziel'); eq(sim.dev.fview(1).X, null, '… und kein Extrafeld');
+  const G = st.pacts[0].until; until(sim, () => G - st.t <= 1.5, secs(40));
+  const lanePt = { x: -71.5 + lk[0] % GW, y: -44.5 + Math.floor(lk[0] / GW) }, vs = sim.dev.spawn(1, 'speer', lanePt.x, lanePt.y, 1); run(sim, 1);
+  ok(lk.indexOf(W.cellOf(vs.x, vs.y)) >= 0, 'der frühere Partner steht in der Gasse (Waffenruhe)'); eq(ofType(run(sim, 1), 'hit').length, 0, 'er wird nicht angegriffen');
+  until(sim, () => st.pacts.length === 0, secs(5)); ok(lk.every(k => sim.dev.view(1)[k] === 1), 'Waffenruhe vorbei: die Gasse ist zu'); run(sim, 3);
+  ok(lk.indexOf(W.cellOf(vs.x, vs.y)) < 0 && !sim.dev.view(1)[W.cellOf(vs.x, vs.y)], 'er wurde aus der Gasse gesetzt'); vs.hp = 0; sim.dev.kill(vs);
+  eq(sim.dev.fview(1).B[wk], 0, 'danach ist die Mauer für Haus 1 wieder durchbrechbar'); near(sim.dev.fview(1).X[wk], C.BREACH_COST, 1e-9, '… zu BREACH_COST');
+}
+{
+  // P2 — at the expiry every banner (either house) aimed within PACT_ZONE + ABZUG_PAD of the other's buildings is sent home, the way plunder protection sends it; others stay
+  const sim = mk({ burgfrieden: 0 }), st = sim.state, w = sim.world; toFehde(sim);
+  const hut1 = placeAt(sim, 1, 'huette'), hut0 = placeAt(sim, 0, 'huette'); ok(hut1 && hut0, 'je eine Hütte für Haus 0 und 1');
+  const rectsOf = (l) => st.buildings.filter(b => b.lord === l).map(b => { const f = W.footprintOf(b.kind, b.rot, b.len); return { x0: -72 + b.i, y0: -45 + b.j, x1: -72 + b.i + f[0], y1: -45 + b.j + f[1] }; });
+  const dmin = (rs, x, y) => Math.min(...rs.map(r => Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math.max(r.y0 - y, 0, y - r.y1))));
+  // the banner's target ends up at distance d of the other house's nearest building: scan its quarter for ground that an order takes unchanged
+  const aim = (l, n, other, lo, hi) => {
+    const rs = rectsOf(other);
+    for (let k = 0; k < N; k++) {
+      if (w.owner[k] !== other || w.cls[k] === W.CI.T || sim.dev.blk[k]) continue;
+      const x = -71.5 + k % GW, y = -44.5 + Math.floor(k / GW), d = dmin(rs, x, y);
+      if (d < lo || d > hi) continue;
+      const r = sim.banner(l, n, x, y);
+      if (r.ok && r.reason === undefined) return { x, y, d };
+      sim.banner(l, n, gateOf(sim, l).x, gateOf(sim, l).y + gateOf(sim, l).out * 8);   // (not an order that lands as asked: try the next spot)
+    }
+    return null;
+  };
+  for (const l of [0, 1]) for (const n of [1, 2]) { const g = gateOf(sim, l); sim.dev.spawn(l, 'speer', g.x + n, g.y + g.out * 5, n); sim.dev.spawn(l, 'speer', g.x + n + 1, g.y + g.out * 5, n); }
+  const in0 = aim(0, 1, 1, 9.3, 9.8), out0 = aim(0, 2, 1, 10.2, 10.7), in1 = aim(1, 1, 0, 9.3, 9.8), out1 = aim(1, 2, 0, 10.2, 10.7);
+  ok(in0 && out0 && in1 && out1, 'Zielpunkte bei Abstand ≈ 9.5 (innen) und ≈ 10.5 (außen) zu den Gebäuden des anderen gefunden');
+  if (in0 && out0 && in1 && out1) {
+    startPact(sim, 0, 1);
+    const tgt = (l, n) => { const b = sim.youOf(l).banners.find(x => x.n === n); return { x: b.tx, y: b.ty }; };
+    near(tgt(0, 1).x, in0.x, 1e-9, 'vor dem Ablauf stehen die Ziele (0 / Banner 1)'); near(tgt(1, 2).x, out1.x, 1e-9, '(1 / Banner 2)');
+    const ex = ended(sim, 0, 1, secs(200)); const od = ofType(ex.log, 'order');
+    ok(od.some(o => o.lord === 0 && o.n === 1) && od.some(o => o.lord === 1 && o.n === 1), 'beim Ablauf gehen die Banner heim, die ≤ PACT_ZONE + 4 vor den Gebäuden des anderen zielten (beide Häuser): ' + JSON.stringify(od.map(o => o.lord + '/' + o.n)));
+    eq(od.filter(o => o.n !== 1).length, 0, 'sonst kein Befehl (die Banner mit Ziel > PACT_ZONE + 4 bleiben)');
+    for (const l of [0, 1]) { const g = gateOf(sim, l), h = tgt(l, 1); ok(dist(h, { x: g.x - 7, y: g.y + g.out * 8 }) < 4, 'Haus ' + l + ' Banner 1: das Ziel ist der Heimatplatz vor dem Tor (' + h.x.toFixed(1) + ', ' + h.y.toFixed(1) + ')'); }
+    near(tgt(0, 2).x, out0.x, 1e-9, 'Haus 0 Banner 2: Ziel unverändert'); near(tgt(0, 2).y, out0.y, 1e-9, '… y'); near(tgt(1, 2).x, out1.x, 1e-9, 'Haus 1 Banner 2: Ziel unverändert');
+    const od0 = od.find(o => o.lord === 0); eq(Object.keys(od0).join(), 't,lord,n,x,y', 'order-Ereignis wie bei jedem Befehl'); near(od0.x, tgt(0, 1).x, 1e-9, 'order.x = das neue Ziel');
+    // the Burgwache (banner 0) and the third house are never touched
+    ok(!od.some(o => o.n === 0 || o.lord > 1), 'weder die Burgwache noch ein anderes Haus bekommt einen Befehl');
+  }
+}
+{
+  // the story of the report: a banner stands next to the partner's buildings when the pact begins; at the end it goes home and nothing is attacked — not in the grace, nor after
+  const sim = mk({ burgfrieden: 0 }), st = sim.state; toFehde(sim);
+  const hut = placeAt(sim, 1, 'huette'), keep1 = st.buildings.find(b => b.kind === 'bergfried' && b.lord === 1);
+  const spot = { x: -72 + hut.i + 4.5, y: -45 + hut.j + 0.5 }, free = [{ x: spot.x, y: spot.y }, { x: spot.x + 1, y: spot.y + 2 }, { x: spot.x - 1, y: spot.y - 2 }, { x: -72 + hut.i - 3, y: -45 + hut.j + 1 }].find(p => !blockedAt(sim, p));
+  const A = stage(sim, 0, 'speer', free), A2 = sim.dev.spawn(0, 'speer', free.x + 0.9, free.y, 1), A3 = sim.dev.spawn(0, 'bogen', free.x, free.y + 0.9, 1);
+  startPact(sim, 0, 1);   // (the banner already stands at the hut: the order was given before the pact)
+  ok(dist(sim.state.banners.find(b => b.lord === 0 && b.n === 1), { x: -72 + hut.i + 1, y: -45 + hut.j + 1 }) < 6, 'das Banner steht bei der Hütte');
+  const hp0 = st.buildings.map(b => b.lord === 1 ? b.hp : 1);
+  const ex = ended(sim, 0, 1, secs(200)); ok(ofType(ex.log, 'order').some(o => o.lord === 0 && o.n === 1), 'beim Ablauf zieht das Banner ab');
+  const after = run(sim, secs(C.PACT_GRACE_S + 90)); eq(ofType(after, 'hit').length, 0, 'in Waffenruhe und danach: kein Schlag auf die Gebäude und Leute des früheren Partners');
+  eq(JSON.stringify(st.buildings.map(b => b.lord === 1 ? b.hp : 1)), JSON.stringify(hp0), 'seine Gebäude sind unversehrt (Hütte und Bergfried)'); eq(ofType(after, 'ruined').length, 0, 'nichts fällt');
+  const g0 = gateOf(sim, 0), bn = st.banners.find(b => b.lord === 0 && b.n === 1); ok(dist(bn, g0) < 25, 'das Banner steht wieder in der Nähe der eigenen Burg (' + dist(bn, g0).toFixed(1) + ')');
+}
+
+{
+  // fuzz: four houses offer, renew, break and send soldiers at random for 8 minutes (three seeds): nobody is ever killed by a pact partner or by a house in its grace, the
+  // pact lists of both sides always agree (end, renewal offered ↔ incoming), and a grace entry never outlives PACT_GRACE_S
+  let kills = 0, offers = 0, expiries = 0, renewals = 0, bad = 0;
+  for (const seed of [1, 2, 3]) {
+    const sim = mk({ seed, burgfrieden: 20, dauer: 8 }), st = sim.state; let x = (seed * 2654435761) >>> 0;
+    const rnd = () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x / 4294967296; };
+    const friends = (a, b) => st.pacts.some(p => p.until > 0 && ((p.a === a && p.b === b) || (p.a === b && p.b === a)));   // active pact or grace entry
+    for (let k = 0; k < 8 * 60 * 15 && st.phase !== 'over'; k++) {
+      if (k % 15 === 0 && rnd() < 0.3) {
+        const a = Math.floor(rnd() * 4), b = [0, 1, 2, 3].filter(i => i !== a)[Math.floor(rnd() * 3)], r = rnd(), g = sim.dev.lord(a), h = sim.dev.lord(b);
+        if (r < 0.55) sim.pact(a, b, true); else if (r < 0.6) sim.pact(a, b, false);
+        else if (r < 0.85) sim.dev.spawn(a, 'speer', g.gx + rnd() * 6, g.gy + g.out * (4 + rnd() * 6), 1 + Math.floor(rnd() * 3));
+        else sim.banner(a, 1 + Math.floor(rnd() * 3), h.gx + (rnd() - 0.5) * 16, h.gy + h.out * (6 + rnd() * 6));
+      }
+      for (const e of sim.step()) {
+        if (e.t === 'death' && e.by != null && e.by !== e.lord) { kills++; if (friends(e.by, e.lord)) bad++; }
+        else if (e.t === 'pactOffer' || e.t === 'pactRenewOffer') { offers++; if (e.t === 'pactRenewOffer') renewals++; }
+        else if (e.t === 'pactOff' && e.reason === 'expired' && e.grace) expiries++;
+      }
+      if (k % 15 === 0) for (const p of st.pacts) {
+        if (p.grace) { if (!(p.until > st.t - 1e-9 && p.until - st.t <= C.PACT_GRACE_S + 1e-9)) bad++; continue; }
+        if (!(p.until > 0)) continue;
+        const ya = pactEntry(sim, p.a, p.b), yb = pactEntry(sim, p.b, p.a);
+        if (!(ya.state === 'active' && yb.state === 'active' && ya.until === p.until && yb.until === p.until && (ya.renew === 'offered') === (yb.renew === 'incoming') && (ya.renew === 'incoming') === (yb.renew === 'offered'))) bad++;
+      }
+    }
+  }
+  eq(bad, 0, 'Fuzz: kein Tod durch Partner oder in der Waffenruhe, die Paktlisten beider Seiten stimmen überein, keine Waffenruhe über 30 s');
+  ok(kills > 30 && renewals > 3 && expiries > 3, 'Fuzz: die Szene übt es wirklich (' + kills + ' Tote, ' + renewals + ' Verlängerungsangebote, ' + expiries + ' Abläufe mit Waffenruhe)');
+}
+
 // ---- event catalogue: every event of the doc's table appeared in this run, with exactly the documented fields ----
 {
   const DOC = {
@@ -2486,7 +2691,7 @@ function battleScene(nSold, nPeas, seed) {
     order: 'lord,n,x,y', shot: 'flight,from,src,to', clash: 'x,y', hit: 'id,x,y', death: 'by,id,kind,lord,x,y',
     ignite: 'by,id', fireOut: 'id', cropBurnt: 'id', bucket: 'brunnen,id',
     plunder: 'by,loot,lord', protEnd: 'lord', crown: 'lord',
-    pactOffer: 'from,to', pactOn: 'a,b,until', pactOff: 'a,b,reason',
+    pactOffer: 'from,to', pactRenewOffer: 'from,to', pactOn: 'a,b,until', pactOff: 'a,b,reason',
     attack: 'lord,x,y',
     trade: 'gold,good,lord,n,side', garrison: 'id,lord,on,unit', breach: 'by,id,kind,lord,x,y', ram: 'id,x,y'
   };
@@ -2494,7 +2699,7 @@ function battleScene(nSold, nPeas, seed) {
   for (const [t, keys] of Object.entries(DOC)) {
     const seen = SEEN[t];
     if (!seen) { missing.push(t); continue; }
-    const allowed = t === 'pactOff' ? [keys, 'a,b,by,reason'] : [keys];
+    const allowed = t === 'pactOff' ? [keys, 'a,b,by,reason', 'a,b,grace,reason'] : [keys];   // (by: declined / broken; grace: a pact that ran out)
     for (const k of seen) if (!allowed.includes(k)) wrong.push(t + '{' + k + '}');
   }
   ok(missing.length === 0, 'jedes dokumentierte Ereignis kam vor (es fehlen: ' + missing.join(', ') + ')');

@@ -7,6 +7,8 @@
 //   Scenario 2: bots, takeover and the return of a device, reconnect.  Scenario 3: 9 phones → 8 seats + 1 spectator.  Scenario 4: settings (dauer default 20, burgen,
 //   staerke, Auflösung, quality) and the no-WebGL fallback.  Scenario 5 (Phase 1b): Auto quality with a stub clock (the median; a 1-s hitch is ignored; nativ → normal cap →
 //   Sparsam), the „🔇 Klick oder Taste für Ton“ hint, and sound.js in a sandbox with a fake AudioContext (buildDone silent, the hammer at half volume once per 2 s, the unlock).
+//   Phase 2a (F2, Pakte enden friedlich): two pacts of one house run through the 30-s warning, the renewal round trip (pact card, alert button, the prompt over the map without „Ablehnen“),
+//   the renewal's alerts and herald, and an expiry with its alert, toast and herald; ffInfo.rules.renewS.
 //   `sim.pause` / `youOf().food` come from C1: while a sim does not have them yet, this test installs small stand-ins and says so.
 //   Scenario 6 (Phase 2, Mauern & Söldner): the glue's ffWall / ffTrade / ffBuild-with-len / ffRecruit (lager, gold) round trips and their toasts, ffInfo.rules.tradePack / .prices (strict equality with the phone's copy),
 //   the board's 14th (len) and 15th (garrison) fields, a ruined wall rebuilt with its len, the herald lines (breach, gold plunder, the first Söldnerlager) and their rate limit, the Kampf-Kamera on a ram blow,
@@ -244,7 +246,7 @@ function freeAt(w, sim, x, y) {
     check(info1.lords.map((l) => l.i).join() === '0,1,2,3' && info1.lords.every((l) => l.bot === false && l.emblem === l.i && typeof l.color === 'string'), 'ffInfo.lords nach Lord-Index geordnet, bot:false');
     check(info1.lords[0].name === 'Haus Falkenstein · Anna & Eva' && info1.lords[1].name === 'Haus Wolfsberg · Ben' && info1.lords[3].name === 'Haus Hirschfurt · Dino', 'Anzeigename = Hausname · Spielernamen („Anna & Eva“)');
     check(info1.shared === 'Eva' && p5.last('ffInfo').shared === 'Anna' && info2.shared === false && p3.last('ffInfo').shared === false, 'shared = Name des Mitspielers, nur am geteilten Haus');
-    check(info1.rules && Object.keys(info1.rules).sort().join() === 'bucketR,capKeep,capKorn,capLager,hutHouses,keepHouses,keepWellR,prices,tradePack' && info1.rules.bucketR === ci.BUCKET_R && info1.rules.keepWellR === ci.KEEP_WELL_R && info1.rules.capKeep === ci.CAP_KEEP && info1.rules.capKorn === ci.CAP_KORN && info1.rules.capLager === ci.CAP_LAGER && info1.rules.keepHouses === ci.KEEP_HOUSES && info1.rules.hutHouses === ci.HUT_HOUSES, 'ffInfo.rules aus FurtSim.CONST (bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses, tradePack, prices)');
+    check(info1.rules && Object.keys(info1.rules).sort().join() === 'bucketR,capKeep,capKorn,capLager,hutHouses,keepHouses,keepWellR,prices,renewS,tradePack' && info1.rules.renewS === ci.RENEW_S && ci.RENEW_S === 60 && info1.rules.bucketR === ci.BUCKET_R && info1.rules.keepWellR === ci.KEEP_WELL_R && info1.rules.capKeep === ci.CAP_KEEP && info1.rules.capKorn === ci.CAP_KORN && info1.rules.capLager === ci.CAP_LAGER && info1.rules.keepHouses === ci.KEEP_HOUSES && info1.rules.hutHouses === ci.HUT_HOUSES, 'ffInfo.rules aus FurtSim.CONST (bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses, renewS, tradePack, prices)');
     check(info1.rules.tradePack === ci.TRADE_PACK && ci.TRADE_PACK === 5 && JSON.stringify(info1.rules.prices) === JSON.stringify(ci.TRADE_PRICE) && info1.rules.prices.sell.stein === 2 && info1.rules.prices.buy.korn === 3, 'ffInfo.rules.tradePack und .prices { sell, buy } kommen aus FurtSim.CONST (Pakete zu 5, Verkauf 1 · 1 · 2, Kauf 3 · 3 · 5)');
     check([p1, p2, p3, p4, p5].every((p) => JSON.stringify(p.last('ffInfo').rules) === JSON.stringify(info1.rules)) && typeof info1.rules.bucketR === 'number' && info1.rules.bucketR > 0 && info1.rules.keepHouses > 0, 'ffInfo.rules kommt bei allen Handys gleich an (Zahlen > 0)');
     check(info1.costs && info1.costs.rebuild === ci.REBUILD_COST && info1.costs.build.hof.holz === ci.BUILD.hof.cost.holz && info1.costs.build.kaserne.stein === ci.BUILD.kaserne.cost.stein && info1.costs.units.ritter.stein === ci.UNIT.ritter.cost.stein && !('bergfried' in info1.costs.build) && !('bauer' in info1.costs.units), 'ffInfo.costs aus FurtSim.CONST (Gebäude, Einheiten, Wiederaufbau)');
@@ -635,6 +637,76 @@ function freeAt(w, sim, x, y) {
     await sleep(900);
     check(ks1 > 0 && (!dbg().kk.on || w.performance.now() >= ks1), 'Abklingzeit: direkt danach öffnet sich die Kampf-Kamera nicht erneut');
     for (const u of [...S.units]) if (u.kind === 'speer') sim.dev.kill(u);
+
+    // ---- pacts end peacefully (F2): the warning 30 s before the end, the renewal round trip (pact card, alert button), the expiry (alert, toast, herald) ----
+    {
+      const sp = installSpy(sim);
+      for (const p of [p1, p2, p3, p4, p5]) p.clear();
+      for (let i = 0; i < 4; i++) sim.dev.stock(i, { korn: 30 });   // (full stores: nobody starves while the minutes below pass without the glue, so no hunger alert pushes a pact alert off the phone)
+      const dom = (p) => p.dom.window.document, vis = (p, id) => !dom(p).getElementById(id).hidden;
+      // two pacts of Ben (house 1): with Cleo (2), which gets renewed, and with Dino (3), which runs out
+      p2.send({ t: 'ffPact', to: 2, on: true }); await sleep(40); p3.send({ t: 'ffPact', to: 1, on: true }); await sleep(40);
+      p2.send({ t: 'ffPact', to: 3, on: true }); await sleep(40); p4.send({ t: 'ffPact', to: 1, on: true }); await sleep(40);
+      const pairU = (a, b) => { const e = S.pacts.find((x) => x.a === a && x.b === b && x.until > 0 && !x.grace); return e ? e.until : 0; };
+      const UX = pairU(1, 2), UY = pairU(1, 3);
+      check(UX > 0 && UY > 0 && Math.abs(UX - UY) < 5 && UX - S.t > ci.PACT_S - 6 && UX + ci.PACT_S > S.endsAt && UY < 330, 'Pakte Ben–Cleo und Ben–Dino stehen, jeder gilt ' + ci.PACT_S + ' s (bis ' + UX.toFixed(0) + ' / ' + UY.toFixed(0) + ')');
+      // `on: true` long before the end changes nothing; the glue says so
+      p2.clear(); p2.send({ t: 'ffPact', to: 2, on: true }); await sleep(40);
+      check(p2.all('ffToast').some((m) => /Verlängern geht erst in der letzten Minute/.test(m.text)) && pairU(1, 2) === UX && sp.calls('pact').pop().r.renew === null, 'ffPact on:true lange vor dem Ende: Toast „⏳ Verlängern geht erst in der letzten Minute“, das Ende bleibt');
+      check(p3.all('ffAlert').every((a) => !/verlängern/i.test(a.text)), 'und es gibt keinen Verlängern-Alarm');
+      // the rest of the 3 minutes passes without the glue, up to the last half minute: the glue itself then sends the warning
+      guard = 0; while (UX - S.t > 31.5 && guard++ < 9000) sim.step();
+      for (const p of [p1, p2, p3, p4, p5]) p.clear();
+      await until(() => p2.all('ffAlert').filter((a) => /endet in 30 s/.test(a.text)).length >= 2 && p3.all('ffAlert').some((a) => /endet in 30 s/.test(a.text)) && p4.all('ffAlert').some((a) => /endet in 30 s/.test(a.text)), 6000, 'Warnung 30 s vor dem Pakt-Ende');
+      const d2 = dom(p2), d3 = dom(p3), d4 = dom(p4);
+      check(d2.getElementById('ffAlert').classList.contains('show') && vis(p2, 'ffAlertAct') && d2.getElementById('ffAlertAct').textContent === '🔁 Verlängern', 'Bens Handy: die Warnung trägt den Knopf „🔁 Verlängern“');
+      await sleep(300);
+      const warn = (p, who) => p.all('ffAlert').filter((a) => a.kind === 'pact' && a.text === '⏳ Pakt mit ' + who + ' endet in 30 s');
+      check(warn(p2, 'Haus Eichenhain').length === 1 && warn(p2, 'Haus Eichenhain')[0].renew === 2 && warn(p2, 'Haus Hirschfurt').length === 1 && warn(p2, 'Haus Hirschfurt')[0].renew === 3, 'Warnung: ffAlert „⏳ Pakt mit Haus X endet in 30 s“ an Ben, genau einmal je Pakt, mit renew = dem Partnerhaus');
+      check(warn(p3, 'Haus Wolfsberg').length === 1 && warn(p3, 'Haus Wolfsberg')[0].renew === 1 && warn(p4, 'Haus Wolfsberg').length === 1 && warn(p4, 'Haus Wolfsberg')[0].renew === 1, 'auch Cleo und Dino werden gewarnt (renew = Ben)');
+      check([p1, p5].every((p) => p.all('ffAlert').filter((a) => a.kind === 'pact').length === 0), 'das unbeteiligte Haus (Anna und Eva) bekommt keine Pakt-Warnung');
+      check(p2.all('ffAlert').filter((a) => /endet in 30 s/.test(a.text)).every((a) => a.incoming === undefined), 'die Warnung hat kein incoming (der Knopf heißt „🔁 Verlängern“)');
+      await until(() => (p2.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 2 && x.state === 'active' && x.renew === null && Math.abs(x.until - UX) < 0.02), 2000, 'ffYou.pacts[].renew = null');
+      check(vis(p2, 'ffPRenew-2') && !vis(p2, 'ffPRenewYes-2') && d2.getElementById('ffPact-2').classList.contains('ending') && /^⏳ 0:[0-5]\d$/.test(d2.querySelector('#ffPact-2 .pt-s').textContent), 'Bens Pakt-Karte: ⏳-Uhr und „🔁 Verlängern“ in der letzten Minute (' + d2.querySelector('#ffPact-2 .pt-s').textContent + ')');
+      // Ben renews the pact with Cleo on the pact card …
+      const n0 = sp.calls('pact').length;
+      d2.getElementById('ffPRenew-2').click(); await sleep(80);
+      const c0 = sp.calls('pact')[n0];
+      check(sp.calls('pact').length === n0 + 1 && c0.args.join() === '1,2,true' && c0.r.renew === 'offered', 'Ben: „🔁 Verlängern“ auf der Pakt-Karte sendet ffPact { to: 2, on: true } → Verlängerungsangebot');
+      check(p2.all('ffToast').some((m) => /Verlängerung an Haus Eichenhain gesendet/.test(m.text)), 'Toast beim Anbieter: „🔁 Verlängerung an Haus Eichenhain gesendet“');
+      check(p3.all('ffAlert').some((a) => a.kind === 'pact' && a.text === '🤝 Haus Wolfsberg will den Pakt verlängern' && a.renew === 1 && a.incoming === true), 'Cleo: ffAlert „🤝 Haus Wolfsberg will den Pakt verlängern“ (renew = 1, incoming)');
+      check(!p2.all('ffAlert').some((a) => /will den Pakt verlängern/.test(a.text)) && !p4.all('ffAlert').some((a) => /will den Pakt verlängern/.test(a.text)), 'der Anbieter und Dino hören davon nichts');
+      await until(() => (p3.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 1 && x.renew === 'incoming') && (p2.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 2 && x.renew === 'offered'), 2000, 'ffYou.pacts[].renew: offered / incoming');
+      check((p4.last('ffYou') || { pacts: [] }).pacts.every((x) => x.renew === null), 'ffYou.pacts[].renew: für Dino null');
+      check(vis(p2, 'ffPact-2') && !vis(p2, 'ffPRenew-2') && /Verlängerung angeboten/.test(d2.querySelector('#ffPact-2 .pt-t').textContent), 'Bens Karte: „🔁 Verlängerung angeboten …“, kein Knopf mehr');
+      // … and Cleo answers on the alert's button (the prompt over the map offers „✅ Verlängern“, too, and no „Ablehnen“)
+      check(vis(p3, 'ffPRenewYes-1') && !vis(p3, 'ffPRenew-1') && d3.getElementById('ffPact-1').classList.contains('renewin') && d3.getElementById('ffPRenewYes-1').textContent === '✅ Verlängern', 'Cleos Pakt-Karte: „✅ Verlängern“');
+      check(d3.getElementById('ffOffer').classList.contains('show') && /will den Pakt verlängern/.test(d3.getElementById('ffOfTx').textContent) && d3.getElementById('ffOfNo').hidden && d3.getElementById('ffOfYes').textContent === '✅ Verlängern', 'Cleos Handy: die Karte über der Karte bietet „✅ Verlängern“ an, ohne „Ablehnen“');
+      check(d3.getElementById('ffAlert').classList.contains('show') && vis(p3, 'ffAlertAct') && d3.getElementById('ffAlertAct').textContent === '✅ Verlängern', 'Cleos Alarm trägt den Knopf „✅ Verlängern“');
+      d3.getElementById('ffOfNo').click(); await sleep(40);
+      check(sp.calls('pact').length === n0 + 1, 'ein Klick auf das versteckte „Ablehnen“ sendet nichts (on:false wäre Verrat)');
+      d3.getElementById('ffAlertAct').click(); await sleep(80);
+      const c1 = sp.calls('pact')[n0 + 1];
+      check(sp.calls('pact').length === n0 + 2 && c1.args.join() === '2,1,true' && c1.r.renew === 'renewed', 'Cleo: der Alarm-Knopf „✅ Verlängern“ sendet ffPact { to: 1, on: true } → verlängert');
+      check(pairU(1, 2) === UX + ci.PACT_S && pairU(1, 3) === UY, 'Sim: das Ende des Pakts Ben–Cleo rückt um PACT_S, der Pakt Ben–Dino bleibt');
+      check(dbg().heraldLog.some((x) => /Pakt zwischen Haus Wolfsberg und Haus Eichenhain um 3 Minuten verlängert/.test(x)), 'Herold: „🤝 Pakt zwischen Haus Wolfsberg und Haus Eichenhain um 3 Minuten verlängert“');
+      check(p2.all('ffAlert').some((a) => a.kind === 'pact' && a.text === '🤝 Pakt mit Haus Eichenhain verlängert') && p3.all('ffAlert').some((a) => a.kind === 'pact' && a.text === '🤝 Pakt mit Haus Wolfsberg verlängert') && !p4.all('ffAlert').some((a) => /verlängert/.test(a.text)), 'ffAlert „🤝 Pakt mit … verlängert“ an beide Häuser, nicht an Dino');
+      await until(() => (p2.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 2 && x.renew === null && Math.abs(x.until - (UX + ci.PACT_S)) < 0.02) && (p3.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 1 && x.renew === null && Math.abs(x.until - (UX + ci.PACT_S)) < 0.02), 2500, 'ffYou: das neue Ende');
+      check(!vis(p2, 'ffPRenew-2') && !d2.getElementById('ffPact-2').classList.contains('ending') && !d3.getElementById('ffOffer').classList.contains('show'), 'die Karten sind wieder ruhig (kein 🔁, kein ⏳, keine Karte über der Karte)');
+      check(warn(p2, 'Haus Eichenhain').length === 1, 'nach der Verlängerung keine zweite Warnung');
+      // the pact with Dino is not renewed: it runs out, with alert, toast and herald (the sim sends the banners home and keeps the peace, see the sim test)
+      guard = 0; while (UY - S.t > 3 && guard++ < 9000) sim.step();
+      for (const p of [p1, p2, p3, p4, p5]) p.clear();
+      await until(() => p4.all('ffToast').some((m) => /abgelaufen/.test(m.text)) && p2.all('ffToast').some((m) => /abgelaufen/.test(m.text)), 6000, 'Ablauf-Toast');
+      check(p4.all('ffToast').some((m) => m.text === '🤝 Der Pakt mit Haus Wolfsberg ist abgelaufen – eure Truppen ziehen ab') && p2.all('ffToast').some((m) => m.text === '🤝 Der Pakt mit Haus Hirschfurt ist abgelaufen – eure Truppen ziehen ab'), 'Ablauf: Toast „🤝 Der Pakt mit Haus X ist abgelaufen – eure Truppen ziehen ab“ an beide Häuser');
+      check(p4.all('ffAlert').some((a) => a.kind === 'pact' && a.text === '🤝 Der Pakt mit Haus Wolfsberg ist abgelaufen – eure Truppen ziehen ab') && p2.all('ffAlert').some((a) => a.kind === 'pact' && a.text === '🤝 Der Pakt mit Haus Hirschfurt ist abgelaufen – eure Truppen ziehen ab'), 'Ablauf: derselbe Text als ffAlert pact');
+      check(dbg().heraldLog.some((x) => x === '🤝 Der Pakt zwischen Haus Wolfsberg und Haus Hirschfurt ist abgelaufen – die Truppen ziehen ab'), 'Herold: „🤝 Der Pakt zwischen Haus Wolfsberg und Haus Hirschfurt ist abgelaufen – die Truppen ziehen ab“');
+      check(!p3.all('ffToast').some((m) => /abgelaufen/.test(m.text)) && !p3.all('ffAlert').some((a) => /abgelaufen/.test(a.text)) && p1.all('ffToast').every((m) => !/abgelaufen/.test(m.text)), 'Cleo (verlängert) und Anna hören nichts vom Ablauf');
+      await until(() => (p4.last('ffYou') || { pacts: [] }).pacts.some((x) => x.with === 1 && x.state === 'none' && x.renew === null && x.until === 0), 2500, 'ffYou: der Pakt ist vorbei');
+      check(S.pacts.some((x) => x.a === 1 && x.b === 3 && x.grace === true) && S.pacts.some((x) => x.a === 1 && x.b === 2 && !x.grace && x.until > 0), 'Sim: Waffenruhe für Ben–Dino, der verlängerte Pakt Ben–Cleo läuft weiter');
+      check(d4.getElementById('ffPact-1').classList.contains('none') && !p4.all('ffAlert').some((a) => /endet in 30 s/.test(a.text)), 'Dinos Pakt-Karte: kein Pakt mehr, und keine Warnung nach dem Ablauf');
+      sp.restore();
+    }
 
     // ---- late joiner ----
     join(p6, 'Fiona'); await until(() => p6.last('ffMap'), 6000, 'Fiona bekommt den ganzen Stand');   // sendFull: ffInfo, ffMap, ffLevel, ffPhase, ffYou, ffBoard in one call

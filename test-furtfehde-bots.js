@@ -5,6 +5,8 @@
 // Phase 2 (E4, Mauern & Söldner): harte Prüfungen: Ritter und Kriegsherr bauen Markt und Söldnerlager (≥ 90 % der Häuser), die Fackelzüge kommen wieder, kein Haus lässt Bauern
 // stranden (≥ 3 Untätige bei freien Arbeitsplätzen über 60 s), „greifen an“ wieder ≥ 97 %; ein Belagerungsversuch (Bot gegen ein von Steinmauern umschlossenes Haus: Ramme, Bruch);
 // weiche Ziele werden ausgegeben: Mauern, Brüche, Rammen, gehandeltes Gold.
+// Phase 2a (F2, Pakte enden friedlich): ein Bot verlängert einen Pakt in dessen letzter Minute, wenn er mit ihm zufrieden ist (stärkerer Partner oder Bedrängnis durch Dritte) und nichts gegen den Partner plant
+// (der Kronenträger, auf den ein Ritter zielt, wird nicht verlängert); ganze Spiele und Balance-Tabelle bleiben Zahl für Zahl wie vorher (Bots bieten untereinander keine Pakte an).
 // Ganze Spiele laufen parallel in worker_threads (jedes Spiel ist deterministisch, die Reihenfolge der Ergebnisse spielt keine Rolle).
 //   FF_JOBS=n      Zahl der Worker (Standard: Kerne, höchstens 10)
 //   FF_QUICK=1     kleine Ausgabe: 3 Seeds je Stärke, 6 Mischspiele (nur zum schnellen Ansehen, die Schwellen gelten dann nicht)
@@ -218,6 +220,48 @@ console.log('Bot-Tests Furt & Fehde' + (QUICK ? ' (FF_QUICK: kleine Ausgabe, Sch
   run(s4, pb, 150 * TICKS);
   ok(on, 'Pakt (Achtung): angenommen'); ok(!tr.some(x => x[1] === 'launch' && x[4] === 0 && x[0] >= t1 && x[0] <= t1 + 150), 'Pakt (Achtung): in 150 s Pakt kein Angriff auf den Partner');
   console.log('  Pakte: Anfrage des Schwächeren abgelehnt, des Stärkeren und bei Bedrängnis durch Dritte angenommen, der Partner wird nicht angegriffen');
+}
+
+// ---- F2: pacts end peacefully — a bot renews a pact it is happy with (the judgement of accepting, and no plan against the partner), and none it is not ----
+{
+  const lords = [0, 1, 2, 3].map(i => ({ i, site: i }));
+  const entry = (sim, a, b) => sim.youOf(a).pacts.find(p => p.with === b);
+  const ticks = (s) => Math.round(s * TICKS);
+  const runTo = (sim, bots, pred, max) => { const log = []; for (let i = 0; i < max && sim.state.phase !== 'over' && !pred(); i++) { for (const b of bots) if (b) b.step(); for (const e of sim.step()) log.push(e); } return log; };
+  // house 0 is the human (14 soldiers) and asks bot 1 (ritter) for a pact: accepted, the human being the stronger one. The scene runs up to 5 s before the renewal window opens;
+  // `crown` = a house that is given 80 Ruhm then (a ritter aims at the crown), `weaken` = the human's army is killed and bot 1 gets six soldiers more (it is no longer pleased)
+  const scene = (crown, weaken) => {
+    const sim = mk({ seed: 1, lords, burgfrieden: 0 }), st = sim.state, bots = [null, 1, 2, 3].map(i => i && Bots.create(sim, i, { strength: 'ritter', seed: 5 + i }));
+    run(sim, bots, 5 * TICKS);
+    for (let k = 0; k < 14; k++) sim.dev.spawn(0, 'speer', -60 + k * 0.5, -30, 1);
+    run(sim, bots, 2 * TICKS); sim.pact(0, 1, true); run(sim, bots, 3 * TICKS);
+    const U = entry(sim, 0, 1).until; ok(entry(sim, 0, 1).state === 'active' && U > 0, 'Verlängern: der Pakt steht (Bot 1 nimmt den Stärkeren an)');
+    runTo(sim, bots, () => U - st.t <= C.RENEW_S + 5, ticks(400));
+    if (crown != null) st.lords[crown].ruhm += 80;
+    if (weaken) { for (const u of st.units.slice()) if (u.lord === 0 && u.kind !== 'bauer') sim.dev.kill(u); for (let k = 0; k < 6; k++) sim.dev.spawn(1, 'speer', sim.dev.lord(1).gx + k * 0.5, sim.dev.lord(1).gy + 6, 1); }
+    return { sim, st, bots, U };
+  };
+  // (a) pleased (the partner is stronger) and no plan against it: no offer before the window, one within a think (1 s) after it opened; the human's answer renews
+  { const { sim, st, bots, U } = scene(null, false);
+    const lg = runTo(sim, bots, () => U - st.t <= C.RENEW_S + 1e-9, ticks(10)); eq(ofType(lg, 'pactRenewOffer').length, 0, 'Verlängern: vor dem Fenster kein Angebot des Bots'); const tOpen = st.t;
+    const lg2 = runTo(sim, bots, () => entry(sim, 0, 1).renew === 'incoming', ticks(5)); const ro = ofType(lg2, 'pactRenewOffer');
+    eq(ro.length, 1, 'Verlängern: der Bot bietet genau einmal an'); eq(ro[0].from + '>' + ro[0].to, '1>0', 'von Bot 1 an Haus 0'); ok(st.t - tOpen <= 1.1, 'höchstens eine Sekunde nach dem Öffnen des Fensters (' + (st.t - tOpen).toFixed(2) + ' s)'); eq(bots[1].stats.renews, 1, 'stats.renews = 1');
+    eq(entry(sim, 0, 1).renew, 'incoming', 'der Mensch sieht „incoming“'); eq(ofType(runTo(sim, bots, () => false, ticks(10)), 'pactRenewOffer').length, 0, 'und das Angebot wird nicht wiederholt'); eq(bots[1].stats.renews, 1, 'stats.renews bleibt 1');
+    ok(bots[1].info().banners.every(b => !b || b.house !== 0 || (b.mode !== 'march' && b.mode !== 'siege')), 'der Bot plant nichts gegen den Partner');
+    eq(sim.pact(0, 1, true).renew, 'renewed', 'der Mensch verlängert'); const on = ofType(run(sim, bots, 2), 'pactOn'); eq(on.length, 1, 'pactOn'); eq(on[0].a, 1, 'a = der Bot (hat zuerst angeboten)'); ok(Math.abs(on[0].until - (U + C.PACT_S)) < 1e-6, 'das Ende rückt um PACT_S');
+    runTo(sim, bots, () => st.t > U + 3, ticks(100)); eq(entry(sim, 0, 1).state, 'active', 'der Pakt gilt über das alte Ende hinaus'); eq(bots.slice(1).reduce((n, b) => n + b.stats.errors, 0), 0, 'keine Bot-Fehler'); }
+  // (b) the human asks first (before any think of the bot): the bot answers, the end moves
+  { const { sim, st, bots, U } = scene(null, false); runTo(sim, bots, () => U - st.t <= C.RENEW_S + 1e-9, ticks(10));
+    eq(sim.pact(0, 1, true).renew, 'offered', 'der Mensch bietet das Verlängern zuerst an'); const lg = runTo(sim, bots, () => entry(sim, 0, 1).until > U + 1, ticks(5));
+    const on = ofType(lg, 'pactOn'); eq(on.length, 1, 'der Bot antwortet: pactOn'); eq(on[0].a, 0, 'a = der Mensch'); ok(Math.abs(on[0].until - (U + C.PACT_S)) < 1e-6, 'das Ende rückt um PACT_S'); eq(ofType(lg, 'pactRenewOffer').filter(e => e.from === 1).length, 0, 'der Bot braucht kein eigenes Angebot'); eq(bots[1].stats.renews, 1, 'stats.renews = 1'); }
+  // (c) a partner the bot would attack next — the crown holder, which a ritter aims at — is not renewed: the pact runs out in peace (with the grace)
+  { const { sim, st, bots, U } = scene(0, false); const lg = runTo(sim, bots, () => U - st.t <= 0.5, ticks(70));
+    ok(st.lords[0].crown, 'der Partner trägt die Krone'); eq(ofType(lg, 'pactRenewOffer').length, 0, 'Verlängern: kein Angebot an den Kronenträger'); eq(bots[1].stats.renews, 0, 'stats.renews 0'); eq(entry(sim, 0, 1).renew, null, 'kein renew');
+    const off = ofType(runTo(sim, bots, () => entry(sim, 0, 1).state === 'none', ticks(5)), 'pactOff'); eq(off.length, 1, 'der Pakt läuft aus'); eq(off[0].reason, 'expired', 'expired'); ok(off[0].grace > st.t, 'mit Waffenruhe (grace)'); }
+  // (d) not pleased any more (the partner lost its army, nobody else threatens the bot): no renewal either
+  { const { sim, st, bots, U } = scene(null, true); const lg = runTo(sim, bots, () => U - st.t <= 0.5, ticks(70));
+    ok(st.lords[0].soldiers < st.lords[1].soldiers, 'der Partner ist jetzt schwächer (' + st.lords[0].soldiers + ' gegen ' + st.lords[1].soldiers + ' Soldaten)'); eq(ofType(lg, 'pactRenewOffer').length, 0, 'Verlängern: kein Angebot an einen Schwächeren'); eq(bots[1].stats.renews, 0, 'stats.renews 0'); }
+  console.log('  Verlängern: der Bot bietet in der letzten Minute an (stärkerer Partner, kein Angriffsplan), antwortet auf das Angebot des Menschen, verlängert nicht für den Kronenträger und nicht für einen Schwächeren');
 }
 
 // ---- takeover: a bot created in the middle of a match continues the house it is given ----

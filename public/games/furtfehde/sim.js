@@ -113,6 +113,9 @@
     LOOT: 0.5, PLUNDER_HP: 0.3, PROT_S: 60, HOME_R: 16,
     // pacts
     PACT_S: 180, OFFER_S: 30,
+    RENEW_S: 60,                      // (F2 P1) in the last RENEW_S of an active pact `pact(…, true)` is a renewal offer; when both houses have offered, the pact's end moves PACT_S further
+    PACT_GRACE_S: 30,                 // (F2 P2) after a pact has run out (not when it is broken) the two houses stay friends this long: no blows, no sieges, the gate lanes stay open
+    ABZUG_PAD: 4,                     // (F2 P2) at that expiry a banner aimed within PACT_ZONE + ABZUG_PAD of the other house's buildings is sent home, like plunder protection does
     ALERT_S: 10,                      // at most one `attack` event per house in this time
     // Phase 2: gold and the Markt (docs/FURTFEHDE.md "Phase 2")
     TRADE_PACK: 5,                    // a trade moves this many goods per pack
@@ -183,7 +186,7 @@
       t: 0, dayT: 0, level: 1, phase: tEbbe > 0 ? 'frieden' : 'ebbe', endsAt: tEnd * DT,
       lords: [], buildings: [], units: [], banners: [],
       trees: new Float32Array(world.trees.length).fill(1), treeV: 0,
-      pacts: [], ranking: null
+      pacts: [], ranking: null   // pacts: { a, b, until } active · { a, b, offerUntil } an offer (a → b) · { a, b, until, grace: true } the Abzug's grace after a pact ran out (F2)
     };
     const units = st.units, bldgs = st.buildings, trees = st.trees;
     let tick = 0, nextId = 1, ev = [], lastMinute = false, crownI = -1, crownT = 0;
@@ -218,7 +221,7 @@
     // ---- who can walk where: the base mask `blk` (water, rock, every building; a Torhaus lane is a wall for everybody) and, per house, its VIEW: the lane
     // cells of its own and its pact partners' finished gatehouses opened. A house's peasants and banners move by its view. A travel field (`fviewOf`) also counts
     // an enemy wall piece or gatehouse as passable at BREACH_COST, so a banner with no open way is led to the cheapest breach. Rebuilt only after a grid or pact change.
-    const friendly = (lp, m) => m === lp.i || PM[lp.i * M + m] > 0;
+    const friendly = (lp, m) => m === lp.i || allied(lp.i, m);
     function laneCells(b) { const ln = W.laneOf(b.i, b.j, b.rot).cells; return [ln[0][1] * GW + ln[0][0], ln[1][1] * GW + ln[1][0]]; }
     function viewOf(lp) {
       if (lp.vVer === gridVer) return lp.V;
@@ -431,7 +434,10 @@
     const lordOf = (i) => (typeof i === 'number' && LA[i]) || null;
     let M = 4;   // pact matrices are M × M by lord index
     let PM = new Float64Array(16), OF = new Float64Array(16);   // active pact end / offer expiry (a → b), 0 = none
-    const hostile = (a, b) => a !== b && PM[a * M + b] <= 0;
+    let RN = new Float64Array(16), GR = new Float64Array(16);   // (F2) renewal offer of a to b (the pact end it was made for) / end of the Abzug grace after an expired pact (both ways), 0 = none
+    // friends: pact partners, and (P2) a house whose pact ran out less than PACT_GRACE_S ago. A broken pact leaves no grace (P3).
+    const allied = (a, b) => PM[a * M + b] > 0 || GR[a * M + b] > 0;
+    const hostile = (a, b) => a !== b && PM[a * M + b] <= 0 && GR[a * M + b] <= 0;
     function addRuhm(lp, amt, cat, vs) {   // vs = the lord the Ruhm is won against (the crown multiplies it)
       if (!lp || !amt) return;
       if (vs && amt > 0 && crownI === vs.i) amt = Math.round(amt * C.CROWN_MUL * 2) / 2;
@@ -1911,8 +1917,17 @@
       const out = [];
       for (const a of LP) for (const b of LP) if (a.i < b.i && PM[a.i * M + b.i] > 0) out.push({ a: a.i, b: b.i, until: PM[a.i * M + b.i] });
       for (const a of LP) for (const b of LP) if (a !== b && OF[a.i * M + b.i] > 0) out.push({ a: a.i, b: b.i, offerUntil: OF[a.i * M + b.i] });
+      for (const a of LP) for (const b of LP) if (a.i < b.i && GR[a.i * M + b.i] > 0) out.push({ a: a.i, b: b.i, until: GR[a.i * M + b.i], grace: true });   // (the Abzug: the view still opens the gates for the two)
       st.pacts.length = 0;
       for (const o of out) st.pacts.push(o);
+    }
+    // P2 Abzug: when a pact runs out, the banners of `lp` (not its Burgwache) aimed within PACT_ZONE + ABZUG_PAD of a building of `other` go home, the way plunder protection sends them
+    function abzug(lp, other) {
+      const R = C.PACT_ZONE + C.ABZUG_PAD;
+      for (const bn of lp.bn) {
+        if (bn.n === 0) continue;
+        for (const b of other.bld) if (rectDist(b._, bn.tx, bn.ty) <= R) { sendHome(bn); break; }
+      }
     }
     function stepPacts() {
       let changed = false, gate = false;
@@ -1920,7 +1935,13 @@
         if (a === b) continue;
         const ab = a.i * M + b.i, ba = b.i * M + a.i;
         if (OF[ab] > 0 && OF[ab] <= st.t + 1e-9) { OF[ab] = 0; changed = true; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired' }); }
-        if (a.i < b.i && PM[ab] > 0 && PM[ab] <= st.t + 1e-9) { PM[ab] = PM[ba] = 0; changed = true; gate = true; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired' }); }
+        if (a.i > b.i) continue;   // what follows is per pair
+        if (PM[ab] > 0 && PM[ab] <= st.t + 1e-9) {   // the pact ran out (P2): peace for PACT_GRACE_S more, and the banners aimed at the other's land go home
+          PM[ab] = PM[ba] = 0; RN[ab] = RN[ba] = 0; GR[ab] = GR[ba] = st.t + C.PACT_GRACE_S; changed = true;
+          emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired', grace: GR[ab] });
+          abzug(a, b); abzug(b, a);
+        }
+        if (GR[ab] > 0 && GR[ab] <= st.t + 1e-9) { GR[ab] = GR[ba] = 0; changed = true; gate = true; }   // the grace is over: hostile again, the gate lanes close
       }
       if (changed) syncPacts();
       if (gate) gridChanged();
@@ -2187,9 +2208,20 @@
       if (st.phase === 'over') return { ok: false, reason: 'phase', state: 'none' };
       const ab = a.i * M + b.i, ba = b.i * M + a.i;
       if (on) {
-        if (PM[ab] > 0) return { ok: true, state: 'active' };
+        if (PM[ab] > 0) {   // an active pact: in its last RENEW_S `on` is a renewal offer (P1), before that it changes nothing (renew: null)
+          if (PM[ab] - st.t > C.RENEW_S + 1e-9) return { ok: true, state: 'active', renew: null };
+          if (RN[ba] > 0) {   // the partner offered first: the pact's end moves PACT_S further; `pactOn.a` is the first to offer, as for a new pact
+            PM[ab] = PM[ba] = PM[ab] + C.PACT_S; RN[ab] = RN[ba] = 0;
+            a.stats.pacts++; b.stats.pacts++;
+            emit({ t: 'pactOn', a: b.i, b: a.i, until: PM[ab] });
+            syncPacts();
+            return { ok: true, state: 'active', renew: 'renewed' };
+          }
+          if (RN[ab] <= 0) { RN[ab] = PM[ab]; emit({ t: 'pactRenewOffer', from: a.i, to: b.i }); }
+          return { ok: true, state: 'active', renew: 'offered' };
+        }
         if (OF[ba] > 0) {   // the other side offered first: the pact is on
-          OF[ba] = 0; OF[ab] = 0; PM[ab] = PM[ba] = st.t + C.PACT_S;
+          OF[ba] = 0; OF[ab] = 0; PM[ab] = PM[ba] = st.t + C.PACT_S; GR[ab] = GR[ba] = 0;   // (a new pact ends a grace that was still running)
           a.stats.pacts++; b.stats.pacts++;
           emit({ t: 'pactOn', a: b.i, b: a.i, until: PM[ab] });
           syncPacts(); gridChanged();   // (partners walk through each other's gates now)
@@ -2202,8 +2234,8 @@
       }
       if (OF[ba] > 0) { OF[ba] = 0; emit({ t: 'pactOff', a: b.i, b: a.i, reason: 'declined', by: a.i }); syncPacts(); return { ok: true, state: 'none' }; }
       if (OF[ab] > 0) { OF[ab] = 0; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'declined', by: a.i }); syncPacts(); return { ok: true, state: 'none' }; }
-      if (PM[ab] > 0) {   // betrayal: Ruhm lost, the victim's fury lasts a minute
-        PM[ab] = PM[ba] = 0;
+      if (PM[ab] > 0) {   // betrayal: Ruhm lost, the victim's fury lasts a minute (P3: no grace, and a pending renewal offer is void)
+        PM[ab] = PM[ba] = 0; RN[ab] = RN[ba] = 0;
         addRuhm(a, C.RUHM.betray, 'betrayal'); a.stats.betrayals++;
         b.pub.zorn = C.ZORN_S;
         emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'broken', by: a.i });
@@ -2228,10 +2260,11 @@
       for (const o of LP) {
         if (o === lp) continue;
         const ab = lp.i * M + o.i, ba = o.i * M + lp.i;
-        if (PM[ab] > 0) pacts.push({ with: o.i, state: 'active', until: PM[ab] });
-        else if (OF[ab] > 0) pacts.push({ with: o.i, state: 'offered', until: OF[ab] });
-        else if (OF[ba] > 0) pacts.push({ with: o.i, state: 'incoming', until: OF[ba] });
-        else pacts.push({ with: o.i, state: 'none', until: 0 });
+        // renew: 'offered' = this house has offered to renew an active pact, 'incoming' = the partner has (P1); null otherwise
+        if (PM[ab] > 0) pacts.push({ with: o.i, state: 'active', until: PM[ab], renew: RN[ab] > 0 ? 'offered' : RN[ba] > 0 ? 'incoming' : null });
+        else if (OF[ab] > 0) pacts.push({ with: o.i, state: 'offered', until: OF[ab], renew: null });
+        else if (OF[ba] > 0) pacts.push({ with: o.i, state: 'incoming', until: OF[ba], renew: null });
+        else pacts.push({ with: o.i, state: 'none', until: 0, renew: null });
       }
       return {
         stock: { korn: lp.stock.korn, holz: lp.stock.holz, stein: lp.stock.stein, gold: lp.stock.gold },
@@ -2284,7 +2317,7 @@
       }
       if (!specs.length) for (let i = 0; i < 4; i++) specs.push({ i, site: i });
       M = Math.max(4, ...specs.map(s => s.i + 1));
-      PM = new Float64Array(M * M); OF = new Float64Array(M * M);
+      PM = new Float64Array(M * M); OF = new Float64Array(M * M); RN = new Float64Array(M * M); GR = new Float64Array(M * M);
       refreshGrids();
       for (const spec of specs) {
         const site = world.sites[spec.site], out = spec.site < 2 ? 1 : -1;
