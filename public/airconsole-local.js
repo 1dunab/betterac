@@ -14,6 +14,8 @@
     this.onDisconnect = function () {};
     this.onMessage = function () {};
     this.onKicked = function () {};
+    this.onBusy = function () {};   // screen only: another screen is already running, the server refused this one
+    this._screenSecret = null;      // screen only: proves "this tab was the screen" to the server (kept in sessionStorage too)
     if (!opts.deferConnect) this._connect();
   }
 
@@ -26,7 +28,11 @@
     this._ws = ws;
     ws.onopen = function () {
       var resume = null, secret = null;
-      if (self._role !== 'screen') {
+      if (self._role === 'screen') {
+        // The one screen cannot be stolen: only this tab's own secret gets it back (reload, reconnect)
+        secret = self._screenSecret;
+        try { secret = secret || sessionStorage.getItem('ac_screen') || null; } catch (e) {}
+      } else {
         try {
           var saved = JSON.parse(sessionStorage.getItem('ac_resume') || 'null');
           if (saved && saved.id && saved.secret) { resume = saved.id; secret = saved.secret; }
@@ -34,7 +40,8 @@
       }
       ws.send(JSON.stringify({ type: 'register', role: self._role, resume: resume, secret: secret }));
     };
-    ws.onmessage = function (evt) { self._handle(JSON.parse(evt.data)); };
+    // A replaced socket may still deliver a late message (a 'kicked' meant for the old page); it must not end this one.
+    ws.onmessage = function (evt) { if (self._ws === ws) self._handle(JSON.parse(evt.data)); };
     ws.onerror = function () { ws.close(); };
     // Reconnect mit Backoff: Handy-Sperre/WLAN-Aussetzer killt den Socket,
     // die alte device_id wird beim Neu-Registrieren wiederverwendet.
@@ -52,8 +59,13 @@
         this.device_id = msg.device_id;
         this._devices = msg.devices || [];
         this._retry = 0;
-        if (this._role !== 'screen' && msg.secret) {
-          try { sessionStorage.setItem('ac_resume', JSON.stringify({ id: msg.device_id, secret: msg.secret })); } catch (e) {}
+        if (msg.secret) {
+          if (this._role === 'screen') {
+            this._screenSecret = msg.secret;
+            try { sessionStorage.setItem('ac_screen', msg.secret); } catch (e) {}
+          } else {
+            try { sessionStorage.setItem('ac_resume', JSON.stringify({ id: msg.device_id, secret: msg.secret })); } catch (e) {}
+          }
         }
         this.onReady(msg.code);
         // Bereits verbundene Geraete nachmelden (z.B. Controller, die vor
@@ -81,13 +93,31 @@
         break;
       case 'kicked':
         this._stopped = true; // kein Reconnect — uebernommen oder vom Host entfernt
-        if (this._role !== 'screen') {
-          // Resume-Daten weg: ein Reload tritt frisch bei statt still zurueckzukommen
-          try { sessionStorage.removeItem('ac_resume'); } catch (e) {}
-        }
+        // Resume-Daten weg: ein Reload tritt frisch bei statt still zurueckzukommen
+        // (the screen's own secret goes too: a replaced screen is a stranger from now on)
+        this._screenSecret = null;
+        try { sessionStorage.removeItem(this._role === 'screen' ? 'ac_screen' : 'ac_resume'); } catch (e) {}
         this.onKicked();
         break;
+      case 'busy':
+        // Screen only: a screen is already running and this tab is not it. The server closes the socket;
+        // no reconnect loop — the page asks the person (reconnect() is the "try again" button).
+        this._stopped = true;
+        this._screenSecret = null;
+        try { sessionStorage.removeItem('ac_screen'); } catch (e) {}
+        this.onBusy();
+        break;
     }
+  };
+
+  // Screen only: try again after a 'busy' (the other screen may be closed by now)
+  AirConsole.prototype.reconnect = function () {
+    var old = this._ws;
+    this._ws = null;
+    try { if (old) old.close(); } catch (e) {}
+    this._stopped = false;
+    this._retry = 0;
+    this._connect();
   };
 
   // --- Oeffentliche API (wie beim echten AirConsole) ---

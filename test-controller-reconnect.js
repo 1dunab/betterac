@@ -21,12 +21,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     }
     throw Error('Expected relay message was not delivered');
   }
-  async function connect(registration) {
+  async function connect(registration, expect = 'welcome') {
     const ws = new WebSocket(base.replace('http:', 'ws:')); sockets.push(ws); ws.inbox = [];
     ws.on('message', raw => ws.inbox.push(JSON.parse(raw)));
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
     ws.send(JSON.stringify({ type: 'register', ...registration }));
-    return [ws, await wait(ws, msg => msg.type === 'welcome')];
+    return [ws, await wait(ws, msg => msg.type === expect)];
   }
   try {
     let ready = false;
@@ -40,7 +40,8 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
         assert.ok([...html.matchAll(/(?:src|href)="(games\/breach\/[^" ]+\.(?:js|css)[^"]*)"/g)].every(match => match[1].includes('?v=')), 'BREACH assets bypass old unversioned caches');
       }
     }
-    const [screen] = await connect({ role: 'screen' });
+    const [screen, screenWelcome] = await connect({ role: 'screen' });
+    assert.ok(typeof screenWelcome.secret === 'string' && screenWelcome.secret.length, 'the screen gets a secret of its own');
     const [phone, identity] = await connect({ role: 'controller' });
     await wait(screen, msg => msg.type === 'connect' && msg.device_id === identity.device_id);
     phone.close(); await new Promise(resolve => phone.once('close', resolve)); await pause(120);
@@ -58,7 +59,24 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     await wait(screen, msg => msg.type === 'disconnect' && msg.device_id === other.device_id);
     resumed.close();
     await wait(screen, msg => msg.type === 'disconnect' && msg.device_id === identity.device_id, 10000);
-    console.log('✓ Cache-safe assets, authenticated phone reload, state resync, immediate kicks and departure after the grace period.');
+    // The screen's seat works like a phone's: its own reload (the secret) takes it back inside the grace, silently
+    // for the phones, while a stranger's screen is refused
+    const [watcher, watcherId] = await connect({ role: 'controller' });
+    await wait(screen, msg => msg.type === 'connect' && msg.device_id === watcherId.device_id);
+    const [, intruder] = await connect({ role: 'screen' }, 'busy');
+    assert.equal(intruder.type, 'busy', 'a second screen is refused');
+    assert.equal(screen.readyState, WebSocket.OPEN, 'and does not touch the running one');
+    screen.close(); await new Promise(resolve => screen.once('close', resolve)); await pause(120);
+    assert.ok(!watcher.inbox.some(msg => msg.type === 'disconnect'), 'Reload does not immediately remove the screen');
+    const [, lateStranger] = await connect({ role: 'screen', secret: 'wrong' }, 'busy');
+    assert.equal(lateStranger.type, 'busy', 'inside the grace only the screen\'s own secret gets the seat');
+    const [screenBack, back] = await connect({ role: 'screen', secret: screenWelcome.secret });
+    assert.equal(back.secret, screenWelcome.secret, 'the reloaded screen keeps its secret');
+    assert.ok(back.devices.includes(watcherId.device_id), 'and finds the phones');
+    watcher.send(JSON.stringify({ type: 'message', to: 0, data: { t: 'shellSync' } }));
+    assert.equal((await wait(screenBack, msg => msg.type === 'message' && msg.data.t === 'shellSync')).from, watcherId.device_id);
+    assert.ok(!watcher.inbox.some(msg => msg.type === 'disconnect'), 'The phones never saw the screen leave');
+    console.log('✓ Cache-safe assets, authenticated phone reload, state resync, immediate kicks, departure after the grace period, and the screen\'s own seat.');
   } finally {
     sockets.forEach(ws => ws.terminate());
     const exited = new Promise(resolve => child.once('exit', resolve)); child.kill(); await exited;

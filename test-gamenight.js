@@ -49,7 +49,8 @@ const snapOf = (dom) => JSON.parse(dom.window.sessionStorage.getItem('shellSnaps
   console.log('Feierabend-Button: Host ✓, Gast ✗ ✓');
 
   // Reload-Sicherheit: neuer Screen mit geseedetem Snapshot behält die Wertung
-  const screen2 = makeDom('screen.html', 'screen', bus, 'screen2', { seedSession: { shellSnapshot: JSON.stringify(snap) } });
+  // (ein Reload desselben Tabs bringt auch das Bildschirm-Geheimnis mit — ohne käme der neue Screen nicht rein)
+  const screen2 = makeDom('screen.html', 'screen', bus, 'screen2', { seedSession: { shellSnapshot: JSON.stringify(snap), ac_screen: screen.window.sessionStorage.getItem('ac_screen') } });
   await sleep(200);
   const snap2 = snapOf(screen2);
   console.log('Nach Reload night:', JSON.stringify(snap2 && snap2.night));

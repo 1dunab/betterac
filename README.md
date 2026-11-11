@@ -40,7 +40,8 @@ npm start
 The server prints its links with your LAN address. The easiest way in is
 `http://<your-ip>:3000/` on every device: the TV / laptop taps **📺 Ich bin der
 Bildschirm**, every phone taps **📱 Mitspielen** (or scans the QR code in the lobby). There
-is only one screen per server — a second one takes over the first. Or go direct:
+is only one screen per server — a running screen can't be taken over (a second device is
+offered 👀 Mitschauen). Or go direct:
 
 - **Screen** (open on the TV / laptop): `http://<your-ip>:3000/screen.html`
 - **Controller** (open on every phone): `http://<your-ip>:3000/controller.html`

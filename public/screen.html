@@ -31,13 +31,14 @@
 </head>
 <body>
 <button id="fsBtn" title="Vollbild">⛶</button>
-<!-- Ein Bildschirm läuft schon: mitschauen statt ihn (samt Spiel) zu übernehmen -->
+<!-- Ein Bildschirm läuft schon: er lässt sich nicht übernehmen — mitschauen oder (wenn er gerade zuging) nochmal versuchen -->
 <div id="busy" style="display:none; position:fixed; inset:0; z-index:60; background:rgba(10,10,20,.94); align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
   <div style="max-width:440px; text-align:center; display:flex; flex-direction:column; gap:14px;">
     <div style="font-size:26px; font-weight:800;">📺 Es läuft schon ein Bildschirm</div>
-    <div style="opacity:.75; line-height:1.45;">Ein zweiter Bildschirm würde ihn übernehmen — das laufende Spiel wäre dann für alle weg.</div>
+    <div style="opacity:.75; line-height:1.45;">Es gibt nur einen Bildschirm, und auf ihm läuft das Spiel — den kann man nicht übernehmen. Zum Zuschauen nimm 👀 Mitschauen. Wurde der andere Bildschirm gerade erst geschlossen, klappt es nach ein paar Sekunden mit 🔄 Nochmal versuchen.</div>
     <button id="busyView" style="border:none; border-radius:14px; padding:16px; font-size:19px; font-weight:800; background:#30d158; color:#06250f; cursor:pointer;">👀 Mitschauen</button>
-    <button id="busyTake" style="border:none; border-radius:14px; padding:12px; font-size:15px; font-weight:700; background:#3a3a48; color:#eee; cursor:pointer;">Trotzdem übernehmen</button>
+    <button id="busyRetry" style="border:none; border-radius:14px; padding:12px; font-size:15px; font-weight:700; background:#3a3a48; color:#eee; cursor:pointer;">🔄 Nochmal versuchen</button>
+    <div id="busyNote" style="font-size:13px; opacity:.6; min-height:1.2em;"></div>
   </div>
 </div>
 <button id="muteBtn" title="Ton an/aus">🔊</button>
@@ -490,18 +491,26 @@
 <script src="games/furtfehde/sound.js"></script>
 <script src="games/furtfehde/screen.js"></script>
 <script>
-  // ===== Verbinden: läuft schon ein Bildschirm, erst fragen (mitschauen / übernehmen) =====
-  // Ein Reload dieses Tabs (Lobby-Snapshot vorhanden) übernimmt ohne Frage.
+  // ===== Verbinden: es gibt nur einen Bildschirm, und er lässt sich nicht stehlen =====
+  // Läuft schon einer, bleibt dieser Tab draußen: Dialog mit Mitschauen / Nochmal versuchen, kein Übernehmen.
+  // Entscheiden tut der Server ('busy'); die /info-Vorabfrage erspart einem Fremden nur den Verbindungsversuch.
+  // Ein Reload dieses Tabs trägt sein Bildschirm-Geheimnis (ac_screen) und kommt ohne Frage zurück.
   (function connectScreen() {
-    let mine = false;
-    try { mine = !!sessionStorage.getItem('shellSnapshot'); } catch (e) {}
-    if (mine || typeof fetch !== 'function') { ac._connect(); return; }
-    const busy = document.getElementById('busy');
+    const busy = document.getElementById('busy'), retry = document.getElementById('busyRetry'), note = document.getElementById('busyNote');
+    let tries = 0;
+    const ask = () => {
+      busy.style.display = 'flex';
+      retry.disabled = false; retry.textContent = '🔄 Nochmal versuchen';
+      note.textContent = tries ? 'Immer noch belegt — der andere Bildschirm läuft noch.' : '';
+    };
+    ac.onBusy = ask;
+    ac.onReady = () => { busy.style.display = 'none'; };
     document.getElementById('busyView').addEventListener('click', () => { location.href = 'view.html'; });
-    document.getElementById('busyTake').addEventListener('click', () => { busy.style.display = 'none'; ac._connect(); });
-    fetch('/info').then(r => r.json()).then(info => {
-      if (info.screen) busy.style.display = 'flex'; else ac._connect();
-    }).catch(() => ac._connect());
+    retry.addEventListener('click', () => { tries++; retry.disabled = true; retry.textContent = '🔄 Versuche …'; ac.reconnect(); });
+    let mine = false;
+    try { mine = !!sessionStorage.getItem('ac_screen'); } catch (e) {}
+    if (mine || typeof fetch !== 'function') { ac._connect(); return; }
+    fetch('/info').then(r => r.json()).then(info => { if (info.screen) ask(); else ac._connect(); }).catch(() => ac._connect());
   })();
 
   // ===== Mitschauen: Bild an die view.html-Zuschauer (nur wenn welche da sind) =====

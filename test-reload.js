@@ -53,9 +53,30 @@ function fail(msg) { console.error('FEHLER: ' + msg); process.exitCode = 1; }
   if (!snap) { fail('Kein Snapshot im sessionStorage'); process.exit(1); }
   console.log('Snapshot gespeichert:', snap.length, 'Zeichen');
 
-  // "Reload": neuer Screen im selben Tab = gleiche sessionStorage-Inhalte
-  const screen2 = makeDom('screen.html', 'screen', bus, 'screen2', { seedSession: { shellSnapshot: snap } });
+  // Ein laufender Bildschirm lässt sich nicht stehlen: ein fremder Screen (anderes Gerät, kein Geheimnis)
+  // bekommt den Dialog und fasst die Lobby nicht an
+  const secret = screen.window.sessionStorage.getItem('ac_screen');
+  console.log('Bildschirm-Geheimnis im Tab:', secret ? 'ja' : 'nein');
+  if (!secret) fail('Screen bekommt kein Geheimnis vom Server');
+  const stranger = makeDom('screen.html', 'screen', bus, 'stranger');
+  await sleep(150);
+  const dlg = stranger.window.document.getElementById('busy');
+  console.log('Fremder Screen, Dialog:', dlg.style.display, '(erwartet flex)');
+  if (dlg.style.display !== 'flex') fail('Fremder Screen bekommt keinen Dialog');
+  if (stranger.window.document.getElementById('busyTake')) fail('„Trotzdem übernehmen“ gibt es noch');
+  if (!stranger.window.document.getElementById('busyView') || !stranger.window.document.getElementById('busyRetry')) fail('Dialog ohne Mitschauen / Nochmal versuchen');
+  if (stranger.window.sessionStorage.getItem('ac_screen')) fail('Fremder Screen hat ein Geheimnis');
+  if (visible(c1) !== 'v-shelllobby' || visible(c2) !== 'v-shelllobby') fail('Fremder Screen hat die Lobby gestört');
+  if (screen.window.document.getElementById('info').textContent.includes('übernommen')) fail('Laufender Screen wurde übernommen');
+  stranger.window.close();
+
+  // "Reload": neuer Screen im selben Tab = gleiche sessionStorage-Inhalte (Snapshot + Bildschirm-Geheimnis)
+  const screen2 = makeDom('screen.html', 'screen', bus, 'screen2', { seedSession: { shellSnapshot: snap, ac_screen: secret } });
   await sleep(200);
+  console.log('Geheimnis nach Reload:', screen2.window.sessionStorage.getItem('ac_screen') === secret ? 'dasselbe' : 'anders', '(erwartet dasselbe)');
+  if (screen2.window.sessionStorage.getItem('ac_screen') !== secret) fail('Reload bekommt ein anderes Geheimnis');
+  if (screen2.window.document.getElementById('busy').style.display === 'flex') fail('Reload des Screen-Tabs bekommt den Dialog');
+  if (!screen.window.document.getElementById('info').textContent.includes('übernommen')) fail('Alter Screen wurde nach dem Reload nicht inaktiv');
 
   const v1 = visible(c1), v2 = visible(c2);
   console.log('Views nach Reload:', v1, '|', v2, '(erwartet 2x v-shelllobby — KEIN Name-Prompt)');

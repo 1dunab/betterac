@@ -3,6 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const os = require('os');
 
@@ -19,7 +20,8 @@ const server = http.createServer((req, res) => {
   if (urlPath === '/info') {
     // Für den Lobby-QR-Code: unter welcher LAN-Adresse sind wir erreichbar?
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    // screen: a second screen.html asks "mitschauen oder übernehmen?" instead of kicking
+    // screen: true while a screen holds the slot (also during its reconnect grace): a second screen.html
+    // then offers "Mitschauen" instead of connecting
     res.end(JSON.stringify({ port: PORT, ips: lanIPs(), screen: clients.has(0) }));
     return;
   }
@@ -46,13 +48,18 @@ server.on('close', () => breach.close());
 const clients = new Map();   // device_id -> ws
 const secrets = new Map();   // device_id -> Resume-Secret (nur dieser Server-Lauf)
 const pendingDisconnects = new Map();
+// The one screen cannot be stolen: it gets a secret with its welcome and only a register that carries
+// it (the same tab reloading or reconnecting) may take the slot while it is held. Set while a screen is
+// registered, cleared when the slot is free again.
+let screenSecret = null;
+const SEAT_GRACE_MS = 8000;  // a closed phone or screen keeps its seat this long, so a reload can resume it
 // Mitschauen: viewers get the screen's picture as JPEG frames. They are no
 // players — no device id, no connect/disconnect events, nothing they send counts.
 const viewers = new Set();
 const MAX_VIEWER_BUFFER = 2e6;   // bytes queued per viewer before frames are dropped
 const sendViewerCount = () => send(clients.get(0), { type: 'viewers', n: viewers.size });
 let nextControllerId = 1;    // Screen ist immer 0, Controller ab 1
-const newSecret = () => Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+const newSecret = () => crypto.randomBytes(18).toString('base64url');   // Math.random() is guessable from a few outputs
 
 const send = (ws, obj) => { if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj)); };
 function broadcast(obj, exceptId) {
@@ -84,10 +91,20 @@ wss.on('connection', (ws) => {
     if (msg.type === 'register') {
       let id, silent = false;
       if (msg.role === 'screen') {
-        // Es gibt nur einen Screen: ein neuer kickt den alten (z.B. TV-Reload).
-        id = 0;
+        // Es gibt nur einen Screen, und er laesst sich nicht stehlen. Der Slot ist belegt, solange ein Screen-Socket
+        // in der Map haengt: offen oder gerade geschlossen (Gnadenfrist, s.u.). Rein darf dann nur, wer das aktuelle
+        // Secret mitbringt (derselbe Tab: Reload, Reconnect) — er uebernimmt still. Jeder andere bekommt 'busy',
+        // der laufende Screen merkt nichts davon.
         const old = clients.get(0);
-        if (old && old !== ws) { send(old, { type: 'kicked' }); old.deviceId = undefined; old.terminate(); }
+        const mine = old === ws || (typeof msg.secret === 'string' && !!screenSecret && msg.secret === screenSecret);
+        if (old && !mine) {
+          send(ws, { type: 'busy' });
+          ws.close(1000, 'busy');
+          return;
+        }
+        id = 0;
+        if (!old) screenSecret = newSecret();   // a fresh seat, a fresh secret: a former screen's secret is dead
+        else if (old !== ws) { send(old, { type: 'kicked' }); old.deviceId = undefined; old.terminate(); }
       } else if (Number.isInteger(msg.resume) && msg.resume > 0
                  && typeof msg.secret === 'string' && msg.secret.length
                  && secrets.get(msg.resume) === msg.secret) {
@@ -104,7 +121,7 @@ wss.on('connection', (ws) => {
       clearTimeout(pendingDisconnects.get(id)); pendingDisconnects.delete(id);
       clients.set(id, ws);
       if (id > 0 && !secrets.has(id)) secrets.set(id, newSecret());
-      send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: secrets.get(id) });
+      send(ws, { type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: id === 0 ? screenSecret : secrets.get(id) });
       if (!silent) broadcast({ type: 'connect', device_id: id }, id); // andere informieren
       if (id === 0) sendViewerCount();
       return;
@@ -129,6 +146,7 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'message') {
       const from = ws.deviceId;
+      if (from === undefined) return;   // not registered (e.g. a refused screen): nothing it sends counts
       if (msg.to === undefined || msg.to === null) {
         broadcast({ type: 'message', from, data: msg.data }, from); // broadcast()
       } else {
@@ -147,11 +165,14 @@ wss.on('connection', (ws) => {
         pendingDisconnects.delete(id);
         if (clients.get(id) !== ws) return;
         clients.delete(id);
+        if (id === 0) screenSecret = null;   // the slot is free: the next screen gets a fresh secret
         broadcast({ type: 'disconnect', device_id: id });
       };
       // A page reload closes its socket before the replacement can resume it.
       // Keep that authenticated seat briefly, instead of removing its live actor.
-      if (id > 0) pendingDisconnects.set(id, setTimeout(disconnect, 8000));
+      // The screen's seat works the same way (only its own tab may reclaim it, see register). A screen the
+      // heartbeat found dead has been silent for 10-20 s already: its slot is free at once.
+      if (id > 0 || !ws.dead) pendingDisconnects.set(id, setTimeout(disconnect, SEAT_GRACE_MS));
       else disconnect();
     }
   });
@@ -160,12 +181,14 @@ wss.on('connection', (ws) => {
 // Heartbeat: tote Verbindungen (Handy-Sperre, WLAN weg) fliegen aus der Map,
 // damit der Screen den Disconnect mitbekommt.
 wss.on('connection', (ws) => {
+  // A broken frame from a flaky phone emits 'error' on its socket; unhandled, it would crash the whole server
+  ws.on('error', (e) => console.warn('Socket-Fehler:', e && e.message));
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
 });
 const heartbeat = setInterval(() => {
   for (const ws of wss.clients) {
-    if (!ws.isAlive) { ws.terminate(); continue; }
+    if (!ws.isAlive) { ws.dead = true; ws.terminate(); continue; }
     ws.isAlive = false;
     ws.ping();
   }

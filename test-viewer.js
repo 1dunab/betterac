@@ -24,12 +24,12 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     }
     throw Error('Expected relay message was not delivered');
   }
-  async function connect(role) {
+  async function connect(role, expect = 'welcome') {
     const ws = new WebSocket(base.replace('http:', 'ws:')); sockets.push(ws); ws.inbox = [];
     ws.on('message', raw => ws.inbox.push(JSON.parse(raw)));
     await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
     ws.send(JSON.stringify({ type: 'register', role }));
-    return [ws, await wait(ws, msg => msg.type === 'welcome')];
+    return [ws, await wait(ws, msg => msg.type === expect)];
   }
   const info = async () => (await fetch(base + '/info')).json();
   try {
@@ -61,9 +61,20 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert.ok(!viewer.inbox.some(m => m.type === 'frame'), 'only the screen can send frames');
     assert.ok(!screen.inbox.some(m => m.type === 'message'), 'whatever a viewer sends is ignored');
 
+    // A second screen (somebody opens screen.html while one runs) is refused: the picture, the count and /info stay as they are
+    const [intruder, busy] = await connect('screen', 'busy');
+    assert.equal(busy.type, 'busy', 'a second screen is refused');
+    await pause(150);
+    assert.equal(intruder.readyState, WebSocket.CLOSED, 'and its socket is closed');
+    assert.ok(!intruder.inbox.some(m => m.type === 'welcome'), 'it never gets an id');
+    assert.equal((await info()).screen, true, '/info still reports the first screen');
+    assert.ok(!screen.inbox.some(m => m.type === 'viewers' || m.type === 'kicked'), 'the running screen and its viewer count are untouched');
+    screen.send(JSON.stringify({ type: 'frame', data: 'data:image/jpeg;base64,BBBB' }));
+    assert.equal((await wait(viewer, m => m.type === 'frame')).data, 'data:image/jpeg;base64,BBBB', 'the viewer keeps getting the first screen\'s picture');
+
     viewer.close();
     assert.equal((await wait(screen, m => m.type === 'viewers')).n, 0, 'a leaving viewer is uncounted');
-    console.log('✅ Mitschauen: landing page, /info, frame relay, invisible viewers');
+    console.log('✅ Mitschauen: landing page, /info, frame relay, invisible viewers, a second screen refused');
   } finally {
     sockets.forEach(ws => ws.terminate());
     child.kill();

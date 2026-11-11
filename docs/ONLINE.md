@@ -37,12 +37,19 @@ switches to `wss://` on HTTPS, and there is no database. A free instance sleeps 
    (sound plays only there — talk in a call if you like).
 2. Everybody else opens the same URL on their laptop → **👀 Mitschauen**, and on their
    phone → **📱 Mitspielen** (or scans the lobby QR code straight off the mirror).
-3. Only one screen exists per server — it runs the game. Opening `screen.html` while one
-   is running asks "👀 Mitschauen" or "Trotzdem übernehmen"; taking over ends the
-   running game for everybody. That's also why `/` is a landing page.
+3. Only one screen exists per server — it runs the game, and **a running screen can't be
+   taken over**. Opening `screen.html` while one is running shows "👀 Mitschauen" or
+   "🔄 Nochmal versuchen"; the running screen and its game are not touched. That's also why
+   `/` is a landing page.
 
 ## Good to know
 
+- **The screen can reload, but not be stolen.** The screen's tab holds a secret from the
+  server (in its `sessionStorage`), so its own reload or reconnect after a Wi-Fi hiccup takes
+  the seat back at once. A *new* tab or device (no secret) is refused until the old screen
+  has been closed for about 8 seconds, or until the server finds it dead (a crashed TV or lost
+  Wi-Fi: 10–20 seconds without an answer). Then **🔄 Nochmal versuchen** works. A tab opened
+  by *duplicating* the screen's tab carries the secret too and does take over.
 - **No password.** Anyone with the URL can join. Fine for a private round; don't post it.
 - **One party per server.** All visitors share the same lobby.
 - **Restarts reset the lobby.** A redeploy or a sleeping instance drops the current game
