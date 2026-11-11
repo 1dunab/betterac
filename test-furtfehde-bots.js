@@ -2,6 +2,9 @@
 // Phase 1b: harte Prüfung „kein Haus hungert länger als 60 s am Stück“ (Ritter- und Kriegsherr-Tabelle), kein Fackelzug vor RAID_AFTER_S, die Bots
 // pausieren nie, und der Futterversuch (was ernährt ein Hof, halten 8 Höfe 16 Leute bei wartenden Baustellen?) wird mit ausgegeben.
 // Zweite Runde: R11 lässt einen Hof mit vollem 🌾-Lager ruhen – der Futterversuch zählt leere Höfe nur bei Platz im Lager und lässt die Rekruten nie unter 8 Höfe + 5 Bauern gehen.
+// Phase 2 (E4, Mauern & Söldner): harte Prüfungen: Ritter und Kriegsherr bauen Markt und Söldnerlager (≥ 90 % der Häuser), die Fackelzüge kommen wieder, kein Haus lässt Bauern
+// stranden (≥ 3 Untätige bei freien Arbeitsplätzen über 60 s), „greifen an“ wieder ≥ 97 %; ein Belagerungsversuch (Bot gegen ein von Steinmauern umschlossenes Haus: Ramme, Bruch);
+// weiche Ziele werden ausgegeben: Mauern, Brüche, Rammen, gehandeltes Gold.
 // Ganze Spiele laufen parallel in worker_threads (jedes Spiel ist deterministisch, die Reihenfolge der Ergebnisse spielt keine Rolle).
 //   FF_JOBS=n      Zahl der Worker (Standard: Kerne, höchstens 10)
 //   FF_QUICK=1     kleine Ausgabe: 3 Seeds je Stärke, 6 Mischspiele (nur zum schnellen Ansehen, die Schwellen gelten dann nicht)
@@ -33,7 +36,10 @@ function playMatch(job) {
   const st = sim.state;
   const m = {
     seed, strengths, lords, peakSold: new Array(n).fill(0), peakB: new Array(n).fill(0), hungerMax: new Array(n).fill(0), hungerTot: new Array(n).fill(0),
-    trained: new Array(n).fill(0), hrun: new Array(n).fill(0), fehdeT: -1, firstAttack: -1, firstKill: -1, firstIgnite: -1, plunders: 0, ev: {}, botMs: 0, simMs: 0, steps: 0
+    trained: new Array(n).fill(0), hrun: new Array(n).fill(0), fehdeT: -1, firstAttack: -1, firstKill: -1, firstIgnite: -1, plunders: 0, ev: {}, botMs: 0, simMs: 0, steps: 0,
+    // Phase 2, per bot: first time a kind stood finished, stranding monitor (≥ 3 idle peasants while workplaces have empty slots: current and longest run in seconds), gold and walls
+    kinds: lords.map(() => ({})), srun: new Array(n).fill(0), strandMax: new Array(n).fill(0), goldSold: new Array(n).fill(0), goldBought: new Array(n).fill(0), tradeN: new Array(n).fill(0),
+    wallsBuilt: new Array(n).fill(0), torBuilt: new Array(n).fill(0), ramsRecruited: new Array(n).fill(0), riders: new Array(n).fill(0), garrisoned: new Array(n).fill(0), breached: new Array(n).fill(0), ramBlows: 0, breachByKind: {}, ignites: new Array(n).fill(0)
   };
   const idx = {}; lords.forEach((l, k) => { idx[l.i] = k; });
   const maxSteps = dauer * 60 * TICKS + 10;   // step cap: a match never runs longer than its clock
@@ -49,14 +55,25 @@ function playMatch(job) {
       if (e.t === 'fehde') m.fehdeT = st.t;
       else if (e.t === 'attack' && m.firstAttack < 0) m.firstAttack = st.t;
       else if (e.t === 'death' && e.by !== null && e.by !== e.lord && m.firstKill < 0) m.firstKill = st.t;
-      else if (e.t === 'ignite' && e.by !== null && m.firstIgnite < 0) { const b = st.buildings.find(x => x.id === e.id); if (b && b.lord !== e.by) m.firstIgnite = st.t; }
+      else if (e.t === 'ignite' && e.by !== null) { const b = st.buildings.find(x => x.id === e.id); if (b && b.lord !== e.by) { if (m.firstIgnite < 0) m.firstIgnite = st.t; if (idx[e.by] !== undefined) m.ignites[idx[e.by]]++; } }
       else if (e.t === 'plunder') m.plunders++;
       else if (e.t === 'trained' && idx[e.lord] !== undefined) m.trained[idx[e.lord]]++;
+      else if (e.t === 'buildDone') { const b = st.buildings.find(x => x.id === e.id); if (b && idx[b.lord] !== undefined && m.kinds[idx[b.lord]][b.kind] === undefined) m.kinds[idx[b.lord]][b.kind] = st.t; }
+      else if (e.t === 'build' && idx[e.lord] !== undefined) { if (e.kind === 'palisade' || e.kind === 'mauer') m.wallsBuilt[idx[e.lord]]++; else if (e.kind === 'torhaus') m.torBuilt[idx[e.lord]]++; }
+      else if (e.t === 'trade' && idx[e.lord] !== undefined) { m.tradeN[idx[e.lord]]++; if (e.side === 'sell') m.goldSold[idx[e.lord]] += e.gold; else m.goldBought[idx[e.lord]] += e.gold; }
+      else if (e.t === 'recruit' && idx[e.lord] !== undefined) { if (e.unit === 'ramme') m.ramsRecruited[idx[e.lord]]++; else if (e.unit === 'reiterschuetze') m.riders[idx[e.lord]]++; }
+      else if (e.t === 'garrison' && e.on && idx[e.lord] !== undefined) m.garrisoned[idx[e.lord]]++;
+      else if (e.t === 'breach') { if (idx[e.lord] !== undefined) m.breached[idx[e.lord]]++; m.breachByKind[e.kind] = (m.breachByKind[e.kind] || 0) + 1; }
+      else if (e.t === 'ram') m.ramBlows++;
     }
     if (i % TICKS === 0) for (let k = 0; k < n; k++) {   // once per second
       const l = st.lords[k];
       if (l.soldiers > m.peakSold[k]) m.peakSold[k] = l.soldiers;
       if (l.hunger) { m.hrun[k]++; m.hungerTot[k]++; if (m.hrun[k] > m.hungerMax[k]) m.hungerMax[k] = m.hrun[k]; } else m.hrun[k] = 0;
+      // stranding: at least 3 idle peasants while a finished workplace that is neither full nor resting has an empty worker slot
+      let empty = 0;
+      for (const x of st.buildings) if (x.lord === l.i && x.build >= 1 && !x.ruined && !x.paused && !x.full && (C.BUILD[x.kind].workers || 0) > (x.workers || 0)) empty++;
+      if (empty > 0 && sim.youOf(l.i).idle >= 3) { m.srun[k]++; if (m.srun[k] > m.strandMax[k]) m.strandMax[k] = m.srun[k]; } else m.srun[k] = 0;
     }
     if (i % (TICKS * 10) === 0) for (let k = 0; k < n; k++) {   // every 10 s
       let b = 0;
@@ -68,7 +85,7 @@ function playMatch(job) {
   m.fight = fights.length ? Math.min(...fights) : -1;
   m.over = st.phase === 'over';
   m.ranking = st.ranking ? st.ranking.map(r => ({ lord: r.lord, k: idx[r.lord], site: st.lords.find(l => l.i === r.lord).site, ruhm: r.ruhm, people: r.people, soldiers: r.soldiers, buildings: r.buildings, stats: r.stats, by: r.by })) : null;
-  m.bots = bots.map(b => ({ errors: b.stats.errors, lastError: b.stats.lastError, attacks: b.stats.attacks, raids: b.stats.raids, retreats: b.stats.retreats, defends: b.stats.defends, thinks: b.stats.thinks, builds: b.stats.builds, recruits: b.stats.recruits }));
+  m.bots = bots.map(b => ({ errors: b.stats.errors, lastError: b.stats.lastError, attacks: b.stats.attacks, raids: b.stats.raids, retreats: b.stats.retreats, defends: b.stats.defends, thinks: b.stats.thinks, builds: b.stats.builds, recruits: b.stats.recruits, trades: b.stats.trades, wallPieces: b.stats.wallPieces, rams: b.stats.rams, garrisons: b.stats.garrisons }));
   return m;
 }
 
@@ -125,9 +142,9 @@ console.log('Bot-Tests Furt & Fehde' + (QUICK ? ' (FF_QUICK: kleine Ausgabe, Sch
   const code = src.replace(/\/\/.*$/gm, '').replace(/'[^'\n]*'/g, "''");   // without comments and string literals
   const used = new Set(); let mt; const re = /\bsim\.(\w+)/g;
   while ((mt = re.exec(code))) used.add(mt[1]);
-  const allowed = ['build', 'cancel', 'recruit', 'banner', 'home', 'pact', 'state', 'youOf', 'world', 'occ', 'dt'];
+  const allowed = ['build', 'buildWall', 'cancel', 'recruit', 'trade', 'banner', 'home', 'pact', 'state', 'youOf', 'world', 'occ', 'dt'];
   ok([...used].every(k => allowed.includes(k)), 'bots.js benutzt nur die öffentliche Sim-API (benutzt: ' + [...used].join(', ') + ')');
-  ok(['build', 'recruit', 'banner', 'pact', 'youOf', 'state'].every(k => used.has(k)), 'bots.js benutzt build, recruit, banner, pact, youOf, state');
+  ok(['build', 'buildWall', 'recruit', 'banner', 'pact', 'youOf', 'state', 'trade'].every(k => used.has(k)), 'bots.js benutzt build, buildWall, recruit, banner, pact, youOf, state, trade');
   ok(!used.has('pause'), 'bots.js ruft sim.pause nie auf (Bots lassen keinen Betrieb ruhen)');
   console.log('\n  Quelltext: öffentliche Sim-API (' + [...used].sort().join(', ') + '), keine Uhr, kein Math.random');
 }
@@ -234,6 +251,78 @@ console.log('Bot-Tests Furt & Fehde' + (QUICK ? ' (FF_QUICK: kleine Ausgabe, Sch
   run(sim, bots, 120 * TICKS);
   ok(bots.every(b => b.stats.errors === 0) && modes.every(m => ['home', 'march', 'siege', 'retreat'].includes(m)), 'Übernahme (Banner unterwegs): keine Fehler, Banner-Zustände gültig (' + away + ' Banner waren unterwegs: ' + modes.join('/') + ')');
   console.log('  Übernahme: neuer Bot für ein laufendes Haus, für ein Menschen-Haus nach 240 s und für ein Haus mit Bannern im Feld');
+}
+
+// ---- Belagerung (Phase 2): ein Haus, dessen Bergfried ein Ring aus Mauern umschließt: der Bot nimmt eine Ramme mit (Stein), bricht Holz mit Nahkämpfern, Bogenschützen allein gehen nie gegen eine Mauer ----
+{
+  // attacker = lord 0 (bot, site 0), defender = lord 1 (site 3, no bot) with a closed ring of `kind` pieces around its keep; the attacker gets a Kaserne, huts, peasants, stock and a banner of `army`
+  function siege(kind, o) {
+    const seed = 1, world = W.make(seed), sim = Sim.create({ seed, world, dauer: 12, burgfrieden: 0, lords: [{ i: 0, site: 0 }, { i: 1, site: 3 }] }), D = sim.dev;
+    const k1 = world.sites[3].keep, i0 = k1.i - 4, i1 = k1.i + 9, j0 = k1.j - 4, j1 = k1.j + 9;
+    let pieces = 0;
+    const put = (i, j, rot, len) => { if (D.place(1, kind, i, j, rot, len).ok) pieces++; };
+    for (let i = i0; i <= i1; i += 4) { put(i, j0, 0, Math.min(4, i1 - i + 1)); put(i, j1, 0, Math.min(4, i1 - i + 1)); }
+    for (let j = j0 + 1; j <= j1 - 1; j += 4) { put(i0, j, 1, Math.min(4, j1 - j)); put(i1, j, 1, Math.min(4, j1 - j)); }
+    const blk = new Uint8Array(sim.occ), F = W.field(world, [W.keepGate(world, 0)], 0, null, blk);   // every building blocks: is the defender's gate reachable?
+    const sealed = !(F[W.keepGate(world, 3)] < Infinity);
+    const g0 = D.lord(0), kas = W.suggest(world, 'kaserne', 0, { L: 0, occ: sim.occ }); if (!o.noKaserne) D.place(0, 'kaserne', kas.i, kas.j, kas.rot);   // (without a Kaserne no melee soldier can join the banner)
+    D.stock(0, { korn: 80, holz: 80, stein: 20, gold: o.gold });
+    for (let k = 0; k < 8; k++) { const h = W.suggest(world, 'huette', 0, { L: 0, occ: sim.occ }); if (h) D.place(0, 'huette', h.i, h.j, h.rot); }
+    for (let k = 0; k < 45; k++) D.spawn(0, 'bauer', g0.gx + (k % 5) - 2, g0.gy + g0.out * 3, -1);
+    for (let k = 0; k < 12; k++) D.spawn(0, o.army(k), g0.gx + (k % 6) - 3, g0.gy + g0.out * (7 + Math.floor(k / 6)), 1);
+    const bot = Bots.create(sim, 0, { strength: 'kriegsherr', seed: 5 }), ev = { ram: [], breach: [], blows: 0 }, st = sim.state;
+    for (let i = 0; i < o.secs * TICKS && st.phase !== 'over'; i++) {
+      bot.step();
+      for (const e of sim.step()) {
+        if (e.t === 'recruit' && e.lord === 0 && e.unit === 'ramme') ev.ram.push(e.n);
+        else if (e.t === 'breach' && e.lord === 1) ev.breach.push(e.kind);
+        else if (e.t === 'ram') ev.blows++;
+      }
+    }
+    return { sealed, pieces, bot, ev, sim };
+  }
+  const mixed = (k) => (k % 3 === 0 ? 'bogen' : 'speer');
+  // (a) a stone ring: the bot orders a ram for the banner that goes, marches with it and breaks the wall
+  const a = siege('mauer', { gold: 12, secs: 600, army: mixed });
+  ok(a.sealed && a.pieces >= 12, 'Belagerung: der Mauerring ist geschlossen (' + a.pieces + ' Stücke, ohne Bruch ist das Tor nicht erreichbar)');
+  ok(a.ev.ram.length >= 1 && a.ev.ram[0] >= 1, 'Belagerung (Mauer): der Bot bildet eine Ramme für ein Banner aus (' + a.ev.ram.length + ' Rammen, Banner ' + a.ev.ram.join('/') + ')');
+  ok(a.ev.breach.includes('mauer') && a.ev.blows > 0, 'Belagerung (Mauer): die Mauer wird gebrochen (' + a.ev.breach.filter(x => x === 'mauer').length + ' Brüche, ' + a.ev.blows + ' Rammschläge)');
+  ok(a.bot.stats.errors === 0 && a.bot.stats.sieges >= 1, 'Belagerung (Mauer): keine Fehler, ein Angriff durch Mauern gezählt (' + a.bot.stats.sieges + ')');
+  // (b) a wooden ring: melee soldiers are enough, no ram is ordered
+  const b = siege('palisade', { gold: 12, secs: 400, army: mixed });
+  ok(b.sealed, 'Belagerung (Palisade): der Ring ist geschlossen');
+  ok(b.ev.ram.length === 0 && b.ev.breach.includes('palisade'), 'Belagerung (Palisade): ohne Ramme, die Palisade fällt durch Nahkämpfer (' + b.ev.breach.filter(x => x === 'palisade').length + ' Brüche)');
+  // (c) stone and no gold: no ram can be had, and the banner stays at home instead of marching into the wall
+  const c0 = siege('mauer', { gold: 0, secs: 300, army: mixed });
+  ok(c0.ev.ram.length === 0 && c0.bot.stats.attacks === 0 && c0.bot.stats.errors === 0, 'Belagerung (Stein, ohne Gold): keine Ramme, kein Angriff gegen die Mauer (' + c0.bot.stats.attacks + ' Angriffe)');
+  // (d) archers alone never go against a wall, not even a wooden one (their arrows scratch a palisade at 15 %)
+  const d = siege('palisade', { gold: 12, secs: 300, army: () => 'bogen', noKaserne: true });
+  ok(d.bot.stats.attacks === 0 && d.ev.ram.length === 0 && d.ev.breach.length === 0 && d.bot.stats.errors === 0, 'Belagerung: ein reines Bogenschützen-Banner marschiert nicht gegen die Palisade (' + d.bot.stats.attacks + ' Angriffe)');
+  console.log('  Belagerung: Mauerring (Ramme ' + a.ev.ram.length + ', ' + a.ev.breach.filter(x => x === 'mauer').length + ' Brüche), Palisadenring (' + b.ev.breach.filter(x => x === 'palisade').length + ' Brüche, keine Ramme), ohne Gold bleibt das Banner daheim, Bogenschützen allein gehen nicht');
+}
+
+// ---- takeover with walls, Markt, camp and gold: a house run by a (scripted) human, taken over by a bot ----
+{
+  const seed = 2, world = W.make(seed), sim = Sim.create({ seed, world, dauer: 12, burgfrieden: 0, lords: [{ i: 0, site: 0 }, { i: 1, site: 3 }] }), D = sim.dev, st = sim.state;
+  const put = (kind) => { const sp = W.suggest(world, kind, 0, { L: 0, occ: sim.occ }); const r = sp ? D.place(0, kind, sp.i, sp.j, sp.rot) : null; return r && r.ok ? r.b : null; };
+  for (let k = 0; k < 3; k++) put('hof'); put('holzfaeller'); put('steinbruch'); put('huette'); put('kaserne'); put('markt'); put('soeldnerlager'); put('wachturm');
+  // a short palisade line south of the keep (the first row that takes it), pieces of 3 cells side by side
+  const wall = [], kp = world.sites[0].keep;
+  for (let dj = 9; dj <= 18 && wall.length < 4; dj++) for (let k = 0; k < 4; k++) { const r = D.place(0, 'palisade', kp.i - 6 + k * 3, kp.j + dj, 0, 3); if (r.ok) wall.push(r.b); else if (wall.length) break; }
+  D.stock(0, { korn: 100, holz: 90, stein: 30, gold: 6 });
+  const bot1 = Bots.create(sim, 1, { strength: 'ritter', seed: 3 });
+  run(sim, [bot1], 200 * TICKS);   // the human's house runs by itself while the other one has a bot
+  ok(wall.length >= 2, 'Übernahme: die Mauer des Menschen steht (' + wall.length + ' Stücke)');
+  const lost = wall[0]; D.damage(lost, 1e9, 1);   // a wall piece falls just before the takeover
+  const count = (kind) => st.buildings.filter(b => b.lord === 0 && b.kind === kind && !b.ruined).length;
+  const before = { markt: count('markt'), lager: count('soeldnerlager') };
+  const bot0 = Bots.create(sim, 0, { strength: 'kriegsherr', seed: 9 });
+  const log = run(sim, [bot0, bot1], 240 * TICKS);
+  ok(bot0.stats.errors === 0 && bot1.stats.errors === 0, 'Übernahme (Mauern, Markt, Lager, Gold): keine Fehler');
+  ok(count('markt') === before.markt && count('soeldnerlager') === before.lager, 'Übernahme: der Bot baut keinen zweiten Markt und kein zweites Söldnerlager (' + count('markt') + ' / ' + count('soeldnerlager') + ')');
+  ok(ofType(log, 'trade').some(e => e.lord === 0), 'Übernahme: der Bot handelt auf dem vorhandenen Markt (' + ofType(log, 'trade').filter(e => e.lord === 0).length + ' Geschäfte)');
+  ok(ofType(log, 'rebuild').some(e => e.id === lost.id) || !lost.ruined, 'Übernahme: das gefallene Mauerstück wird wieder aufgebaut');
+  console.log('  Übernahme mit Mauern: vorhandenen Markt und Lager weitergenutzt (kein Doppelbau), Geschäfte, das gefallene Stück wieder aufgebaut');
 }
 
 // ---- Futterversuch (Phase 1b): was ernährt ein Hof, und halten 8 Höfe 16 Leute, während Baustellen und Rekruten warten? (ohne Bots) ----
@@ -380,12 +469,52 @@ pool(jobs, SIZE, (raw) => {
   const att = ['ritter', 'kriegsherr'].reduce((a, s) => ({ n: a.n + sum[s].n, at: a.at + sum[s].at }), { n: 0, at: 0 });
   if (!QUICK) {
     ok(all.b12 === all.n, 'jeder Bot kommt auf ≥ 12 fertige Gebäude (' + all.b12 + ' von ' + all.n + ')');
+    // (Phase 2: E2 had to loosen this to 0.90 while the bots had no Söldnerlager and so no torch squad; since E4 the bots have both, and it is 0.97 again)
     ok(att.at >= att.n * 0.97, 'Ritter und Kriegsherren greifen mindestens einmal an (' + att.at + ' von ' + att.n + ')');
     ok(all.t15 >= all.n * 0.9, 'fast jeder Bot bildet ≥ 15 Soldaten aus (' + all.t15 + ' von ' + all.n + ')');
     ok(all.s15 >= all.n * 0.7, 'die meisten Bots haben irgendwann ≥ 15 Soldaten (' + all.s15 + ' von ' + all.n + ' = ' + pct(all.s15, all.n) + ')');
   }
   goal(all.s15 === all.n, 'jeder Bot hat irgendwann ≥ 15 Soldaten (' + all.s15 + ' von ' + all.n + ')');
   goal(att.at === att.n, 'jeder Ritter und Kriegsherr greift an (' + att.at + ' von ' + att.n + ')');
+
+  // ---- Phase 2: Markt, Söldnerlager, Mauern, Gold, Rammen (4 gleiche Bots; die Ritter-Tabelle zählt hier alle 20 Ritter-Spiele) ----
+  {
+    const cells = (s) => good.filter(r => r.group === 'full-' + s).flatMap(r => r.strengths.map((_, k) => ({ r, k })));
+    const sums = (cs, f) => cs.reduce((a, x) => a + f(x.r, x.k), 0);
+    console.log('\n  Phase 2 (je Stärke, 4 gleiche Bots): Bots mit Markt / Söldnerlager / Torhaus · Ø Mauerstücke · Ø Handel (verkauft + gekauft 💰) · Reiterschützen · Rammen · Garnison · Brüche');
+    console.log('    Stärke       Bots   Markt   Lager   Torhaus   Mauerstücke   💰 verkauft   💰 gekauft   Handel    Reiter   Rammen (Schläge)   Besetzt   Brüche je Spiel');
+    for (const st of STRENGTHS) {
+      const cs = cells(st), g = good.filter(r => r.group === 'full-' + st);
+      console.log('    ' + st.padEnd(12) + String(cs.length).padStart(4) + String(cs.filter(x => x.r.kinds[x.k].markt !== undefined).length).padStart(8) + String(cs.filter(x => x.r.kinds[x.k].soeldnerlager !== undefined).length).padStart(8)
+        + String(cs.filter(x => x.r.kinds[x.k].torhaus !== undefined).length).padStart(10) + (sums(cs, (r, k) => r.wallsBuilt[k]) / cs.length).toFixed(1).padStart(14) + (sums(cs, (r, k) => r.goldSold[k]) / cs.length).toFixed(1).padStart(14)
+        + (sums(cs, (r, k) => r.goldBought[k]) / cs.length).toFixed(1).padStart(13) + (sums(cs, (r, k) => r.tradeN[k]) / cs.length).toFixed(1).padStart(9) + (sums(cs, (r, k) => r.riders[k]) / cs.length).toFixed(1).padStart(9)
+        + (sums(cs, (r, k) => r.ramsRecruited[k]) + ' (' + g.reduce((a, r) => a + r.ramBlows, 0) + ')').padStart(18) + (sums(cs, (r, k) => r.garrisoned[k]) / cs.length).toFixed(1).padStart(10) + (g.reduce((a, r) => a + Object.values(r.breachByKind).reduce((x, y) => x + y, 0), 0) / (g.length || 1)).toFixed(1).padStart(14));
+    }
+    const merc = cells('ritter').filter(x => x.r.seed <= SEEDS || true).concat(cells('kriegsherr'));
+    const withM = merc.filter(x => x.r.kinds[x.k].markt !== undefined).length, withC = merc.filter(x => x.r.kinds[x.k].soeldnerlager !== undefined).length;
+    const tM = merc.filter(x => x.r.kinds[x.k].markt !== undefined).map(x => x.r.kinds[x.k].markt), tC = merc.filter(x => x.r.kinds[x.k].soeldnerlager !== undefined).map(x => x.r.kinds[x.k].soeldnerlager);
+    console.log('    Ritter und Kriegsherren: Markt fertig bei ' + withM + ' von ' + merc.length + ' (Median ' + med(tM).toFixed(0) + ' s), Söldnerlager bei ' + withC + ' von ' + merc.length + ' (Median ' + med(tC).toFixed(0) + ' s)');
+    if (!QUICK) {
+      ok(withM >= merc.length * 0.9, 'Ritter und Kriegsherren bauen einen Markt (' + withM + ' von ' + merc.length + ' Häusern, ≥ 90 %)');
+      ok(withC >= merc.length * 0.9, 'Ritter und Kriegsherren bauen ein Söldnerlager (' + withC + ' von ' + merc.length + ' Häusern, ≥ 90 %)');
+    }
+    const knM = cells('knappe');
+    console.log('    Knappen: Markt bei ' + knM.filter(x => x.r.kinds[x.k].markt !== undefined).length + ' von ' + knM.length + ', Söldnerlager bei ' + knM.filter(x => x.r.kinds[x.k].soeldnerlager !== undefined).length + ' (keines: der Knappe baut kein Lager und keine Mauern)');
+    ok(knM.every(x => x.r.kinds[x.k].soeldnerlager === undefined && x.r.wallsBuilt[x.k] === 0), 'der Knappe baut weder Söldnerlager noch Mauern');
+    // stranding: nobody may sit idle next to empty workplaces for a minute (a wall line must never cut peasants off)
+    const strand = good.flatMap(r => r.strandMax);
+    console.log('    Stranden: längste Zeit mit ≥ 3 Untätigen bei freien Arbeitsplätzen Maximum ' + Math.max(...strand) + ' s, über 60 s: ' + strand.filter(x => x > 60).length + ' von ' + strand.length + ' Häusern');
+    ok(strand.every(x => x <= 60), 'kein Haus hat ≥ 3 untätige Bauern bei freien Arbeitsplätzen länger als 60 s am Stück (Maximum ' + Math.max(...strand) + ' s)');
+    // the walls themselves: reported as goals
+    const wallers = merc.filter(x => x.r.wallsBuilt[x.k] > 0).length;
+    goal(wallers >= merc.length * 0.9, 'Ritter und Kriegsherren bauen Mauerstücke (' + wallers + ' von ' + merc.length + ' Häusern)');
+    goal(merc.filter(x => x.r.torBuilt[x.k] > 0).length >= merc.length * 0.7, 'die meisten Ritter und Kriegsherren bauen ein Torhaus (' + merc.filter(x => x.r.torBuilt[x.k] > 0).length + ' von ' + merc.length + ')');
+    const allBreach = good.reduce((a, r) => a + Object.values(r.breachByKind).reduce((x, y) => x + y, 0), 0), allRams = good.reduce((a, r) => a + r.ramsRecruited.reduce((x, y) => x + y, 0), 0);
+    console.log('    Brüche insgesamt ' + allBreach + ' (' + JSON.stringify(good.reduce((o, r) => { for (const k in r.breachByKind) o[k] = (o[k] || 0) + r.breachByKind[k]; return o; }, {})) + '), Rammen ausgebildet ' + allRams + ', Rammschläge ' + good.reduce((a, r) => a + r.ramBlows, 0));
+    goal(allBreach > 0, 'in den ganzen Spielen fällt mindestens ein Mauerstück oder Tor (' + allBreach + ' Brüche)');
+    goal(allRams > 0, 'in den ganzen Spielen wird mindestens eine Ramme ausgebildet (' + allRams + ')');
+    goal(good.reduce((a, r) => a + r.goldSold.reduce((x, y) => x + y, 0), 0) > 0, 'der Markt wird benutzt (verkauft ' + good.reduce((a, r) => a + r.goldSold.reduce((x, y) => x + y, 0), 0) + ' 💰 in allen Spielen)');
+  }
 
   // ---- balance table: 4 ritter bots ----
   const rit = good.filter(r => r.group === 'full-ritter');
@@ -410,7 +539,8 @@ pool(jobs, SIZE, (raw) => {
   console.log('    Plünderungen     ' + plun.reduce((a, b) => a + b, 0) + ' insgesamt (' + (plun.reduce((a, b) => a + b, 0) / rit.length).toFixed(2) + ' je Spiel), in ' + plun.filter(x => x > 0).length + ' von ' + rit.length + ' Spielen');
   console.log('    Fehde → 1. Kampf Median ' + med(fights).toFixed(0) + ' s, Maximum ' + Math.max(...fights).toFixed(0) + ' s, innerhalb von 60 s: ' + fights.filter(x => x <= 60).length + ' von ' + rit.length);
   console.log('    Längster Hunger  Maximum ' + Math.max(...hruns) + ' s, Median je Spiel ' + med(hmax) + ' s, Häuser über 60 s am Stück: ' + hruns.filter(x => x > 60).length + ' von ' + hruns.length + '   (Kriegsherr-Tabelle, ' + kri.length + ' Spiele: Maximum ' + Math.max(...hrunsK) + ' s, über 60 s: ' + hrunsK.filter(x => x > 60).length + ' von ' + hrunsK.length + ')');
-  console.log('    Erster Fackelbrand  Ritter Median ' + med(torchR).toFixed(0) + ' s nach der Fehde (frühestens ' + Math.min(...torchR).toFixed(0) + ' s, RAID_AFTER_S ' + RA.ritter + ' s) · Kriegsherr Median ' + med(torchK).toFixed(0) + ' s (frühestens ' + Math.min(...torchK).toFixed(0) + ' s, RAID_AFTER_S ' + RA.kriegsherr + ' s)');
+  const torchTxt = (t, ra) => t.length ? 'Median ' + med(t).toFixed(0) + ' s nach der Fehde (frühestens ' + Math.min(...t).toFixed(0) + ' s, RAID_AFTER_S ' + ra + ' s)' : 'keiner (RAID_AFTER_S ' + ra + ' s)';
+  console.log('    Erster Fackelbrand  Ritter ' + torchTxt(torchR, RA.ritter) + ' · Kriegsherr ' + torchTxt(torchK, RA.kriegsherr));
   console.log('    Schrittzeit      Sim Ø ' + stepSim.toFixed(3) + ' ms + 4 Bots Ø ' + stepBots.toFixed(3) + ' ms je Schritt (' + (1000 * stepBots / 4).toFixed(0) + ' µs je Bot)');
   const evAvg = {}; rit.forEach(r => { for (const k in r.ev) evAvg[k] = (evAvg[k] || 0) + r.ev[k] / rit.length; });
   console.log('    je Spiel         ' + ['attack', 'death', 'ignite', 'cropBurnt', 'ruined', 'trained', 'hunger'].map(k => k + ' ' + (evAvg[k] || 0).toFixed(0)).join(', '));
@@ -425,6 +555,10 @@ pool(jobs, SIZE, (raw) => {
   ok(rit.length > 0 && kri.length > 0, 'Ritter- und Kriegsherr-Tabelle sind nicht leer (' + rit.length + ' / ' + kri.length + ' Spiele)');
   ok(hruns.every(x => x <= 60), 'Ritter-Tabelle: kein Haus hungert länger als 60 s am Stück (Maximum ' + Math.max(...hruns) + ' s, ' + hruns.filter(x => x > 60).length + ' von ' + hruns.length + ' Häusern darüber)');
   ok(hrunsK.every(x => x <= 60), 'Kriegsherr-Tabelle: kein Haus hungert länger als 60 s am Stück (Maximum ' + Math.max(...hrunsK) + ' s, ' + hrunsK.filter(x => x > 60).length + ' von ' + hrunsK.length + ' Häusern darüber)');
+  // Phase 2: the torch raids are back (the fackel is trained at the Söldnerlager for 💰): fires in most matches of the ritter table and of the kriegsherr table
+  const raidsR = rit.filter(r => r.firstIgnite >= 0).length, raidsK = kri.filter(r => r.firstIgnite >= 0).length;
+  console.log('    Fackelzüge       Ritter-Tabelle: Brand in ' + raidsR + ' von ' + rit.length + ' Spielen · Kriegsherr-Tabelle: in ' + raidsK + ' von ' + kri.length);
+  if (!QUICK) ok(raidsR >= rit.length * 0.8 && raidsK >= kri.length * 0.8, 'die Fackelzüge sind zurück: Brand in ' + raidsR + ' von ' + rit.length + ' Ritter- und ' + raidsK + ' von ' + kri.length + ' Kriegsherr-Spielen (≥ 80 %)');
   ok(torchR.every(x => x >= RA.ritter - 1), 'kein Fackelzug der Ritter vor RAID_AFTER_S = ' + RA.ritter + ' s nach der Fehde (frühester Brand ' + Math.min(...torchR).toFixed(0) + ' s)');
   ok(torchK.every(x => x >= RA.kriegsherr - 1), 'kein Fackelzug der Kriegsherren vor RAID_AFTER_S = ' + RA.kriegsherr + ' s nach der Fehde (frühester Brand ' + Math.min(...torchK).toFixed(0) + ' s)');
   ok(good.every(r => !r.ev.pause), 'Bots lassen nie einen Betrieb ruhen (kein pause-Ereignis)');
@@ -440,6 +574,7 @@ pool(jobs, SIZE, (raw) => {
   console.log('\n  Mischspiele: 1 Kriegsherr gegen 3 Knappe, ' + mix.length + ' Spiele (Kriegsherr auf jeder Burg × ' + MIXSEEDS + ' Seeds)');
   console.log('    Kriegsherr gewinnt ' + mwins + ' von ' + mix.length + ' (' + pct(mwins, mix.length) + ')  · Ø Ruhm Kriegsherr ' + (kr.ruhm / kr.n).toFixed(0) + ' (Zerstörungen ' + (kr.razes / kr.n).toFixed(0) + ', Kills ' + (kr.kills / kr.n).toFixed(0) + ', Spitze ' + (kr.peak / kr.n).toFixed(0) + ' Soldaten) · je Knappe ' + (kn.ruhm / kn.n).toFixed(0) + ' (Zerstörungen ' + (kn.razes / kn.n).toFixed(0) + ', Kills ' + (kn.kills / kn.n).toFixed(0) + ', Spitze ' + (kn.peak / kn.n).toFixed(0) + ')');
   if (!QUICK) ok(mwins >= mix.length * 0.7, 'der Kriegsherr gewinnt ≥ 70 % gegen 3 Knappe (' + mwins + ' von ' + mix.length + ')');
+  console.log('    Zum Vergleich (Notizen): Phase 1b Burgen 30/10/35/25 %, Sieger/Letzter Ø 1.52×, längster Hunger 25 s, Kriegsherr gegen 3 Knappe 85 %; Phase 2 mit den alten Bots Burgen 35/10/45/10 %, Ø 1.43×, Kriegsherr 75 %, 1 Plünderung, 1. Kampf Median 228 s');
 
   const total = secs();
   console.log('\n  Laufzeit: ' + total.toFixed(1) + ' s gesamt (' + res.length + ' ganze Spiele gespielt in ' + wall.toFixed(1) + ' s auf ' + SIZE + ' Workern, ' + (res.length * 720 / wall).toFixed(0) + ' Spielsekunden je Sekunde)');

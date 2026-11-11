@@ -5,8 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Furt &amp; Fehde Phone Dev</title>
 <!-- Phone dev page: runs the real Furt & Fehde controller.js (+ warmap.js, world.js) against a FAKE SCREEN that speaks the whole Phase 1 protocol
-     (ffInfo with costs, rules, shared and bots · ffMap · ffLevel · ffPhase · ffYou with hunger, pacts, banners and food · ffBoard with ruins and the 13th field paused · ffAlert · ffToast · ffResult;
-     it answers ffBuild/ffCancel/ffRecruit/ffBanner/ffHome/ffPact/ffPause/ffAgain). Costs come from FurtSim.CONST (sim.js), like the real glue sends them.
+     (ffInfo with costs, rules (incl. the Markt's prices) , shared and bots · ffMap · ffLevel · ffPhase · ffYou with gold, hunger, pacts, banners and food · ffBoard with ruins, the 13th field paused and the 14th/15th len and garrison · ffAlert · ffToast · ffResult;
+     it answers ffBuild (with len for walls)/ffWall/ffTrade/ffCancel/ffRecruit (needs the house: Kaserne or Söldnerlager)/ffBanner (a drop on an own Mauer, Torhaus or Wachturm sends archers in)/ffHome/ffPact/ffPause/ffAgain).
+     Costs and prices come from FurtSim.CONST (sim.js), like the real glue sends them; ffWall places the pieces the way sim.buildWall does (in order while the stock lasts) and ffTrade trades the way sim.trade does. Autotest step 30 checks both against a real FurtSim instance when sim.js loads.
      Two modes in one file. The top page = fake screen + panel + an iframe sized like a phone; the iframe (same file, ?phone=1) is the phone,
      so orientation media queries are real.
      ?w=844&h=390 landscape (default) | ?w=390&h=844 portrait      ?seed=1 map seed      ?host=0 guest      ?lords=2|3|4 houses (2 = no pacts)      ?shared=Ben (a co-player in your house)
@@ -25,7 +26,10 @@
        &place=brunnen (the well-coverage demo: a few more own wooden buildings out in the fields, two groups no well reaches yet, and the Brunnen ghost on the spot that protects the most of them; &dash=1 adds a Brunnen
          still being built, drawn dashed; &card=brunnen / &card=keep show the coverage with the card of the own Brunnen / castle open)
        &bench=drag (with &place=brunnen: 300 forced frames while the planned Brunnen jumps about, with and without the coverage layer; the result replaces the autotest line)
-       &lager=1 (the 📦 Lager sheet is open; &lager=full: Korn and Stein are full, so their tips show)   &rules=0 (the fake screen sends no ffInfo.rules: the phone uses 12, 12, 30, 60, 60, 8, 4)
+       &lager=1 (the 📦 Lager sheet is open; &lager=full: Korn and Stein are full, so their tips show)   &rules=0 (the fake screen sends no ffInfo.rules: the phone uses 12, 12, 30, 60, 60, 8, 4 and the contract's Markt prices 1/1/2 and 3/3/5, packs of 5)
+       Phase 2 presets:  &wall=1 (the wall tool: a Mauer line dragged through the village, the finger still on the glass; &wall=2 lets go; &wallkind=palisade)  &markt=1 (a finished Markt, 14 💰, the Markt sheet open; &markt=none: the sheet without a Markt)
+         &truppen=1|2 (the Kaserne stands, 2 adds a Söldnerlager: both groups of the ⚔️ panel, 14 💰)  &garrison=1|2|3|map (a Wachturm with 2 archers, a Mauer piece with 3, a Torhaus with 3; 1 opens the tower's card, 2 the Torhaus's, 3 the wall's, map none)
+         &advice=11|12|13 (the new advisor tips)  &guide=mauern|markt|soeldner|ramme  &measure=1 (top page: the geometry of the phone's top bar in the panel)  &nosim=1 (as if sim.js did not load)
      ?wait=1 only activates the phone (waiting screen)
      ?auto=1 the fake clock drives the phases and the water (Burgfrieden → Ebbe → Fehde → Ende), &burg=20 a short truce, &speed=10 faster, &dauer=6 match minutes, &advance=130 fast-forwards 130 s before the first picture   ?legacy=1 sends only the Phase 0 messages (no costs, ffPhase, pacts; 9-field board rows)   ?costs=0 sends no costs (the phone falls back to the stale world.js drafts)
      ?autotest=1 plays the test steps through the real UI and prints AUTOTEST OK or the first failure (on screen + console)
@@ -124,7 +128,7 @@ if (IS_PHONE) {
   <h3>👑 Herr</h3>
   <span id="lords"></span>
   <h3>Vorrat des falschen Fernsehers</h3>
-  <button class="btn" id="richBtn">Lager voll</button><button class="btn" id="poorBtn">Lager leer</button><button class="btn" id="fireBtn">🔥 Feuer legen</button>
+  <button class="btn" id="richBtn">Lager voll</button><button class="btn" id="poorBtn">Lager leer</button><button class="btn" id="fireBtn">🔥 Feuer legen</button><button class="btn" id="goldBtn">💰 +20</button>
   <h3>Presets (laden neu)</h3>
   <span id="presets"></span>
   <h3>Dynamische Karte: Kosten pro Bild</h3>
@@ -137,10 +141,10 @@ if (IS_PHONE) {
 <script>
 if (!IS_PHONE || STANDALONE) {
   const $ = (id) => document.getElementById(id);
-  const FW = window.FurtWorld, FS = window.FurtSim;
+  const FW = window.FurtWorld, FS = q.get('nosim') === '1' ? null : window.FurtSim;   // ?nosim=1: as if sim.js did not load (costs and prices from the contract's numbers, no sim cross-check)
   const STILL = q.get('still') === '1';
   const S0 = q.get('state') || '';
-  const PRESET_KEYS = ['mode', 'ghost', 'invalid', 'drag', 'view', 'target', 'wait', 'mud', 'crown', 'state', 'alert', 'card', 'phase', 'hunger', 'rank', 'guide', 'advice', 'food', 'arm', 'place', 'lager', 'queue'];
+  const PRESET_KEYS = ['mode', 'ghost', 'invalid', 'drag', 'view', 'target', 'wait', 'mud', 'crown', 'state', 'alert', 'card', 'phase', 'hunger', 'rank', 'guide', 'advice', 'food', 'arm', 'place', 'lager', 'queue', 'wall', 'markt', 'truppen', 'garrison'];
   const preset = PRESET_KEYS.some((k) => q.has(k));
   if (preset && q.get('panel') !== '1' && q.get('autotest') !== '1' && !STANDALONE) document.body.classList.add('nopanel');
   if (STANDALONE) {
@@ -164,8 +168,9 @@ if (!IS_PHONE || STANDALONE) {
   const hname = (i) => { const l = LORDS[i]; return l.bot ? l.botName : SITE_HOUSE[l.site]; };
 
   // ---- costs: from FurtSim.CONST (the single source of truth), the way the real glue sends them in ffInfo.costs ----
-  const FALLBACK = { build: { huette: { holz: 4 }, hof: { holz: 5 }, kornspeicher: { holz: 6 }, lager: { holz: 5 }, holzfaeller: { holz: 3 }, steinbruch: { holz: 6 }, kaserne: { holz: 8, stein: 8 }, wachturm: { holz: 2, stein: 10 }, brunnen: { stein: 4 } },
-    units: { speer: { korn: 2, holz: 2 }, bogen: { korn: 2, holz: 3 }, ritter: { korn: 4, stein: 3 }, fackel: { korn: 1, holz: 1 } }, rebuild: 0.5 };
+  const FALLBACK = { build: { huette: { holz: 4 }, hof: { holz: 5 }, kornspeicher: { holz: 6 }, lager: { holz: 5 }, holzfaeller: { holz: 3 }, steinbruch: { holz: 6 }, kaserne: { holz: 8, stein: 8 }, wachturm: { holz: 2, stein: 10 }, brunnen: { stein: 4 },
+      palisade: { holz: 1 }, mauer: { stein: 2 }, torhaus: { holz: 4, stein: 12 }, markt: { holz: 10 }, soeldnerlager: { holz: 12 } },   // (walls: per cell) — Phase 2 numbers from the contract, for a moment without a working sim.js
+    units: { speer: { korn: 2, holz: 2 }, bogen: { korn: 2, holz: 3 }, ritter: { korn: 4, stein: 3 }, fackel: { gold: 2, korn: 1 }, reiterschuetze: { gold: 6, korn: 2 }, ramme: { holz: 10, gold: 4 } }, rebuild: 0.5 };
   function simCosts() {
     const C = FS && FS.CONST; if (!C || !C.BUILD || !C.UNIT) return FALLBACK;
     const out = { build: {}, units: {}, rebuild: C.REBUILD_COST == null ? 0.5 : C.REBUILD_COST };
@@ -173,15 +178,19 @@ if (!IS_PHONE || STANDALONE) {
     for (const u in C.UNIT) if (C.UNIT[u].cost) out.units[u] = C.UNIT[u].cost;
     return out;
   }
-  const RULES_FALLBACK = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4 };
-  function simRules() {   // FurtSim.CONST → ffInfo.rules, like the real glue (screen.js)
-    const C = FS && FS.CONST; if (!C || C.BUCKET_R == null) return RULES_FALLBACK;
-    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES };
+  const PRICES_FALLBACK = { sell: { korn: 1, holz: 1, stein: 2 }, buy: { korn: 3, holz: 3, stein: 5 } };   // the contract's numbers (docs "Phase 2", Gold and the Markt)
+  const RULES_FALLBACK = { bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, tradePack: 5, prices: PRICES_FALLBACK };
+  function simRules() {   // FurtSim.CONST → ffInfo.rules, like the real glue (screen.js); a sim without the Markt constants falls back to the contract's prices
+    const C = FS && FS.CONST; if (!C || C.BUCKET_R == null) return JSON.parse(JSON.stringify(RULES_FALLBACK));   // (always a copy: the autotest changes a price and puts it back)
+    const prices = C.TRADE_PRICE && C.TRADE_PRICE.sell && C.TRADE_PRICE.buy ? { sell: Object.assign({}, C.TRADE_PRICE.sell), buy: Object.assign({}, C.TRADE_PRICE.buy) } : JSON.parse(JSON.stringify(PRICES_FALLBACK));
+    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES, tradePack: C.TRADE_PACK > 0 ? C.TRADE_PACK : 5, prices };
   }
   const LEGACY = q.get('legacy') === '1';   // ?legacy=1: only the Phase 0 messages (no costs, phase, pacts, hunger, banners in ffYou, 9-field board rows): the phone must still cope
   const COSTS = simCosts(), SEND_COSTS = q.get('costs') !== '0' && !LEGACY, RULES = simRules();
   let sendRules = q.get('rules') !== '0' && !LEGACY;   // false: an older screen without ffInfo.rules
-  const RES = { korn: 'Korn', holz: 'Holz', stein: 'Stein' };
+  const RES = { korn: 'Korn', holz: 'Holz', stein: 'Stein', gold: 'Gold' };
+  const isWall = (kind) => !!(FW.BUILDINGS[kind] && FW.BUILDINGS[kind].wall);
+  const GARRISON_SLOTS = (kind, len) => { const B = FW.BUILDINGS[kind]; return B && B.slots ? B.slots * (B.wall ? len || 1 : 1) : 0; };   // archer slots: the catalog's numbers (Mauer per cell, Torhaus 4, Wachturm 3)
 
   // ---- the clock and the phases (sim seconds): frieden → ebbe (the water falls) → fehde → over ----
   const CC = (FS && FS.CONST) || {};
@@ -244,7 +253,7 @@ if (!IS_PHONE || STANDALONE) {
   }
   const WORKERS = { hof: 1, holzfaeller: 1, steinbruch: 0 }, PAUSABLE = { hof: 1, holzfaeller: 1, steinbruch: 1 };   // the workplaces that can rest (docs R5)
   function resetState() {
-    stock = { korn: 30, holz: 70, stein: 26 }; cap = { korn: 90, holz: 90, stein: 90 }; pop = 6; popCap = 12; idle = 3; ruhm = 20; crown = false; hunger = q.get('hunger') === '1';
+    stock = { korn: 30, holz: 70, stein: 26, gold: 0 }; cap = { korn: 90, holz: 90, stein: 90 }; pop = 6; popCap = 12; idle = 3; ruhm = 20; crown = false; hunger = q.get('hunger') === '1';
     queue = []; buildings = []; banners = []; nextId = 1; rally = {}; pact = {}; ended = false;
     if (q.get('queue') === 'wait') { idle = 0; for (let k = 0; k < 3; k++) queue.push({ unit: ['speer', 'bogen', 'speer'][k], n: [1, 1, 2][k], p: 0, dur: 2, wait: true }); }   // ?queue=wait: every peasant works, three recruits wait for one (the advisor's recruit tip)
     const seq = ['hof', 'huette', 'kornspeicher', 'holzfaeller', 'lager', 'huette', 'kaserne', 'steinbruch', 'wachturm', 'brunnen', 'hof', 'huette'];   // (the last Hütte is a finished one: housing 8 + 4)
@@ -255,7 +264,7 @@ if (!IS_PHONE || STANDALONE) {
         if (!sp) continue;
         const fp = FW.footprintOf(kind, sp.rot);
         for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(sp.j + dj) * FW.GW + sp.i + di] = code(kind);
-        buildings.push({ id: nextId++, lord, kind, i: sp.i, j: sp.j, rot: sp.rot, build: n === 5 ? 0.55 : 1, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: WORKERS[kind] || 0, paused: 0, dur: 0 }); n++;
+        buildings.push({ id: nextId++, lord, kind, i: sp.i, j: sp.j, rot: sp.rot, build: n === 5 ? 0.55 : 1, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: WORKERS[kind] || 0, paused: 0, dur: 0, len: 1, garrison: 0 }); n++;
       }
       const counts = [[5, 2, 0], [8, 3, 4], [3, 6, 1], [7, 0, 2]][lord];
       for (let b = 1; b <= 3; b++) {
@@ -297,7 +306,7 @@ if (!IS_PHONE || STANDALONE) {
     if (LEGACY) toPhone({ t: 'ffYou', stock, cap, pop, popCap, idle, queue: qu.map((e) => ({ unit: e.unit, n: e.n, p: e.p })), ruhm, crown });
     else toPhone({ t: 'ffYou', now: r2(simT), stock, cap, pop, popCap, idle, hunger, queue: qu, ruhm, crown, pacts: pactsForYou(), banners: youBanners(), food: foodMode === '0' ? undefined : foodNow() });
   }
-  const sendBoard = () => toPhone({ t: 'ffBoard', b: buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.paused || b.full ? 0 : b.workers, b.paused ? 1 : b.full ? 2 : 0].slice(0, LEGACY ? 9 : 13)),
+  const sendBoard = () => toPhone({ t: 'ffBoard', b: buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.paused || b.full ? 0 : b.workers, b.paused ? 1 : b.full ? 2 : 0, b.len || 1, b.garrison || 0].slice(0, LEGACY ? 9 : 15)),
     banners: banners.map((b) => [b.lord, b.n, r2(b.x), r2(b.y), b.count]) });
   const toast = (text) => toPhone({ t: 'ffToast', text });
   function sendAll() { sendInfo(); toPhone(cfgMap()); sendLevel(); sendPhase(); sendYou(); sendBoard(); }
@@ -326,21 +335,77 @@ if (!IS_PHONE || STANDALONE) {
   const REASON = { wet: 'Zu nass', owner: 'Nicht dein Land', tight: 'Zu eng', forest: 'Kein Wald in der Nähe', rock: 'Kein Fels daneben', occupied: 'Belegt', terrain: 'Ungeeigneter Boden', bounds: 'Außerhalb der Karte' };
   function occGrid() {
     const occ = new Uint8Array(FW.GW * FW.GH);
-    for (const b of buildings) { const fp = FW.footprintOf(b.kind, b.rot); for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(b.j + dj) * FW.GW + b.i + di] = code(b.kind); }
+    for (const b of buildings) { const fp = FW.footprintOf(b.kind, b.rot, b.len); for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) occ[(b.j + dj) * FW.GW + b.i + di] = code(b.kind); }
     return occ;
+  }
+  const TRAIN_AT = { speer: 'kaserne', bogen: 'kaserne', ritter: 'kaserne', ramme: 'kaserne', fackel: 'soeldnerlager', reiterschuetze: 'soeldnerlager' };
+  const WHY = (r, kind) => r === 'cost' ? 'Zu wenig ' + Object.keys(COSTS.build[kind] || {}).map((g) => RES[g]).join(' und ') : r === 'kind' || r === 'lord' || r === 'phase' ? 'Das geht gerade nicht' : REASON[r] || r;
+  const TRADE_WHY = (r, good) => ({ markt: 'Dafür braucht ihr erst einen Markt', cost: 'Zu wenig ' + (RES[good] || 'Waren') + ' oder Gold', cap: (RES[good] || 'Das') + '-Lager ist voll' })[r] || 'Das geht gerade nicht';
+  // the Markt (sim.trade): packs of `tradePack` goods; sell → 💰, buy ← 💰; a trade that stops short (goods, gold or the store's cap) still works for the packs that fit; n = packs traded
+  function fakeTrade(stk, cps, good, side, packs, markt) {
+    const no = (reason) => ({ ok: false, n: 0, reason }), P = RULES.tradePack, price = ((RULES.prices || {})[side] || {})[good];
+    if (side !== 'sell' && side !== 'buy') return no('side');
+    if (!(good in RES) || good === 'gold') return no('good');
+    if (!Number.isInteger(packs) || packs < 1) return no('packs');
+    if (!markt) return no('markt');
+    let n = packs, why;
+    if (side === 'sell') { const have = Math.floor((stk[good] | 0) / P); if (have < n) { n = have; why = 'cost'; } }
+    else { const afford = Math.floor((stk.gold | 0) / price), room = Math.max(0, Math.floor(((cps[good] | 0) - (stk[good] | 0)) / P)); if (afford < n) { n = afford; why = 'cost'; } if (room < n) { n = room; why = 'cap'; } }
+    if (n < 1) return no(why);
+    if (side === 'sell') { stk[good] = (stk[good] | 0) - n * P; stk.gold = (stk.gold | 0) + n * price; } else { stk.gold = (stk.gold | 0) - n * price; stk[good] = (stk[good] | 0) + n * P; }
+    return why ? { ok: true, n, reason: why } : { ok: true, n };
+  }
+  // a line of wall pieces [[i, j, rot, len], …] (sim.buildWall): in order while the stock lasts; a piece that cannot be placed is skipped, an empty stock ends the line → { ok, placed, reason? }
+  function fakeWall(kind, pieces) {
+    if (!isWall(kind)) return { ok: false, placed: 0, reason: 'kind' };
+    if (!Array.isArray(pieces) || !pieces.length || pieces.length > 64) return { ok: false, placed: 0, reason: 'bounds' };
+    const B = FW.BUILDINGS[kind], base = COSTS.build[kind] || {}; let placed = 0, why;
+    for (const pc of pieces) {
+      if (!Array.isArray(pc)) { why = why || 'bounds'; continue; }
+      const i = pc[0], j = pc[1], rot = pc[2] ? 1 : 0, len = pc[3] == null ? 1 : pc[3];
+      if (!(Number.isInteger(i) && Number.isInteger(j) && Number.isInteger(len) && len >= 1 && len <= B.maxLen)) { why = why || 'bounds'; continue; }
+      const res = FW.canPlace(world, kind, i, j, rot, { lord: LORDS[me].site, L, occ: occGrid(), len });
+      if (!res.ok) { why = why || res.reason; continue; }
+      const cost = {}; for (const r in base) cost[r] = base[r] * len;
+      if (Object.keys(cost).some((r) => (stock[r] | 0) < cost[r])) { why = why || 'cost'; break; }
+      for (const r in cost) stock[r] -= cost[r];
+      buildings.push({ id: nextId++, lord: me, kind, i, j, rot, len, build: 0, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: 2 * len, garrison: 0 }); placed++;
+    }
+    return placed ? (why ? { ok: true, placed, reason: why } : { ok: true, placed }) : { ok: false, placed: 0, reason: why || 'bounds' };
+  }
+  // Wehrgang: an order within 1 cell of an own finished Mauer, Torhaus or Wachturm sends the banner's archers (here: half of its men) into the free slots of such buildings within 4 of the order, nearest first;
+  // an order anywhere else lets them down again (buildings[].garBy = the banner that holds the slots)
+  const rectDist = (b, x, y) => { const fp = FW.footprintOf(b.kind, b.rot, b.len), x0 = -72 + b.i, y0 = -45 + b.j; return Math.hypot(Math.max(x0 - x, 0, x - (x0 + fp[0])), Math.max(y0 - y, 0, y - (y0 + fp[1]))); };
+  function fakeGarrison(bn, x, y) {
+    for (const b of buildings) if (b.garBy === bn.n && b.lord === me) { b.garrison = 0; b.garBy = null; }
+    const gs = buildings.filter((b) => b.lord === me && !b.ruined && b.build >= 1 && GARRISON_SLOTS(b.kind, b.len) > 0);
+    if (!gs.some((b) => rectDist(b, x, y) <= 1)) return;
+    let archers = Math.ceil(bn.count / 2);
+    for (const b of gs.filter((q) => rectDist(q, x, y) <= 4).sort((a, c) => rectDist(a, x, y) - rectDist(c, x, y))) {
+      const take = Math.min(GARRISON_SLOTS(b.kind, b.len) - (b.garrison || 0), archers); if (take > 0) { b.garrison = (b.garrison || 0) + take; b.garBy = bn.n; archers -= take; }
+    }
   }
   const pay = (cost) => { for (const r in cost) if ((stock[r] | 0) < cost[r]) { toast('❌ Zu wenig ' + RES[r]); return false; } for (const r in cost) stock[r] -= cost[r]; return true; };
   function handle(d) {
     if (spectator) return;
     if (d.t === 'ffBuild') {
       const B = FW.BUILDINGS[d.kind]; if (!B || d.kind === 'bergfried') return;
-      const rot = d.rot ? 1 : 0, ruin = buildings.find((b) => b.lord === me && b.ruined && b.kind === d.kind && b.i === d.i && b.j === d.j && b.rot === rot), base = COSTS.build[d.kind] || {}, cost = {};
-      for (const r in base) cost[r] = ruin ? Math.ceil(base[r] * COSTS.rebuild) : base[r];
-      if (!ruin) { const res = FW.canPlace(world, d.kind, d.i, d.j, rot, { lord: LORDS[me].site, L, occ: occGrid() }); if (!res.ok) { toast('❌ ' + (REASON[res.reason] || res.reason)); return; } }
+      const len = isWall(d.kind) ? (d.len | 0) || 1 : 1;   // a wall piece (Palisade, Mauer) has a length; its cost is per cell, and a ruin is rebuilt only with its own length
+      const rot = d.rot ? 1 : 0, ruin = buildings.find((b) => b.lord === me && b.ruined && b.kind === d.kind && b.i === d.i && b.j === d.j && b.rot === rot && (b.len || 1) === len), base = COSTS.build[d.kind] || {}, cost = {};
+      for (const r in base) cost[r] = ruin ? Math.ceil(base[r] * len * COSTS.rebuild) : base[r] * len;
+      if (!ruin) { const res = FW.canPlace(world, d.kind, d.i, d.j, rot, { lord: LORDS[me].site, L, occ: occGrid(), len }); if (!res.ok) { toast('❌ ' + (REASON[res.reason] || res.reason)); return; } }
       if (!pay(cost)) return;
       if (ruin) { ruin.ruined = 0; ruin.build = 0; ruin.hp = 1; ruin.fire = 0; ruin.dur = 8; toast('♻️ ' + B.name + ' wird wiederaufgebaut'); }
-      else { buildings.push({ id: nextId++, lord: me, kind: d.kind, i: d.i, j: d.j, rot, build: 0, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: 8 }); toast('🏗️ ' + B.name + ' wird gebaut'); }
+      else { buildings.push({ id: nextId++, lord: me, kind: d.kind, i: d.i, j: d.j, rot, len, build: 0, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: isWall(d.kind) ? 2 * len : 8, garrison: 0 }); toast('🏗️ ' + B.name + ' wird gebaut'); }
       sendYou(); sendBoard();
+    } else if (d.t === 'ffWall') {   // a line of wall pieces: placed in order while the stock lasts (the sim's buildWall), one toast for the whole line
+      const n = Array.isArray(d.pieces) ? d.pieces.length : 0, r = fakeWall(d.kind, d.pieces), B = FW.BUILDINGS[d.kind] || { name: 'Wand' };
+      if (!r.ok) toast('❌ ' + WHY(r.reason, d.kind)); else if (r.reason) toast('⚠️ ' + r.placed + ' von ' + n + ' Stücken – ' + WHY(r.reason, d.kind)); else toast('🧱 ' + B.name + ': ' + r.placed + (r.placed === 1 ? ' Stück wird' : ' Stücke werden') + ' gebaut');
+      sendYou(); sendBoard();
+    } else if (d.t === 'ffTrade') {   // the Markt: packs of goods for 💰 and back; silent on success (the phone shows the numbers), a toast when it stops short
+      recount(); const r = fakeTrade(stock, cap, d.good, d.side, d.packs, buildings.some((b) => b.lord === me && b.kind === 'markt' && !b.ruined && b.build >= 1));
+      if (!r.ok) toast('❌ ' + TRADE_WHY(r.reason, d.good)); else if (r.reason) toast('⚖️ Nur ' + r.n + (r.n === 1 ? ' Paket' : ' Pakete') + ' – ' + TRADE_WHY(r.reason, d.good));
+      sendYou();
     } else if (d.t === 'ffCancel') {
       const k = buildings.findIndex((b) => b.id === d.id && b.lord === me); if (k < 0) { toast('❌ Das gibt es nicht mehr'); return; }
       const b = buildings[k];
@@ -348,6 +413,8 @@ if (!IS_PHONE || STANDALONE) {
       buildings.splice(k, 1); sendYou(); sendBoard();
     } else if (d.t === 'ffRecruit') {
       const U = FW.UNITS[d.unit]; if (!U || d.unit === 'bauer') return;
+      const at = ((FS && FS.CONST && FS.CONST.UNIT && FS.CONST.UNIT[d.unit]) || {}).at || TRAIN_AT[d.unit] || 'kaserne';   // the house that trains it: 'kaserne' or 'soeldnerlager'
+      if (!buildings.some((b) => b.lord === me && b.kind === at && !b.ruined && b.build >= 1)) { toast(at === 'kaserne' ? '❌ Dafür braucht ihr erst eine Kaserne' : '❌ Dafür braucht ihr erst ein Söldnerlager'); return; }
       const waits = q.get('queue') === 'wait';   // every peasant works: the order is taken (the real sim accepts it, too) and waits for a free one
       if (idle < 1 && !waits) { toast('❌ Niemand frei'); return; }
       if (!pay(COSTS.units[d.unit] || {})) return;
@@ -358,7 +425,7 @@ if (!IS_PHONE || STANDALONE) {
       if (!b) { rally[d.n] = { x: d.x, y: d.y }; toast('⚑ Sammelpunkt für Fahne ' + d.n + ' gesetzt'); return; }   // a banner that does not exist yet: a rally point for its recruits
       const p = FW.path(world, { x: b.x, y: b.y }, { x: d.x, y: d.y }, L);
       if (!p) { toast('✖ Kein Weg'); b.path = null; return; }
-      b.path = p; b.pi = 0; b.wait = 0; sendBoard(); sendYou();
+      b.path = p; b.pi = 0; b.wait = 0; fakeGarrison(b, d.x, d.y); sendBoard(); sendYou();
     } else if (d.t === 'ffHome') {
       for (const b of ownBanners()) { const h = bannerHome(me, b.n), p = FW.path(world, { x: b.x, y: b.y }, h, L); b.path = p; b.pi = 0; }
       sendBoard(); sendYou();
@@ -462,7 +529,8 @@ if (!IS_PHONE || STANDALONE) {
   LORDS.forEach((l) => { const b = document.createElement('button'); b.className = 'btn' + (l.i === me ? ' on' : ''); b.textContent = l.i + ' ' + hname(l.i).replace('Haus ', ''); b.style.borderBottom = '4px solid ' + l.color; b.onclick = () => { me = l.i; document.querySelectorAll('#lords .btn').forEach((x, k) => x.classList.toggle('on', k === me)); resetState(); pactButtons(); sendAll(); }; $('lords').appendChild(b); });
   pactButtons();
   $('richBtn').onclick = () => { recount(); stock = { korn: cap.korn - 2, holz: cap.holz - 2, stein: cap.stein - 2 }; sendYou(); };
-  $('poorBtn').onclick = () => { stock = { korn: 1, holz: 2, stein: 0 }; sendYou(); };
+  $('poorBtn').onclick = () => { stock = { korn: 1, holz: 2, stein: 0, gold: 0 }; sendYou(); };
+  $('goldBtn').onclick = () => { stock.gold = (stock.gold | 0) + 20; sendYou(); };
   $('fireBtn').onclick = () => { const b = buildings.find((x) => x.lord === me && x.kind === 'hof') || buildings.find((x) => x.lord === me); if (b) { b.fire = 0.8; sendBoard(); } };
   $('clearLog').onclick = () => { log.textContent = ''; };
   $('reload').onclick = () => { if (STANDALONE) location.reload(); else build(); };
@@ -471,7 +539,9 @@ if (!IS_PHONE || STANDALONE) {
     ['Burgfrieden', 'state=frieden'], ['Ebbe', 'state=ebbe'], ['Fehde', 'state=fehde'], ['Letzte Minute', 'state=letzte'],
     ['Pakte', 'state=pact'], ['Angebot (Tafel)', 'state=offer'], ['Angebot (Karte)', 'state=offer&mode=bauen'], ['Karte: Hof', 'state=card'], ['Karte: Ruine', 'state=cardruin'], ['Karte: Holzfäller', 'card=nowood'], ['Karte: Feuer', 'card=fire'], ['Karte: ruht', 'card=paused'], ['Karte: Lager voll', 'card=full'],
     ['Brunnen-Abdeckung', 'place=brunnen&dash=1&state=fehde'], ['Brunnen-Karte', 'card=brunnen&state=fehde'], ['Burg-Karte', 'card=keep&state=fehde'], ['Lager', 'lager=1&state=fehde'], ['Lager voll', 'lager=full&state=fehde'],
-    ['Anleitung', 'guide=1'], ['Anleitung: Gebäude', 'guide=gebaeude'], ['Tipp 1 Hunger', 'advice=1'], ['Tipp 6 Lager voll', 'advice=6'], ['Tipp 5 Rekruten warten', 'queue=wait&mode=truppen&state=fehde'], ['Tipp 10 Truppen', 'advice=10&state=fehde'], ['Fahne gewählt', 'mode=banner&arm=2&view=all'], ['Korn knapp', 'food=low'],
+    ['Mauer ziehen', 'wall=1&state=fehde'], ['Mauer fertig gezogen', 'wall=2&state=fehde'], ['Palisade', 'wall=1&wallkind=palisade&state=fehde'], ['Markt', 'markt=1&state=fehde'], ['Markt fehlt', 'markt=none&state=fehde'], ['Truppen: beide Häuser', 'truppen=2&state=fehde'], ['Truppen: nur Kaserne', 'truppen=1&state=fehde'],
+    ['Besetzter Turm', 'garrison=1&state=fehde'], ['Besetztes Tor', 'garrison=2&state=fehde'], ['Mauern auf der Karte', 'garrison=map&state=fehde'], ['Tipp 11 Hunger kaufen', 'advice=11'], ['Tipp 12 verkaufen', 'advice=12'], ['Tipp 13 Rammbock', 'advice=13'],
+    ['Anleitung', 'guide=1'], ['Anleitung: Gebäude', 'guide=gebaeude'], ['Anleitung: Mauern', 'guide=mauern'], ['Anleitung: Markt', 'guide=markt'], ['Tipp 1 Hunger', 'advice=1'], ['Tipp 6 Lager voll', 'advice=6'], ['Tipp 5 Rekruten warten', 'queue=wait&mode=truppen&state=fehde'], ['Tipp 10 Truppen', 'advice=10&state=fehde'], ['Fahne gewählt', 'mode=banner&arm=2&view=all'], ['Korn knapp', 'food=low'],
     ['Alarm Angriff', 'alert=attack'], ['Alarm Feuer', 'alert=fire'], ['Alarm Krone', 'alert=crown'], ['Ende (Host)', 'state=end'], ['Ende (Gast)', 'state=endguest'], ['Zuschauer', 'state=spectator'],
     ['mit Ben', 'shared=Ben&state=frieden'], ['2 Häuser', 'lords=2&mode=bauen'], ['Hunger', 'hunger=1&mode=truppen'], ['nur Phase-0-Nachrichten', 'legacy=1&mode=truppen'], ['Echtzeit-Spiel', 'auto=1&burg=20&speed=2&L=1']].forEach(([lab, qs]) => {
     const a = document.createElement('a'); a.className = 'btn'; a.textContent = lab; a.href = '?' + (STANDALONE ? 'phone=1&' : '') + qs + (STANDALONE ? '' : '&panel=1') + '&seed=' + seed; $('presets').appendChild(a);
@@ -516,6 +586,7 @@ if (!IS_PHONE || STANDALONE) {
     if (!STILL) { lastTick = performance.now(); clearInterval(window.__tick); window.__tick = setInterval(tick, 100); }
     if (q.get('autotest') === '1' || runAuto) { runAuto = false; autotest(); }
     if (q.get('bench') === 'drag' && !spectator) benchDrag(w);
+    if (q.get('measure') === '1') measureTop(w);
     if (q.get('bench') === '1') { w.__ff.map.layer('mine'); w.__ff.map.layer('all'); $('benchBtn').onclick(); updatePerf(); }   // ?bench=1: measure 300 forced frames right away (result in the log and the perf line)
   }
   function presetPact() {   // the pact states of the pact presets (relative to the fake clock)
@@ -524,6 +595,7 @@ if (!IS_PHONE || STANDALONE) {
     if (S0 === 'offer') { pact[1] = { state: 'incoming', until: simT + 24 }; if (LORDS[2]) pact[2] = { state: 'active', until: simT + 161 }; }
     if (q.get('pacts') === '1') { pact[1] = { state: 'active', until: simT + 161 }; }
   }
+  const rulesEqual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const click = (w, id) => { const el = w.document.getElementById(id); if (!el) throw new Error('Element fehlt: ' + id); el.click(); };
   const shown = (w, id) => { const el = w.document.getElementById(id); return !!el && !el.hidden && el.getClientRects().length > 0; };
   function findInvalid(kind, preferred) {   // an own-land spot for `kind` that breaks a rule, nearest to the keep
@@ -540,7 +612,7 @@ if (!IS_PHONE || STANDALONE) {
     return null;
   }
   function mouse(w, target, type, x, y) { target.dispatchEvent(new w.MouseEvent(type, { clientX: x, clientY: y, bubbles: true, cancelable: true, button: 0, buttons: type === 'mouseup' ? 0 : 1 })); }
-  const centerOf = (b) => { const fp = FW.footprintOf(b.kind, b.rot); return { x: -72 + b.i + fp[0] / 2, y: -45 + b.j + fp[1] / 2 }; };
+  const centerOf = (b) => { const fp = FW.footprintOf(b.kind, b.rot, b.len); return { x: -72 + b.i + fp[0] / 2, y: -45 + b.j + fp[1] / 2 }; };
   function syncMap(w) {   // the phone's ResizeObserver fits the map one task after a layout change; the synchronous tests must not depend on that
     const m = w.__ff.map, rr = w.document.getElementById('ffCanvas').getBoundingClientRect();
     if (m && rr.width > 10 && rr.height > 10) m.resize(rr.width, rr.height);
@@ -585,6 +657,90 @@ if (!IS_PHONE || STANDALONE) {
     recount(); sendBoard(); sendYou();
     click(w, 'ffMode-bauen'); click(w, 'ffCard-brunnen');
     const F = w.__ff, plan = bestWellSpot(); if (plan) { F.map.setGhost({ kind: 'brunnen', i: plan.i, j: plan.j, rot: 0 }); F.map.emit('ghostMove', F.map.getGhost()); }
+  }
+  // the best free spot for a kind (FurtWorld.suggest, like the phone's ghost) as a new own building; null when there is none
+  function addSuggested(kind, build, len) {
+    const sp = FW.suggest(world, kind, LORDS[me].site, { L: 0, occ: occGrid(), len: len || 1 }); if (!sp) return null;
+    const b = { id: nextId++, lord: me, kind, i: sp.i, j: sp.j, rot: sp.rot, len: len || 1, build: build == null ? 1 : build, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: 0, garrison: 0 };
+    buildings.push(b); return b;
+  }
+  // ?truppen=1|2: the Kaserne stands (and with 2 a Söldnerlager), some gold, the ⚔️ panel
+  function truppenDemo(w, v) {
+    const k = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); if (k) { k.build = 1; k.dur = 0; }
+    if (v === '2' && !buildings.some((b) => b.lord === me && b.kind === 'soeldnerlager')) addSuggested('soeldnerlager', 1);
+    stock.gold = 14; recount(); sendBoard(); sendYou(); click(w, 'ffMode-truppen');
+  }
+  // ?markt=1: a finished Markt, 14 💰 and the Markt sheet open; ?markt=none: the sheet without a Markt
+  function marktDemo(w, v) {
+    if (v !== 'none') { addSuggested('markt', 1); stock.gold = 14; stock.korn = 62; stock.holz = 88; stock.stein = 31; }
+    recount(); sendBoard(); sendYou(); w.__ff.openMarkt();
+  }
+  // ?garrison=1|2|map: a Wachturm with 2 archers, a Mauer piece of 4 cells with 3 and a Torhaus with 3; 1 opens the tower's card, 2 the Torhaus's, map none
+  function garrisonDemo(w, v) {
+    const t = addSuggested('wachturm', 1), m = addSuggested('mauer', 1, 4), g = addSuggested('torhaus', 1);
+    if (t) t.garrison = 2; if (m) m.garrison = 3; if (g) g.garrison = 3;
+    recount(); sendBoard(); sendYou();
+    if (v === 'map') { click(w, 'ffMode-bauen'); w.__ff.map.view('mine', true); w.__ff.draw(); return; }
+    const pick = v === '2' ? g : v === '3' ? m : t; if (pick) { click(w, 'ffMode-bauen'); w.__ff.map.view('mine', true); w.__ff.draw(); tapBuilding(w, pick); }
+  }
+  // ?wall=1|2: the wall tool with a line already dragged through the Kaserne's row (a red gap shows) and on south; 1 freezes the finger on the glass, 2 lets go; &wallkind=palisade
+  function wallLine() {   // the line [a, b] over own land with the most good cells, at least one refused one (so the demo shows both) and clear of the banner pins; found by trying a few lines through the rows of own buildings
+    const kind = q.get('wallkind') || 'mauer', occ = occGrid(), site = LORDS[me].site, k = keepOf(site), pins = [1, 2, 3].map((n) => bannerHome(me, n));
+    const anchors = buildings.filter((b) => b.lord === me && !b.ruined && !isWall(b.kind) && b.kind !== 'torhaus');
+    let best = null;
+    for (const kb of anchors) {
+      const fp = FW.footprintOf(kb.kind, kb.rot);
+      for (const dy of [1, 0, 2]) for (const lead of [8, 7, 9, 6]) for (const run of [8, 10, 12]) for (const sg of [1, -1]) {
+        const a = { i: kb.i - lead, j: kb.j + Math.min(dy, fp[1] - 1) }, b = { i: kb.i + fp[0] + run, j: a.j + 7 * sg };
+        const cells = []; for (let i = a.i; i <= b.i; i++) cells.push([i, a.j]); for (let j = a.j + sg; j !== b.j + sg; j += sg) cells.push([b.i, j]);
+        let good = 0, bad = 0, near = 0;
+        for (const [i, j] of cells) { if (i < 0 || j < 0 || i >= FW.GW || j >= FW.GH) { bad++; continue; } if (pins.some((p) => Math.hypot(-72 + i + 0.5 - p.x, -45 + j + 0.5 - p.y) < 4)) near++; if (FW.canPlace(world, kind, i, j, 0, { lord: site, L, occ, len: 1 }).ok) good++; else bad++; }
+        const score = good - 2 * bad - 4 * near;
+        if (bad > 0 && bad < good && near === 0 && (!best || score > best.score)) best = { a, b, score };
+      }
+    }
+    return best;
+  }
+  // The wall line worked out once more from the spec, as the autotest's oracle: the cells from a to b (the first leg along `axis`: 0 = along i), each cell checked with canPlace, the runs of good cells cut into
+  // balanced pieces of up to 4 → { cells, okCells, badRuns, pieces: [[i, j, rot, len]] (the pieces to send), bad: [{ i, j, n }] }
+  function wallOracle(kind, a, b, axis) {
+    const cells = [], di = Math.sign(b.i - a.i) || 1, dj = Math.sign(b.j - a.j) || 1;
+    if (a.i === b.i || a.j === b.j) { const h = a.j === b.j, n = Math.max(Math.abs(b.i - a.i), Math.abs(b.j - a.j)); for (let t = 0; t <= n; t++) cells.push({ i: a.i + (h ? t * di : 0), j: a.j + (h ? 0 : t * dj), h }); }
+    else if (axis === 0) { for (let i = a.i; i !== b.i + di; i += di) cells.push({ i, j: a.j, h: true }); for (let j = a.j + dj; j !== b.j + dj; j += dj) cells.push({ i: b.i, j, h: false }); }
+    else { for (let j = a.j; j !== b.j + dj; j += dj) cells.push({ i: a.i, j, h: false }); for (let i = a.i + di; i !== b.i + di; i += di) cells.push({ i, j: b.j, h: true }); }
+    const occ = occGrid(), out = { cells: cells.length, okCells: 0, badRuns: 0, pieces: [], bad: [] };
+    let k = 0;
+    while (k < cells.length) {
+      const c0 = cells[k], ok = FW.canPlace(world, kind, c0.i, c0.j, 0, { lord: LORDS[me].site, L, occ, len: 1 }).ok; let e = k;
+      while (e + 1 < cells.length && cells[e + 1].h === c0.h && FW.canPlace(world, kind, cells[e + 1].i, cells[e + 1].j, 0, { lord: LORDS[me].site, L, occ, len: 1 }).ok === ok) e++;
+      const run = cells.slice(k, e + 1), n = run.length;
+      if (ok) {
+        const parts = Math.ceil(n / 4), base = Math.floor(n / parts), extra = n - base * parts; let at = 0;
+        for (let t = 0; t < parts; t++) { const len = base + (t < extra ? 1 : 0), seg = run.slice(at, at + len); at += len; out.pieces.push([Math.min(seg[0].i, seg[len - 1].i), Math.min(seg[0].j, seg[len - 1].j), c0.h || len === 1 ? 0 : 1, len]); out.okCells += len; }
+      } else { out.badRuns++; out.bad.push({ i: Math.min(run[0].i, run[n - 1].i), j: Math.min(run[0].j, run[n - 1].j), n }); }
+      k = e + 1;
+    }
+    return out;
+  }
+  // drag the mouse over cell centres: down at the first, moves through the others, up at the last when `release`
+  function dragCells(w, pts, release) {
+    const m = w.__ff.map, cvs = w.document.getElementById('ffCanvas'), r = cvs.getBoundingClientRect(), P = (c) => { const p = m.toScreen(-72 + c.i + 0.5, -45 + c.j + 0.5); return { x: r.left + p.x, y: r.top + p.y }; };
+    syncMap(w);
+    const a = P(pts[0]); mouse(w, cvs, 'mousedown', a.x, a.y);
+    for (let q = 1; q < pts.length; q++) { const p0 = P(pts[q - 1]), p1 = P(pts[q]); for (let t = 1; t <= 4; t++) mouse(w, w, 'mousemove', p0.x + (p1.x - p0.x) * t / 4, p0.y + (p1.y - p0.y) * t / 4); }
+    if (release) { const e = P(pts[pts.length - 1]); mouse(w, w, 'mouseup', e.x, e.y); }
+  }
+  function wallDemo(w, v) {
+    const F = w.__ff, kind = q.get('wallkind') || 'mauer';
+    stock.stein = 60; stock.holz = 70; recount(); sendYou();   // enough for the whole line
+    click(w, 'ffMode-bauen'); click(w, 'ffCard-' + kind); F.map.view('mine', true); syncMap(w); F.draw();
+    const ln = wallLine(); if (!ln) return;
+    const m = F.map, cvs = w.document.getElementById('ffCanvas'), r = cvs.getBoundingClientRect(), pt = (i, j) => { const p = m.toScreen(-72 + i + 0.5, -45 + j + 0.5); return { x: r.left + p.x, y: r.top + p.y }; };
+    const a = pt(ln.a.i, ln.a.j), c = pt(ln.b.i, ln.a.j), b = pt(ln.b.i, ln.b.j);
+    mouse(w, cvs, 'mousedown', a.x, a.y);
+    for (let t = 1; t <= 6; t++) mouse(w, w, 'mousemove', a.x + (c.x - a.x) * t / 6, a.y + (c.y - a.y) * t / 6);
+    for (let t = 1; t <= 4; t++) mouse(w, w, 'mousemove', c.x + (b.x - c.x) * t / 4, c.y + (b.y - c.y) * t / 4);
+    if (v === '2') mouse(w, w, 'mouseup', b.x, b.y);
   }
   function bestWellSpot() {   // the valid 1×1 spot on the own land that would protect the most unprotected buildings (ties: the one nearest the keep)
     const site = LORDS[me].site, k = keepOf(site), occ = occGrid(); let best = null, bn = 0, bd = 1e9;
@@ -631,6 +787,10 @@ if (!IS_PHONE || STANDALONE) {
     }
     if ((S0 === 'pact' || S0 === 'offer') && !mode) click(w, 'ffMode-pakte');   // &mode=bauen shows the offer prompt over the map instead
     if (q.get('place') === 'brunnen' && !spectator) placeDemo(w);
+    if (q.get('truppen') && !spectator) truppenDemo(w, q.get('truppen'));
+    if (q.get('markt') && !spectator) marktDemo(w, q.get('markt'));
+    if (q.get('garrison') && !spectator) garrisonDemo(w, q.get('garrison'));
+    if (q.get('wall') && !spectator) wallDemo(w, q.get('wall'));
     const ck = q.get('card') || (S0 === 'card' ? q.get('kind') || 'hof' : S0 === 'cardruin' ? 'ruin' : '');
     if (ck && !spectator) openCardPreset(w, ck);
     if (q.get('lager') && !spectator) { if (q.get('lager') === 'full') { recount(); stock.korn = cap.korn; stock.stein = cap.stein; sendYou(); } F.openLager(); }
@@ -640,6 +800,14 @@ if (!IS_PHONE || STANDALONE) {
     if (q.get('guide')) F.openGuide(q.get('guide') === '1' ? undefined : q.get('guide'));
     if (S0 === 'end' || S0 === 'endguest') endMatch();
     F.draw();
+  }
+  // ?measure=1 (top page): the geometry of the phone's top bar, written into the panel: every visible child's left, right, top and width, and whether the bar overflows
+  function measureTop(w) {
+    const d = w.document, top = d.getElementById('ffTop'), out = [];
+    const walk = (node) => { for (const c of node.children) { if (c.classList.contains('ff-r1') || c.classList.contains('ff-r2')) { walk(c); continue; } const r = c.getBoundingClientRect(); if (r.width > 0) out.push((c.id || c.className || c.tagName) + ' ' + Math.round(r.left) + '→' + Math.round(r.right) + ' y' + Math.round(r.top) + ' w' + Math.round(r.width)); } };
+    walk(top);
+    $('autoRes').textContent = 'top ' + top.clientWidth + '×' + top.offsetHeight + ' scroll ' + top.scrollWidth + ' | win ' + w.innerWidth + '×' + w.innerHeight + '\n' + out.join('\n');
+    $('autoRes').style.cssText = 'font:12px/1.3 monospace;white-space:pre;color:#7fe3ff';
   }
   // ?bench=drag (with &place=brunnen): 300 forced frames while the Brunnen ghost jumps about, once without and once with the coverage layer. The layer's wash is rebuilt every frame then (the worst case of a drag).
   function benchDrag(w) {
@@ -722,6 +890,7 @@ if (!IS_PHONE || STANDALONE) {
       must(Array.from(doc.querySelectorAll('.ff-toast')).some((t) => t.textContent.indexOf('Hof') >= 0), 'Toast „Hof wird gebaut“ fehlt');
       // 3: recruit +🗡️ into banner II
       step = '3 Speerträger in Fahne II';
+      { const ks0 = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); ks0.build = 1; ks0.dur = 0; sendBoard(); }   // (the phone refuses a recruit while its Kaserne is only a building site: step 24)
       click(w, 'ffMode-truppen'); click(w, 'ffTarget-2'); click(w, 'ffUnit-speer');
       const rec = sent.filter((x) => x.t === 'ffRecruit'), rm = rec[rec.length - 1];
       must(rm && rm.unit === 'speer' && rm.n === 2, 'erwartet ffRecruit {unit:speer,n:2}, bekam ' + JSON.stringify(rm));
@@ -917,8 +1086,8 @@ if (!IS_PHONE || STANDALONE) {
       click(w, 'ffHelp');
       must(shown(w, 'ffGuide') && !help.classList.contains('pulse') && F.seen === true, 'das ❓ öffnet die Anleitung nicht (oder pulsiert danach weiter)');
       const heads = Array.from(doc.querySelectorAll('.gd-sec h3')).map((h) => h.textContent);
-      ['Ziel & Ruhm', 'Hochwasser → Ebbe → Fehde', 'Leute & Korn', 'Gebäude', 'Truppen', 'Feuer & Brunnen', 'Pakte', 'Bot-Stärken'].forEach((t) => must(heads.some((h) => h.indexOf(t) >= 0), 'die Anleitung hat keinen Abschnitt „' + t + '“ (' + heads.join(' | ') + ')'));
-      must(doc.querySelectorAll('.gd-bld').length === 9 && doc.getElementById('ffGuideSec-gebaeude').textContent.indexOf('1 Hof ernährt etwa') >= 0, 'der Abschnitt Gebäude zeigt nicht alle neun Gebäude mit Wozu · Wohin · Wie viele');
+      ['Ziel & Ruhm', 'Hochwasser → Ebbe → Fehde', 'Leute & Korn', 'Gebäude', 'Truppen', 'Mauern & Tore', 'Markt & Gold', 'Söldner', 'Rammbock', 'Feuer & Brunnen', 'Pakte', 'Bot-Stärken'].forEach((t) => must(heads.some((h) => h.indexOf(t) >= 0), 'die Anleitung hat keinen Abschnitt „' + t + '“ (' + heads.join(' | ') + ')'));
+      must(doc.querySelectorAll('.gd-bld').length === Object.keys(FW.BUILDINGS).length - 1 && doc.querySelectorAll('.gd-bld').length === 14 && doc.getElementById('ffGuideSec-gebaeude').textContent.indexOf('1 Hof ernährt etwa') >= 0, 'der Abschnitt Gebäude zeigt nicht alle vierzehn Gebäude mit Wozu · Wohin · Wie viele');
       must(doc.getElementById('ffGuideSec-truppen').textContent.indexOf('Fahne losschicken') >= 0 && doc.getElementById('ffGuideSec-feuer').textContent.indexOf('Burgbrunnen') >= 0 && doc.getElementById('ffGuideSec-korn').textContent.indexOf('nie unter 4') >= 0, 'in der Anleitung fehlen Fahne losschicken / Burgbrunnen / „nie unter 4“');
       click(w, 'ffGuideNav-truppen'); const gb = doc.getElementById('ffGuideBody');
       must(gb.scrollTop > 100 && doc.getElementById('ffGuideNav-truppen').classList.contains('on'), 'der Abschnitts-Chip „Truppen“ scrollt nicht dorthin (scrollTop ' + gb.scrollTop + ')');
@@ -952,7 +1121,7 @@ if (!IS_PHONE || STANDALONE) {
       click(w, 'ffMode-truppen'); click(w, 'ffTipTx'); must(doc.getElementById('ffMode-bauen').classList.contains('on'), 'ein Tipp auf „bau eine Hütte“ führt nicht zum Reiter Bauen');
       click(w, 'ffTipX'); must(!tipOn() || tipTx().indexOf('Kein Platz') < 0, '✕ blendet den Tipp nicht aus');
       pop = 6; sendYou();
-      stock.stein = cap.stein; sendYou(); must(tipOn() && tipTx().indexOf('Stein voll – Steinbruch 💤 ruhen lassen oder 📦 Lagerplatz bauen') >= 0, 'Tipp 6 (Stein voll) fehlt: «' + tipTx() + '»');
+      stock.stein = cap.stein; sendYou(); must(tipOn() && tipTx() === '🪨 Stein voll – bau ein 📦 Lager oder einen ⚖️ Markt' && tipTx().indexOf('ruhen') < 0, 'Tipp 6 (Stein voll) fehlt oder rät noch zum Ruhen: «' + tipTx() + '»');
       stock.stein = 26; sendYou();
       F.st.ordered = false; sendYou(); must(tipOn() && tipTx().indexOf('Schick deine Truppen') >= 0, 'Tipp 10 (Truppen schicken) fehlt in der Fehde: «' + tipTx() + '»');
       click(w, 'ffTipTx'); must(doc.getElementById('ffMode-banner').classList.contains('on') && F.st.arm >= 1, 'ein Tipp auf „Schick deine Truppen“ wählt nicht eine Fahne im Reiter ⚑'); F.armBanner(F.st.arm);
@@ -1094,7 +1263,7 @@ if (!IS_PHONE || STANDALONE) {
         RULES.bucketR = 6; sendInfo(); click(w, 'ffCard-brunnen');
         { const gg = m.getGhost(), Tr = coverTruth({ i: gg.i, j: gg.j }); must(F.st.rules.bucketR === 6 && m.cover.r === 6 && m.coverage().discs.every((d) => d.kind === 'keep' || d.r === 6) && lineEl.textContent === lineOf(Tr), 'geänderte ffInfo.rules.bucketR kommt nicht an (' + JSON.stringify(m.cover) + ', «' + lineEl.textContent + '»)'); }
         click(w, 'ffNo'); RULES.bucketR = simRules().bucketR; sendInfo();
-        sendRules = false; sendInfo(); must(JSON.stringify(F.st.rules) === JSON.stringify({ bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4 }), 'ohne ffInfo.rules gelten nicht 12, 12, 30, 60, 60, 8, 4: ' + JSON.stringify(F.st.rules));
+        sendRules = false; sendInfo(); must(JSON.stringify(F.st.rules) === JSON.stringify({ bucketR: 12, keepWellR: 12, capKeep: 30, capKorn: 60, capLager: 60, keepHouses: 8, hutHouses: 4, tradePack: 5, prices: PRICES_FALLBACK }), 'ohne ffInfo.rules gelten nicht 12, 12, 30, 60, 60, 8, 4 (und Paket 5, Preise 1/1/2 und 3/3/5): ' + JSON.stringify(F.st.rules));
         sendRules = true; sendInfo(); must(F.st.rules.bucketR === simRules().bucketR, 'ffInfo.rules kommt nach dem Wiederholen nicht zurück');
       }
 
@@ -1143,14 +1312,14 @@ if (!IS_PHONE || STANDALONE) {
         // full goods: tips (korn → Kornspeicher, holz → Lagerplatz, stein → Steinbruch ruhen / Lagerplatz), pop → Hütte
         const sbq = buildings.find((b) => b.lord === me && b.kind === 'steinbruch' && b.build >= 1 && !b.ruined); sbq.paused = 0;
         stock.korn = cap.korn; stock.holz = cap.holz; stock.stein = cap.stein; pop = popCap; sendBoard(); sendYou(); checkSheet();
-        must(lgTips('korn').join('|') === '🏚️ Kornspeicher bauen' && lgTips('holz').join('|') === '📦 Lagerplatz bauen' && lgTips('stein').join('|') === '⛏️ Steinbruch 💤 ruhen lassen|📦 Lagerplatz bauen' && lgTips('pop').join('|') === '🏠 Hütte bauen', 'Tipps im vollen Lager: ' + JSON.stringify([lgTips('korn'), lgTips('holz'), lgTips('stein'), lgTips('pop')]));
-        sbq.paused = 1; sendBoard(); must(lgTips('stein').join('|') === '📦 Lagerplatz bauen', 'ein ruhender Steinbruch bekommt nicht noch einmal den Ruhen-Tipp'); sbq.paused = 0; sendBoard();
+        must(lgTips('korn').join('|') === '🏚️ Kornspeicher bauen|⚖️ Markt bauen' && lgTips('holz').join('|') === '📦 Lagerplatz bauen|⚖️ Markt bauen' && lgTips('stein').join('|') === '📦 Lagerplatz bauen|⚖️ Markt bauen' && lgTips('pop').join('|') === '🏠 Hütte bauen', 'Tipps im vollen Lager: ' + JSON.stringify([lgTips('korn'), lgTips('holz'), lgTips('stein'), lgTips('pop')]));
+        must(!JSON.stringify([lgTips('korn'), lgTips('holz'), lgTips('stein')]).includes('ruhen'), 'das volle Lager rät noch zum Ruhen lassen (ein voller Betrieb ruht von selbst)');
         lg('korn', '.lg-tip').click();
         must(!shown(w, 'ffLager') && doc.getElementById('ffMode-bauen').classList.contains('on') && m.getGhost() && m.getGhost().kind === 'kornspeicher', 'der Tipp „Kornspeicher bauen“ schließt das Blatt nicht oder wählt keinen Kornspeicher');
         click(w, 'ffNo'); click(w, 'ffKorn'); must(shown(w, 'ffLager'), 'ein Tipp aufs Korn öffnet das Lager nicht');
-        Array.from(doc.querySelectorAll('#ffLg-stein .lg-tip'))[0].click();
-        must(!shown(w, 'ffLager') && doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Steinbruch' && !shown(w, 'ffPCover') , 'der Tipp „Steinbruch ruhen lassen“ führt nicht zur Karte des Steinbruchs');
-        click(w, 'ffCClose'); stock = { korn: 30, holz: 70, stein: 26 }; pop = 6; sendYou();
+        Array.from(doc.querySelectorAll('#ffLg-stein .lg-tip'))[1].click();
+        must(!shown(w, 'ffLager') && doc.getElementById('ffMode-bauen').classList.contains('on') && m.getGhost() && m.getGhost().kind === 'markt', 'der Tipp „Markt bauen“ schließt das Blatt nicht oder wählt keinen Markt');
+        click(w, 'ffNo'); stock = { korn: 30, holz: 70, stein: 26 }; pop = 6; sendYou();
         // the three ways to close it (the back gesture: a late popstate of an earlier ✕ must not eat this one → the counter is cleared first; the real thing is in the flow test)
         click(w, 'ffPop'); must(shown(w, 'ffLager'), 'ein Tipp auf 👥 öffnet das Lager nicht'); click(w, 'ffLagerX'); must(!shown(w, 'ffLager'), '✕ schließt das Lager nicht');
         click(w, 'ffStein'); must(shown(w, 'ffLager'), 'das Lager lässt sich nach ✕ nicht gleich wieder öffnen'); doc.querySelector('.lg-sheet').click(); must(shown(w, 'ffLager'), 'ein Tipp ins Blatt schließt es');
@@ -1198,7 +1367,461 @@ if (!IS_PHONE || STANDALONE) {
         must(tipT().indexOf('Niemand frei für die Ausbildung') < 0 && nq('.wait') === 0, 'ohne wait-Flag (älterer Bildschirm) darf nichts geraten werden');
         idle = 3; queue = []; F.st.tipSnooze = {}; click(w, 'ffMode-bauen'); sendYou();
       }
-      res.className = 'ok'; res.textContent = 'AUTOTEST OK'; const sub = document.createElement('div'); sub.style.cssText = 'font:600 12px system-ui;color:#9fd8aa'; sub.textContent = 'Schritte 1–22' + extra; res.appendChild(sub);
+
+      // ===== Phase 2: Mauern & Söldner =====
+      const ICON = { korn: '🌾', holz: '🪵', stein: '🪨', gold: '💰' };
+      const costArr = (c) => Object.keys(c || {}).filter((r) => c[r]).map((r) => c[r] + ' ' + ICON[r]);
+      const costTxt = (c) => Object.keys(c || {}).filter((r) => c[r]).map((r) => ICON[r] + ' ' + c[r]).join(' ');   // the guide's way: icon first, „💰 6 🌾 2“
+      const chipsOf = (id) => Array.from(doc.querySelectorAll('#' + id + ' .ff-chip')).map((c) => c.textContent);
+      const lastSent = (t, from) => sent.slice(from || 0).filter((x) => x.t === t);
+      const toastTexts = () => Array.from(doc.querySelectorAll('.ff-toast')).map((t) => t.textContent);
+      const phase2Reset = () => {   // a quiet Fehde with a clear board: no sheet, no card, no plan
+        gotoPhase('fehde'); setL(0, true); sendLevel(); hunger = false; foodMode = ''; F.st.tipSnooze = {}; F.st.forceTip = 0; F.st.hungerUntil = 0; F.advice(0);
+        if (doc.getElementById('ffLager').classList.contains('show')) F.closeLager(); F.ignorePop = 0;
+        if (doc.getElementById('ffGuide').classList.contains('show')) F.closeGuide(); F.ignorePop = 0;
+        F.closeCard(); click(w, 'ffNo'); if (F.map.getGhost()) F.map.setGhost(null);
+        stock = { korn: 30, holz: 90, stein: 90, gold: 0 }; pop = 6; idle = 3; queue = []; click(w, 'ffMode-bauen'); m = F.map; m.view('mine', true); recount(); sendBoard(); sendYou(); F.draw();
+      };
+      const spyTexts = (fn) => { const ts = [], ft = m.ctx.fillText; m.ctx.fillText = function (t) { ts.push(String(t)); return ft.apply(this, arguments); }; try { fn(); } finally { m.ctx.fillText = ft; } return ts; };   // what a frame writes (emoji badges)
+      const spyCalls = (name, fn) => { let n = 0; const o = m[name]; m[name] = function () { n++; return o.apply(this, arguments); }; try { fn(); } finally { m[name] = o; } return n; };
+
+      // 23: 💰 Gold
+      step = '23 Gold: 💰 in der Kopfleiste, eine Reihe mit den Waren, Kosten mit 💰';
+      {
+        phase2Reset();
+        const gchip = doc.getElementById('ffGold'), gb = gchip.querySelector('b');
+        must(shown(w, 'ffGold') && gb.textContent === '0', 'das 💰 fehlt oben oder zeigt nicht 0: «' + gb.textContent + '»');
+        stock.gold = 137; sendYou(); must(gb.textContent === '137', 'das 💰 zeigt ffYou.stock.gold nicht: «' + gb.textContent + '»');
+        delete stock.gold; sendYou(); must(gb.textContent === '0', 'ohne stock.gold muss das 💰 0 zeigen: «' + gb.textContent + '»');
+        stock.gold = 12; sendYou();
+        const top = doc.getElementById('ffTop'), portrait = w.innerHeight > w.innerWidth, rG = gchip.getBoundingClientRect(), rS = doc.getElementById('ffStein').getBoundingClientRect(), rH = doc.getElementById('ffHelp').getBoundingClientRect();
+        must(top.scrollWidth <= top.clientWidth + 1, 'die Kopfleiste läuft mit 💰 über (' + top.scrollWidth + ' > ' + top.clientWidth + ')');
+        must(rG.right <= w.innerWidth + 0.5 && rG.left >= -0.5 && rH.right <= w.innerWidth + 0.5, '💰 oder ❓ ragt aus dem Bild (💰 ' + Math.round(rG.left) + '–' + Math.round(rG.right) + ', ❓ bis ' + Math.round(rH.right) + ' von ' + w.innerWidth + ')');
+        if (portrait) must(Math.abs(rG.top - rS.top) < 8, '💰 steht nicht in einer Reihe mit 🪨 (' + Math.round(rG.top) + ' statt ' + Math.round(rS.top) + '): die Kopfleiste ist zu hoch geworden');
+        must(top.offsetHeight <= 96, 'die Kopfleiste ist mit 💰 ' + top.offsetHeight + ' px hoch (eine dritte Zeile?)');
+        if (w.innerWidth >= 390) { stock.gold = 1250; sendYou(); must(top.scrollWidth <= top.clientWidth + 1 && doc.getElementById('ffHelp').getBoundingClientRect().right <= w.innerWidth + 0.5, 'die Kopfleiste läuft mit 4-stelligem Gold über'); stock.gold = 12; sendYou(); }
+        // costs with gold: the Söldner cards, the placing of a wall (per cell), the unit buttons; what is missing is red
+        click(w, 'ffMode-truppen');
+        if (SEND_COSTS) ['fackel', 'reiterschuetze', 'ramme'].forEach((u) => must(chipsOf('ffUnit-' + u).join('|') === costArr(COSTS.units[u]).join('|'), 'Kosten von ' + u + ': «' + chipsOf('ffUnit-' + u).join('|') + '» statt «' + costArr(COSTS.units[u]).join('|') + '»'));
+        must(chipsOf('ffUnit-reiterschuetze').some((t) => t.indexOf('💰') >= 0) && chipsOf('ffUnit-ramme').some((t) => t.indexOf('💰') >= 0), 'die Söldner-Karten zeigen keine 💰-Kosten');
+        stock.gold = 0; sendYou();
+        const miss = Array.from(doc.querySelectorAll('#ffUnit-ramme .ff-chip.miss')).map((c) => c.textContent), nr0 = sent.length;
+        must(miss.join() === (SEND_COSTS ? (COSTS.units.ramme.gold + ' 💰') : miss.join()) && miss.some((t) => t.indexOf('💰') >= 0) && doc.getElementById('ffUnit-ramme').classList.contains('poor'), 'fehlendes 💰 ist nicht rot markiert: «' + miss.join() + '»');
+        { const k0 = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); k0.build = 1; sendBoard(); }
+        click(w, 'ffUnit-ramme'); must(sent.length === nr0 && toastTexts().some((t) => t.indexOf('Zu wenig 💰') >= 0), 'ein Rekrut ohne genug 💰 wird gesendet oder meldet es nicht: «' + toastTexts().join('|') + '»');
+        click(w, 'ffMode-bauen');
+        if (SEND_COSTS) {
+          must(chipsOf('ffCard-mauer').join('|') === costArr(COSTS.build.mauer).concat(['je Feld']).join('|') && chipsOf('ffCard-palisade').join('|') === costArr(COSTS.build.palisade).concat(['je Feld']).join('|'), 'Kosten der Wände (je Feld): «' + chipsOf('ffCard-mauer').join('|') + '» / «' + chipsOf('ffCard-palisade').join('|') + '»');
+          ['torhaus', 'markt', 'soeldnerlager'].forEach((k) => must(chipsOf('ffCard-' + k).join('|') === costArr(COSTS.build[k]).join('|'), 'Kosten von ' + k + ': «' + chipsOf('ffCard-' + k).join('|') + '»'));
+        }
+        const heads2 = Array.from(doc.querySelectorAll('#ffCards .ff-cg')).map((h) => h.textContent).join('|'), ids2 = Array.from(doc.querySelectorAll('#ffCards .ff-card')).map((c) => c.id.replace('ffCard-', ''));
+        must(heads2 === '🏠 Dorf|⚔️ Heer & Handel|🧱 Verteidigung' && ids2.length === 14 && ['palisade', 'mauer', 'torhaus', 'markt', 'soeldnerlager'].every((k) => ids2.indexOf(k) >= 0), 'die Bauen-Liste ist nicht in Gruppen oder hat nicht alle 14 Gebäude: ' + heads2 + ' / ' + ids2.join());
+        stock = { korn: 30, holz: 90, stein: 90, gold: 0 }; sendYou();
+      }
+
+      // 24: Truppen in two groups
+      step = '24 Truppen: Kaserne und Söldnerlager getrennt, „Bau zuerst …“, Gold, ⏳ je Haus';
+      {
+        phase2Reset();
+        const soeld = buildings.filter((b) => b.lord === me && b.kind === 'soeldnerlager'); soeld.forEach((b) => buildings.splice(buildings.indexOf(b), 1));   // none yet
+        { const k0 = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); k0.build = 1; }
+        stock = { korn: 40, holz: 90, stein: 40, gold: 0 }; sendBoard(); sendYou(); click(w, 'ffMode-truppen');
+        const grp = (at) => doc.getElementById('ffGrp-' + at), ids = (at) => Array.from(doc.querySelectorAll('#ffGrp-' + at + ' .ff-unit')).map((b) => b.id.replace('ffUnit-', '')).join();
+        must(grp('kaserne') && grp('soeldnerlager') && ids('kaserne') === 'speer,bogen,ritter,ramme' && ids('soeldnerlager') === 'fackel,reiterschuetze', 'die Truppen sind nicht nach Haus gruppiert: ' + ids('kaserne') + ' | ' + ids('soeldnerlager'));
+        must(doc.querySelector('#ffGrp-kaserne .ff-gh').textContent.indexOf('⚔️ Kaserne') >= 0 && doc.querySelector('#ffGrp-soeldnerlager .ff-gh').textContent.indexOf('⛺ Söldnerlager') >= 0, 'die Gruppenköpfe heißen nicht „⚔️ Kaserne“ und „⛺ Söldnerlager“');
+        must(!grp('kaserne').classList.contains('off') && !shown(w, 'ffGNote-kaserne') && grp('soeldnerlager').classList.contains('off') && shown(w, 'ffGNote-soeldnerlager') && doc.getElementById('ffGNote-soeldnerlager').textContent.indexOf('Bau zuerst ein ⛺ Söldnerlager') >= 0, 'die Gruppe ohne fertiges Haus ist nicht abgeblendet mit „Bau zuerst ein ⛺ Söldnerlager“: «' + doc.getElementById('ffGNote-soeldnerlager').textContent + '»');
+        must(parseFloat(w.getComputedStyle(doc.querySelector('#ffGrp-soeldnerlager .ff-gunits')).opacity) < 0.6 && parseFloat(w.getComputedStyle(doc.querySelector('#ffGrp-kaserne .ff-gunits')).opacity) === 1, 'die Gruppe ohne Haus ist nicht abgeblendet');
+        // a recruit into a missing house is refused on the phone (no message), and says what to build
+        let n0 = sent.length; click(w, 'ffUnit-fackel');
+        must(sent.length === n0 && toastTexts().some((t) => t.indexOf('Bau zuerst ein ⛺ Söldnerlager') >= 0), 'ein Fackelträger ohne Söldnerlager wird gesendet oder bringt keinen Hinweis: «' + toastTexts().join('|') + '»');
+        // the Kaserne works, with gold for the ram
+        click(w, 'ffTarget-2'); n0 = sent.length; stock.gold = 20; sendYou(); const g0 = stock.gold, h0 = stock.holz;
+        click(w, 'ffUnit-ramme'); let r1 = lastSent('ffRecruit', n0);
+        must(r1.length === 1 && r1[0].unit === 'ramme' && r1[0].n === 2, 'erwartet ffRecruit {unit:ramme, n:2}, bekam ' + JSON.stringify(r1));
+        must(stock.gold === g0 - (SEND_COSTS ? COSTS.units.ramme.gold : 4) && stock.holz === h0 - (SEND_COSTS ? COSTS.units.ramme.holz : 10), 'der falsche Fernseher hat Holz und 💰 für den Rammbock nicht abgebucht');
+        must(F.st.rams === 1 && doc.querySelector('#ffQueue .ff-q').textContent.indexOf('🪵→II') >= 0, 'der Rammbock steht nicht in der Schlange (🪵→II) oder wird nicht gezählt');
+        // a Söldnerlager under construction: still dimmed, the note shows the progress and no longer starts a placing
+        const sl = addSuggested('soeldnerlager', 0.4); must(sl, 'kein Platz für ein Söldnerlager'); sl.dur = 0; sendBoard();
+        must(grp('soeldnerlager').classList.contains('off') && doc.getElementById('ffGNote-soeldnerlager').textContent.indexOf('im Bau 40 %') >= 0 && doc.getElementById('ffGNote-soeldnerlager').disabled && doc.querySelector('#ffGrp-soeldnerlager .ff-gh small').textContent === 'im Bau 40 %', 'ein Söldnerlager im Bau zeigt nicht „im Bau 40 %“: «' + doc.getElementById('ffGNote-soeldnerlager').textContent + '»');
+        // finished: the group lives, a horse archer costs gold and goes into banner 3
+        sl.build = 1; sendBoard();
+        must(!grp('soeldnerlager').classList.contains('off') && !shown(w, 'ffGNote-soeldnerlager') && doc.querySelector('#ffGrp-soeldnerlager .ff-gh small').textContent === 'bereit', 'das fertige Söldnerlager schaltet die Gruppe nicht frei');
+        click(w, 'ffTarget-3'); n0 = sent.length; const g1 = stock.gold; click(w, 'ffUnit-reiterschuetze'); r1 = lastSent('ffRecruit', n0);
+        must(r1.length === 1 && r1[0].unit === 'reiterschuetze' && r1[0].n === 3 && stock.gold === g1 - (SEND_COSTS ? COSTS.units.reiterschuetze.gold : 6), 'Reiterschütze: ' + JSON.stringify(r1) + ', Gold ' + stock.gold);
+        must(Array.from(doc.querySelectorAll('#ffQueue .ff-q')).some((c) => c.textContent.indexOf('🏇→III') >= 0), 'die Schlange zeigt „🏇→III“ nicht');
+        click(w, 'ffTarget-1'); n0 = sent.length; click(w, 'ffUnit-fackel'); r1 = lastSent('ffRecruit', n0); must(r1.length === 1 && r1[0].unit === 'fackel' && r1[0].n === 1, 'Fackelträger aus dem Söldnerlager: ' + JSON.stringify(r1));
+        // the card of each house counts only its own units, and a recruit that waits for a peasant is flagged per house
+        m.view('mine', true); F.draw(); tapBuilding(w, sl);
+        must(doc.getElementById('ffCNm').textContent === 'Söldnerlager' && doc.getElementById('ffCState').textContent === '⛺ bildet aus · 2', 'die Karte des Söldnerlagers zählt nicht seine 2 Rekruten: «' + doc.getElementById('ffCState').textContent + '»');
+        tapBuilding(w, buildings.find((b) => b.lord === me && b.kind === 'kaserne')); must(doc.getElementById('ffCState').textContent === '⚔️ bildet aus · 1', 'die Karte der Kaserne zählt nicht nur den Rammbock: «' + doc.getElementById('ffCState').textContent + '»');
+        click(w, 'ffCClose');
+        idle = 0; queue = [{ unit: 'fackel', n: 1, p: 0, dur: 1e9, wait: true }]; F.st.tipSnooze = { 1: 1e15, 2: 1e15, 3: 1e15, 4: 1e15 }; sendYou(); click(w, 'ffMode-truppen');
+        must(doc.querySelectorAll('#ffQueue .ff-q.wait').length === 1 && doc.querySelector('#ffQueue .ff-qwait'), 'ein wartender Fackelträger bei fertigem Söldnerlager zeigt kein ⏳');
+        sl.build = 0.4; sendBoard(); must(doc.querySelectorAll('#ffQueue .ff-q.wait').length === 0, 'ein wartender Fackelträger bei unfertigem Söldnerlager zeigt ⏳ (da ist das Haus die Nachricht)');
+        sl.build = 1; idle = 3; queue = []; F.st.tipSnooze = {}; sendBoard(); sendYou(); click(w, 'ffMode-bauen');
+      }
+
+      // 25: the wall tool
+      step = '25 Mauer ziehen: Linie, rote Lücken, Summe, ↻, ✓ sendet ffWall';
+      {
+        phase2Reset(); const sitei = LORDS[me].site;
+        click(w, 'ffCard-mauer');
+        must(m.tool === 'wall' && m.wall && m.wall.kind === 'mauer' && !m.getGhost() && !m.getWall() && doc.getElementById('v-furtfehde').classList.contains('placing'), 'die Mauer wählt das Wandwerkzeug nicht (tool ' + m.tool + ')');
+        must(!shown(w, 'ffPSum') && doc.getElementById('ffReason').textContent.indexOf('Zieh eine Linie') >= 0 && doc.getElementById('ffReason').className === 'idle' && doc.getElementById('ffOk').classList.contains('bad'), 'ohne Linie fehlt der Hinweis „Zieh eine Linie“: «' + doc.getElementById('ffReason').textContent + '»');
+        if (SEND_COSTS) must(chipsOf('ffPCost').join('|') === costArr(COSTS.build.mauer).concat(['je Feld']).join('|'), 'Kosten im Bauen-Panel: «' + chipsOf('ffPCost').join('|') + '»');
+        must(doc.getElementById('ffPWozu').textContent.indexOf('Steinwand') >= 0 && doc.getElementById('ffPWohin').textContent.indexOf('Torhaus') >= 0 && doc.getElementById('ffPViele').textContent.indexOf('pro Feld') >= 0 && doc.getElementById('ffPHint').textContent.indexOf('Linie ziehen') >= 0, 'die Texte der Mauer (Wozu · Wohin · Wie viele, Hinweis) fehlen');
+        let nw0 = sent.length; click(w, 'ffOk'); must(lastSent('ffWall', nw0).length === 0, '✓ ohne Linie sendet ffWall');
+        const ln = wallLine(); must(ln, 'keine Testlinie mit guten und roten Feldern gefunden');
+        const corner = { i: ln.b.i, j: ln.a.j }, O = wallOracle('mauer', ln.a, ln.b, 0);
+        must(O.badRuns >= 1 && O.okCells >= 6, 'die Testlinie braucht gute und rote Felder (' + O.okCells + ' gut, ' + O.badRuns + ' Lücken)');
+        dragCells(w, [ln.a, corner, ln.b], false);   // the finger stays down
+        let wl = m.getWall(); must(wl, 'keine Linie nach dem Ziehen');
+        must(wl.a.i === ln.a.i && wl.a.j === ln.a.j && wl.b.i === ln.b.i && wl.b.j === ln.b.j && wl.axis === 0, 'Anfang/Ende/Richtung der Linie: ' + JSON.stringify([wl.a, wl.b, wl.axis]) + ' statt ' + JSON.stringify([ln.a, ln.b, 0]));
+        const sameLine = (wlx, Ox) => wlx.cells === Ox.cells && wlx.okCells === Ox.okCells && wlx.badRuns === Ox.badRuns && JSON.stringify(wlx.send) === JSON.stringify(Ox.pieces);
+        must(sameLine(wl, O), 'die Linie weicht vom Orakel ab: ' + wl.cells + '/' + wl.okCells + '/' + wl.badRuns + ' ' + JSON.stringify(wl.send) + ' statt ' + O.cells + '/' + O.okCells + '/' + O.badRuns + ' ' + JSON.stringify(O.pieces));
+        must(wl.pieces.filter((p) => p.ok).every((p) => p.len >= 1 && p.len <= 4) && wl.pieces.filter((p) => !p.ok).every((p) => p.reason), 'Stücke länger als 4 Felder oder rote ohne Grund');
+        const sumOf = (Ox, per) => (per === 2 ? '🧱 ' : '🪵 ') + Ox.okCells + ' Felder · ' + (per === 2 ? '🪨 ' + 2 * Ox.okCells : '🪵 ' + Ox.okCells) + (Ox.badRuns ? ' · ' + Ox.badRuns + (Ox.badRuns === 1 ? ' Lücke' : ' Lücken') : '');
+        const sumEl = doc.getElementById('ffPSum'), rsn = doc.getElementById('ffReason');
+        must(shown(w, 'ffPSum') && (!SEND_COSTS || sumEl.textContent === sumOf(O, COSTS.build.mauer.stein)), 'die Summe lautet «' + sumEl.textContent + '» statt «' + sumOf(O, 2) + '»');
+        must(rsn.className === 'warn' && rsn.textContent === '⚠️ Rot geht nicht – ✓ baut den Rest' && !doc.getElementById('ffOk').classList.contains('bad'), 'die Zeile bei roten Stücken stimmt nicht: «' + rsn.textContent + '» (' + rsn.className + ')');
+        must(m.wallLabel.indexOf(O.okCells + ' Felder') === 0, 'die Blase am Linienende nennt die Felder nicht: «' + m.wallLabel + '»');
+        { const fl = []; const fr = m.ctx.fillRect; m.ctx.fillRect = function () { fl.push(String(this.fillStyle)); return fr.apply(this, arguments); }; try { F.draw(); } finally { m.ctx.fillRect = fr; }
+          must(fl.filter((c) => c === 'rgba(228, 66, 52, 0.6)').length === O.badRuns && fl.filter((c) => c === 'rgba(88, 200, 84, 0.5)').length === O.pieces.length, 'die Karte malt nicht ' + O.badRuns + ' rote und ' + O.pieces.length + ' grüne Stücke (' + fl.filter((c) => c === 'rgba(228, 66, 52, 0.6)').length + ' / ' + fl.filter((c) => c === 'rgba(88, 200, 84, 0.5)').length + ')'); }
+        { const e = m.toScreen(-72 + ln.b.i + 0.5, -45 + ln.b.j + 0.5), r = cvs.getBoundingClientRect(); mouse(w, w, 'mouseup', r.left + e.x, r.top + e.y); }   // the finger lifts: the line stays
+        must(sameLine(m.getWall(), O) && !m.drag, 'nach dem Loslassen ist die Linie nicht mehr da');
+        // not enough stone: the pieces are built in order while the stock lasts
+        const first = O.pieces[0][3];
+        stock.stein = 2 * first + 1; sendYou(); must(rsn.className === 'warn' && rsn.textContent === '⚠️ 🪨 reicht nur für ' + first + ' von ' + O.okCells + ' Feldern' && !doc.getElementById('ffOk').classList.contains('bad'), 'zu wenig 🪨 für alle Stücke: «' + rsn.textContent + '»');
+        stock.stein = 1; sendYou(); must(rsn.className === 'bad' && rsn.textContent === '❌ Zu wenig 🪨' && doc.getElementById('ffOk').classList.contains('bad'), 'ohne 🪨 sagt die Zeile nicht „Zu wenig 🪨“: «' + rsn.textContent + '»');
+        nw0 = sent.length; click(w, 'ffOk'); must(lastSent('ffWall', nw0).length === 0 && toastTexts().some((t) => t.indexOf('Zu wenig 🪨') >= 0), '✓ ohne Material sendet ffWall oder schweigt');
+        stock.stein = 90; sendYou();
+        // ↻ turns the corner
+        click(w, 'ffRot'); const O1 = wallOracle('mauer', ln.a, ln.b, 1); wl = m.getWall();
+        must(wl.axis === 1 && sameLine(wl, O1) && JSON.stringify(wl.send) !== JSON.stringify(O.pieces), '↻ dreht die Ecke nicht (axis ' + wl.axis + ', ' + wl.okCells + ' gut statt ' + O1.okCells + ')');
+        click(w, 'ffRot'); must(sameLine(m.getWall(), O), 'das zweite ↻ bringt die Linie nicht zurück');
+        // ✓: one ffWall with the pieces in order; the fake screen builds them
+        const nb0 = buildings.length, st0 = stock.stein, hold = stock.holz; nw0 = sent.length; click(w, 'ffOk');
+        const ww = lastSent('ffWall', nw0); must(ww.length === 1 && ww[0].kind === 'mauer' && JSON.stringify(ww[0].pieces) === JSON.stringify(O.pieces), 'ffWall falsch: ' + JSON.stringify(ww));
+        must(buildings.length === nb0 + O.pieces.length && stock.stein === st0 - 2 * O.okCells && stock.holz === hold, 'der falsche Fernseher hat nicht ' + O.pieces.length + ' Stücke für ' + 2 * O.okCells + ' 🪨 gebaut (' + (buildings.length - nb0) + ' Stücke, Stein ' + stock.stein + ')');
+        must(!m.wall && !m.getWall() && !doc.getElementById('v-furtfehde').classList.contains('placing') && toastTexts().some((t) => t.indexOf('Mauer') >= 0 && t.indexOf('gebaut') >= 0), 'nach ✓ bleibt das Werkzeug an oder der Toast fehlt: «' + toastTexts().join('|') + '»');
+        // the board brings them back with their length: footprints, occupancy, drawing
+        { const pcs = F.st.bld.filter((b) => b.lord === me && b.kind === 'mauer'), lens = pcs.map((b) => b.len).sort().join(), want = O.pieces.map((p) => p[3]).sort().join();
+          must(lens === want, 'die Längen der Stücke kommen nicht an: ' + lens + ' statt ' + want);
+          const occ = m.occ, code = BKEYS.indexOf('mauer') + 1; let okOcc = true; for (const p of O.pieces) for (let t = 0; t < p[3]; t++) if (occ[(p[1] + (p[2] ? t : 0)) * FW.GW + p[0] + (p[2] ? 0 : t)] !== code) okOcc = false;
+          must(okOcc, 'die Belegung der Karte kennt die Wandstücke nicht (Länge und Richtung)');
+          const body = spyCalls('drawWallBody', () => F.draw()); must(body >= 1, 'die Karte malt keine Wandstücke'); }
+        // a piece's card: its length, the slots, what you can do with a site
+        { const big = F.st.bld.filter((b) => b.lord === me && b.kind === 'mauer').sort((a, b) => b.len - a.len)[0]; m.view('mine', true); F.draw(); tapBuilding(w, big);
+          must(doc.getElementById('ffPanel').classList.contains('card') && doc.getElementById('ffCNm').textContent === 'Mauer' && doc.getElementById('ffCSz').textContent.indexOf(big.len + ' Felder lang') === 0 && doc.getElementById('ffCardDemolish').textContent.indexOf('Baustelle abbrechen') >= 0, 'die Karte eines Wandstücks: «' + doc.getElementById('ffCSz').textContent + '»');
+          click(w, 'ffCClose'); }
+        // a line that touches the walls just built is fine (walls may touch walls); the same cells are 'occupied' for a line through them
+        { const p = O.pieces[0], through = wallOracle('mauer', { i: p[0], j: p[1] }, { i: p[0] + (p[2] ? 0 : p[3] - 1), j: p[1] + (p[2] ? p[3] - 1 : 0) }, 0);
+          must(through.okCells === 0 && through.bad.length >= 1, 'eine Linie durch ein vorhandenes Stück ist nicht belegt'); }
+        // the palisade: a straight line in the open, balanced pieces, 1 🪵 a cell
+        click(w, 'ffCard-palisade'); must(m.wall && m.wall.kind === 'palisade' && m.tool === 'wall', 'die Palisade wählt das Wandwerkzeug nicht');
+        { let a = null; const occ = occGrid(); for (let j = 0; j < FW.GH && !a; j++) for (let i = 0; i + 5 <= FW.GW && !a; i++) { let ok = true; for (let t = 0; t < 5 && ok; t++) ok = FW.canPlace(world, 'palisade', i + t, j, 0, { lord: sitei, L, occ, len: 1 }).ok; if (ok && Math.hypot(i - 72 - keepOf(sitei).x, j - 45 - keepOf(sitei).y) < 30) a = { i, j }; }
+          must(a, 'keine 5 freien Felder für eine Palisadenlinie');
+          const b2 = { i: a.i + 4, j: a.j }, Op = wallOracle('palisade', a, b2, 0); must(Op.okCells === 5 && Op.pieces.map((p) => p[3]).join() === '3,2', 'das Orakel schneidet 5 Felder nicht in 3 + 2: ' + JSON.stringify(Op.pieces));
+          dragCells(w, [a, b2], true); wl = m.getWall();
+          must(wl && sameLine(wl, Op) && wl.send.map((p) => p[3]).join() === '3,2' && wl.send.every((p) => p[2] === 0), 'die Palisadenlinie: ' + JSON.stringify(wl && wl.send));
+          must(sumEl.textContent === '🪵 5 Felder · 🪵 5' && rsn.className === '' && rsn.textContent.indexOf('Passt') >= 0, 'Summe oder Zeile der Palisade: «' + sumEl.textContent + '» / «' + rsn.textContent + '»');
+          const ns = sent.length, hp0 = stock.holz; click(w, 'ffOk'); const pw = lastSent('ffWall', ns);
+          must(pw.length === 1 && pw[0].kind === 'palisade' && JSON.stringify(pw[0].pieces) === JSON.stringify(Op.pieces) && stock.holz === hp0 - 5, 'ffWall der Palisade: ' + JSON.stringify(pw) + ', Holz ' + stock.holz);
+          // the next line starts right beside the end: touching a wall is fine
+          const c2 = { i: a.i + 5, j: a.j }, Ot = wallOracle('palisade', c2, { i: c2.i + 1, j: c2.j }, 0);
+          if (FW.canPlace(world, 'palisade', c2.i, c2.j, 0, { lord: sitei, L, occ: occGrid(), len: 1 }).ok) { click(w, 'ffCard-palisade'); dragCells(w, [c2, { i: c2.i + 1, j: c2.j }], true); must(m.getWall() && m.getWall().okCells === 2 && sameLine(m.getWall(), Ot), 'eine Linie, die an die Palisade stößt, wird abgelehnt (Wände dürfen sich berühren)'); }
+        }
+        click(w, 'ffNo'); must(!m.wall && m.tool === null && !m.getWall(), '✕ räumt das Wandwerkzeug nicht weg');
+        // two fingers still pan and zoom, one finger draws (with the finger lift) — where the browser has Touch events
+        if (w.Touch && w.TouchEvent) {
+          click(w, 'ffCard-mauer'); m.view('mine', true); syncMap(w);
+          const r = cvs.getBoundingClientRect(), touch = (id, type, x, y, all) => { const mk = (i, tx, ty) => new w.Touch({ identifier: i, target: cvs, clientX: Math.round(r.left + tx), clientY: Math.round(r.top + ty) }), t = mk(id, x, y), list = (all || [[id, x, y]]).map((a) => mk(a[0], a[1], a[2])); cvs.dispatchEvent(new w.TouchEvent(type, { touches: type === 'touchend' ? list.filter((q) => q.identifier !== id) : list, targetTouches: list, changedTouches: [t], bubbles: true, cancelable: true })); };
+          const P0 = { x: r.width * 0.3, y: r.height * 0.7 }; touch(5, 'touchstart', P0.x, P0.y); touch(5, 'touchmove', P0.x + 40, P0.y); touch(5, 'touchend', P0.x + 40, P0.y);
+          const sx = m.w / (r.width || m.w), sy = m.h / (r.height || m.h), lift = Math.min(m.liftPx, Math.max(0, (Math.round(r.top + P0.y) - r.top) * sy - 6)), wp = m.toWorld((Math.round(r.left + P0.x) - r.left) * sx, (Math.round(r.top + P0.y) - r.top) * sy - lift), wl2 = m.getWall();
+          must(wl2 && wl2.a.i === Math.floor(wp.x + 72) && wl2.a.j === Math.floor(wp.y + 45), 'der Anfang der Linie liegt nicht ' + m.liftPx + ' px über dem Finger (' + JSON.stringify(wl2 && wl2.a) + ' statt ' + Math.floor(wp.x + 72) + ',' + Math.floor(wp.y + 45) + ')');
+          const keepLine = JSON.stringify(m.getWall().send), sz = m.cam.s;
+          touch(1, 'touchstart', 200, 150, [[1, 200, 150]]); touch(2, 'touchstart', 260, 150, [[1, 200, 150], [2, 260, 150]]);
+          touch(2, 'touchmove', 380, 150, [[1, 200, 150], [2, 380, 150]]); touch(2, 'touchend', 380, 150, [[1, 200, 150], [2, 380, 150]]); touch(1, 'touchend', 200, 150, [[1, 200, 150]]);
+          must(m.cam.s > sz * 1.8 && m.viewName === 'free' && JSON.stringify(m.getWall().send) === keepLine, 'zwei Finger zoomen im Wandwerkzeug nicht (oder verändern die Linie): s ' + sz.toFixed(2) + ' → ' + m.cam.s.toFixed(2));
+          click(w, 'ffNo'); m.view('mine', true);
+        }
+        phase2Reset();
+      }
+
+      // 26: the Torhaus
+      step = '26 Torhaus: wie ein Gebäude setzen, ↻ dreht die Gasse, Platz an beiden Mündungen';
+      {
+        phase2Reset(); const sitei = LORDS[me].site;
+        click(w, 'ffCard-torhaus'); let g = m.getGhost();
+        must(g && g.kind === 'torhaus' && m.tool === 'ghost' && !m.wall, 'das Torhaus wählt keinen Geist');
+        const sp = FW.suggest(world, 'torhaus', sitei, { L, occ: occGrid() }); must(sp && g.i === sp.i && g.j === sp.j && g.rot === sp.rot && g.ok, 'der Torhaus-Geist liegt nicht auf FurtWorld.suggest (' + JSON.stringify(g) + ' statt ' + JSON.stringify(sp) + ')');
+        must(/Gasse/.test(doc.getElementById('ffPWozu').textContent) && /↻ dreht die Gasse/.test(doc.getElementById('ffPWohin').textContent), 'der Text des Torhauses erklärt die Gasse nicht');
+        must(doc.getElementById('ffPHint').textContent.indexOf('Plan ziehen') >= 0 && !shown(w, 'ffPSum'), 'das Torhaus zeigt den Linien-Hinweis oder die Summe');
+        const fp0 = FW.footprintOf('torhaus', g.rot); click(w, 'ffRot'); g = m.getGhost(); const fp1 = FW.footprintOf('torhaus', g.rot);
+        must(g.rot !== sp.rot && fp1[0] === fp0[1] && fp1[1] === fp0[0], '↻ dreht das Torhaus nicht (3 × 2 ↔ 2 × 3)');
+        must(g.ok === FW.canPlace(world, 'torhaus', g.i, g.j, g.rot, { lord: sitei, L, occ: occGrid() }).ok, 'der gedrehte Geist stimmt nicht mit canPlace überein');
+        click(w, 'ffRot'); g = m.getGhost(); must(g.rot === sp.rot, 'das zweite ↻ dreht nicht zurück');
+        // too tight (the Kaserne's ring): the lane needs room at both mouths, and the reason says so
+        { const tight = findInvalid('torhaus', ['tight']); must(tight, 'kein „zu eng“-Platz für das Torhaus gefunden'); if (m.getGhost().rot) click(w, 'ffRot');   // (findInvalid looks at the unturned footprint)
+          dragGhost(m.getGhost(), tight.i, tight.j); g = m.getGhost(); must(!g.ok && g.reason === 'tight' && /Gasse/.test(doc.getElementById('ffReason').textContent) && doc.getElementById('ffReason').className === 'bad', 'zu eng: erwartet die Gassen-Meldung, bekam «' + doc.getElementById('ffReason').textContent + '»');
+          const nb = sent.length; click(w, 'ffOk'); must(lastSent('ffBuild', nb).length === 0, '✓ auf rotem Torhaus sendet ffBuild'); }
+        if (m.getGhost().rot !== sp.rot) click(w, 'ffRot'); dragGhost(m.getGhost(), sp.i, sp.j); g = m.getGhost(); must(g.ok && g.rot === sp.rot, 'der Vorschlag ist nach dem Ziehen nicht grün');
+        must(spyCalls('drawLane', () => F.draw()) >= 1, 'der Torhaus-Geist malt keine Gasse zwischen den Türmen');   // (the lane and the chevrons at its mouths: drawLane)
+        const nbd = sent.length, hs = stock.holz, ss = stock.stein; click(w, 'ffOk'); const bm = lastSent('ffBuild', nbd);
+        must(bm.length === 1 && bm[0].kind === 'torhaus' && bm[0].i === sp.i && bm[0].j === sp.j && bm[0].rot === sp.rot && bm[0].len === undefined, 'ffBuild des Torhauses: ' + JSON.stringify(bm));
+        must(stock.holz === hs - (SEND_COSTS ? COSTS.build.torhaus.holz : 4) && stock.stein === ss - (SEND_COSTS ? COSTS.build.torhaus.stein : 12), 'die Kosten des Torhauses (🪵 4 🪨 12) sind nicht abgebucht');
+        { const t = buildings.find((b) => b.lord === me && b.kind === 'torhaus'); t.build = 1; t.dur = 0; sendBoard(); m.view('mine', true); F.draw(); tapBuilding(w, t);
+          must(doc.getElementById('ffCNm').textContent === 'Torhaus' && doc.getElementById('ffCGar').textContent.indexOf('🏹 0 / 4 besetzt') === 0 && /Wozu/.test(doc.getElementById('ffCInfo').textContent) && /Gasse/.test(doc.getElementById('ffCWozu').textContent), 'die Torhaus-Karte: «' + doc.getElementById('ffCGar').textContent + '»');
+          must(spyCalls('drawLane', () => F.draw()) >= 1, 'das fertige Torhaus malt keine Gasse auf der Karte'); click(w, 'ffCClose'); }
+        phase2Reset();
+      }
+
+      // 27: the Markt sheet
+      step = '27 Markt: Blatt, Preise, Verkaufen und Kaufen, ×5 und langes Drücken, drei Wege hinein';
+      {
+        phase2Reset(); const P = RULES.tradePack, pr = RULES.prices, GOODS = ['korn', 'holz', 'stein'];
+        buildings.filter((b) => b.lord === me && b.kind === 'markt').forEach((b) => buildings.splice(buildings.indexOf(b), 1)); sendBoard();
+        const sheet = () => doc.getElementById('ffLager'), sheetOn = () => shown(w, 'ffLager'), page = () => F.st.sheet, title = () => doc.getElementById('ffLagerT').textContent;
+        // without a Markt: the sheet says what to build, and the button starts the placing
+        click(w, 'ffGold'); must(sheetOn() && page() === 'markt' && title() === '⚖️ Markt' && w.history.state && w.history.state.ffLager === 1, 'ein Tipp auf 💰 öffnet das Markt-Blatt nicht (Seite ' + page() + ')');
+        must(shown(w, 'ffMkNone') && doc.querySelector('#ffMkNone .big').textContent === 'Bau zuerst einen ⚖️ Markt' && !shown(w, 'ffMkTop') && !shown(w, 'ffMkB-sell-korn') && shown(w, 'ffMkBuild'), 'ohne Markt fehlt „Bau zuerst einen ⚖️ Markt“ (oder der Handel zeigt sich trotzdem)');
+        click(w, 'ffGold'); must(!sheetOn(), 'ein zweiter Tipp auf 💰 schließt das Blatt nicht'); F.ignorePop = 0;
+        click(w, 'ffGold'); click(w, 'ffMkBuild'); must(!sheetOn() && doc.getElementById('ffMode-bauen').classList.contains('on') && m.getGhost() && m.getGhost().kind === 'markt', '„🏗️ Markt bauen“ wählt keinen Markt'); F.ignorePop = 0;
+        // the placing really builds one: ✓ → ffBuild, a site; unfinished it says so
+        { const nb = sent.length; click(w, 'ffOk'); const bm = lastSent('ffBuild', nb); must(bm.length === 1 && bm[0].kind === 'markt', 'ffBuild des Marktes: ' + JSON.stringify(bm)); }
+        const mk = buildings.find((b) => b.lord === me && b.kind === 'markt'); must(mk, 'der Markt steht nicht im falschen Fernseher'); mk.build = 0.4; mk.dur = 0; sendBoard();
+        F.openMarkt(); must(sheetOn() && doc.querySelector('#ffMkNone .sub').textContent.indexOf('im Bau · 40 %') >= 0 && !shown(w, 'ffMkBuild'), 'ein Markt im Bau zeigt „im Bau · 40 %“ nicht: «' + doc.querySelector('#ffMkNone .sub').textContent + '»');
+        F.closeLager(); F.ignorePop = 0;
+        // the finished Markt: the card has „⚖️ Zum Markt“
+        mk.build = 1; sendBoard(); m.view('mine', true); F.draw(); tapBuilding(w, mk);
+        must(doc.getElementById('ffCNm').textContent === 'Markt' && shown(w, 'ffCardMarkt') && doc.getElementById('ffCardMarkt').textContent.indexOf('Zum Markt') >= 0 && /Gold/.test(doc.getElementById('ffCWozu').textContent), 'die Markt-Karte hat keinen „⚖️ Zum Markt“-Knopf');
+        click(w, 'ffCardMarkt'); must(sheetOn() && page() === 'markt' && !doc.getElementById('ffPanel').classList.contains('card') && shown(w, 'ffMkTop'), '„⚖️ Zum Markt“ öffnet das Markt-Blatt nicht');
+        // numbers: gold, stock, cap, one pack, labels from the prices
+        stock = { korn: 40, holz: 50, stein: 30, gold: 5 }; recount(); sendYou();
+        const lab = (g, side, n) => side === 'sell' ? n * P + ' ' + ICON[g] + ' → 💰 ' + n * pr.sell[g] : '💰 ' + n * pr.buy[g] + ' → ' + n * P + ' ' + ICON[g], small = (g, side) => doc.querySelector('#ffMkB-' + side + '-' + g + ' small').textContent, btn = (g, side) => doc.getElementById('ffMkB-' + side + '-' + g);
+        must(doc.getElementById('ffMkGold').textContent.indexOf('💰 5') === 0, 'das Gold im Blatt: «' + doc.getElementById('ffMkGold').textContent + '»');
+        GOODS.forEach((g) => { must(doc.querySelector('#ffMk-' + g + ' .amt').textContent === String(stock[g]) && doc.querySelector('#ffMk-' + g + ' .cp').textContent === '/ ' + cap[g], 'Markt ' + g + ': Menge/Kappe «' + doc.querySelector('#ffMk-' + g + ' .amt').textContent + doc.querySelector('#ffMk-' + g + ' .cp').textContent + '»');
+          must(small(g, 'sell') === lab(g, 'sell', 1) && small(g, 'buy') === lab(g, 'buy', 1), 'Markt ' + g + ': Beschriftung «' + small(g, 'sell') + '» / «' + small(g, 'buy') + '» statt «' + lab(g, 'sell', 1) + '» / «' + lab(g, 'buy', 1) + '»'); });
+        must(GOODS.every((g) => !btn(g, 'sell').disabled && !btn(g, 'buy').disabled), 'mit 5 💰 und vollem Vorrat darf kein Knopf gesperrt sein (🪨 kostet genau 5)');
+        // sell one pack of stone: ffTrade, the numbers move at once and the screen's truth agrees
+        let nt = sent.length; click(w, 'ffMkB-sell-stein'); let tr = lastSent('ffTrade', nt);
+        must(tr.length === 1 && tr[0].good === 'stein' && tr[0].side === 'sell' && tr[0].packs === 1, 'ffTrade (Stein verkaufen): ' + JSON.stringify(tr));
+        must(stock.stein === 30 - P && stock.gold === 5 + pr.sell.stein && doc.querySelector('#ffMk-stein .amt').textContent === String(30 - P) && doc.getElementById('ffMkGold').textContent.indexOf('💰 ' + (5 + pr.sell.stein)) === 0 && doc.getElementById('ffGold').querySelector('b').textContent === String(5 + pr.sell.stein), 'nach dem Verkauf stimmen Lager und Gold nicht (' + stock.stein + ', ' + stock.gold + ')');
+        // buy one pack of grain
+        nt = sent.length; const gb0 = stock.gold; click(w, 'ffMkB-buy-korn'); tr = lastSent('ffTrade', nt);
+        must(tr.length === 1 && tr[0].good === 'korn' && tr[0].side === 'buy' && tr[0].packs === 1 && stock.korn === 40 + P && stock.gold === gb0 - pr.buy.korn, 'ffTrade (Korn kaufen): ' + JSON.stringify(tr) + ', Korn ' + stock.korn + ', Gold ' + stock.gold);
+        // ×5: five packs, but only as many as the stock allows
+        click(w, 'ffMkMul-5'); must(doc.getElementById('ffMkMul-5').classList.contains('on') && !doc.getElementById('ffMkMul-1').classList.contains('on') && small('holz', 'sell') === lab('holz', 'sell', 5), '×5 stellt die Beschriftung nicht um: «' + small('holz', 'sell') + '»');
+        nt = sent.length; click(w, 'ffMkB-sell-holz'); tr = lastSent('ffTrade', nt); must(tr.length === 1 && tr[0].packs === 5 && stock.holz === 50 - 5 * P, '×5 verkauft nicht 5 Pakete: ' + JSON.stringify(tr) + ', Holz ' + stock.holz);
+        stock.stein = 12; sendYou(); must(small('stein', 'sell') === lab('stein', 'sell', 2), 'mit 12 🪨 und ×5 steht nicht „2 Pakete“: «' + small('stein', 'sell') + '»');
+        nt = sent.length; click(w, 'ffMkB-sell-stein'); tr = lastSent('ffTrade', nt); must(tr.length === 1 && tr[0].packs === 2 && stock.stein === 12 - 2 * P, '×5 mit Vorrat für 2 Pakete sendet nicht packs 2: ' + JSON.stringify(tr));
+        click(w, 'ffMkMul-1');
+        // a long press: five packs at once (the timer fires at LONG_MS; here without waiting for it) and the click that follows does nothing more
+        stock = { korn: 60, holz: 50, stein: 30, gold: 5 }; sendYou(); nt = sent.length; F.longPress('korn', 'sell'); tr = lastSent('ffTrade', nt);
+        must(tr.length === 1 && tr[0].packs === 5 && tr[0].good === 'korn' && tr[0].side === 'sell' && stock.korn === 60 - 5 * P && F.longMs >= 300 && F.longMs <= 800, 'langes Drücken verkauft nicht 5 Pakete: ' + JSON.stringify(tr) + ', Schwelle ' + F.longMs + ' ms');
+        // disabled: no gold → no buying, a full store → no buying (with a note), nothing to sell → no selling
+        stock = { korn: 3, holz: cap.holz, stein: 30, gold: 0 }; sendYou();
+        must(btn('korn', 'sell').disabled && btn('stein', 'buy').disabled && btn('korn', 'buy').disabled && btn('holz', 'buy').disabled && !btn('holz', 'sell').disabled, 'die Sperren stimmen nicht (zu wenig Ware, zu wenig 💰, voll)');
+        must(doc.querySelector('#ffMk-holz .lg-note').textContent.indexOf('Lager voll') >= 0 && doc.querySelector('#ffMk-stein .lg-note').textContent.indexOf('zu wenig 💰') >= 0 && doc.querySelector('#ffMk-korn .lg-note').textContent.indexOf('weniger als ' + P) >= 0, 'die Hinweise unter den Sperren fehlen: «' + doc.querySelector('#ffMk-holz .lg-note').textContent + '» «' + doc.querySelector('#ffMk-stein .lg-note').textContent + '»');
+        nt = sent.length; btn('korn', 'sell').click(); btn('stein', 'buy').click(); must(sent.length === nt, 'ein gesperrter Knopf sendet etwas');
+        stock.gold = 100; sendYou(); nt = sent.length; click(w, 'ffMkB-buy-holz'); must(lastSent('ffTrade', nt).length === 0 && btn('holz', 'buy').disabled, 'Kaufen bei vollem Lager sendet ffTrade oder ist nicht gesperrt');
+        // the screen's own refusal (no Markt for the screen): a toast with a reason, and the phone's numbers come back with the next ffYou
+        { const m0 = mk.build; mk.build = 0.5; stock = { korn: 40, holz: 50, stein: 30, gold: 9 }; doc.querySelectorAll('.ff-toast').forEach((t) => t.remove());   // the screen's Markt is not finished (the phone's order arrives anyway)
+          F.send({ t: 'ffTrade', good: 'korn', side: 'sell', packs: 1 }); must(toastTexts().some((t) => t.indexOf('Markt') >= 0) && stock.korn === 40 && stock.gold === 9, 'ein Handel ohne Markt wird vom Bildschirm nicht mit Grund abgelehnt (' + toastTexts().join('|') + ')');
+          F.send({ t: 'ffTrade', good: 'gold', side: 'sell', packs: 1 }); F.send({ t: 'ffTrade', good: 'korn', side: 'swap', packs: 1 }); F.send({ t: 'ffTrade', good: 'korn', side: 'sell', packs: 0 }); mk.build = m0; sendYou(); }
+        // the Lager page leads here, too: „⚖️ Zum Markt“ switches the page of the same sheet, „📦 Zum Lager“ back
+        F.closeLager(); F.ignorePop = 0; stock = { korn: 40, holz: 50, stein: 30, gold: 5 }; recount(); sendBoard(); sendYou();
+        click(w, 'ffKorn'); must(sheetOn() && page() === 'lager' && title() === '📦 Lager' && shown(w, 'ffLagerMarkt') && !shown(w, 'ffMkTop'), 'das Lager-Blatt zeigt „⚖️ Zum Markt“ nicht');
+        click(w, 'ffLagerMarkt'); must(sheetOn() && page() === 'markt' && title() === '⚖️ Markt' && shown(w, 'ffMkTop') && !shown(w, 'ffLagerBody') && w.history.state && w.history.state.ffLager === 1, '„⚖️ Zum Markt“ wechselt die Seite nicht');
+        click(w, 'ffKorn'); must(sheetOn() && page() === 'lager', 'ein Tipp auf 🌾 im Markt-Blatt wechselt nicht zum Lager');
+        click(w, 'ffGold'); must(sheetOn() && page() === 'markt', 'ein Tipp auf 💰 im Lager-Blatt wechselt nicht zum Markt');
+        click(w, 'ffMkLager'); must(page() === 'lager' && shown(w, 'ffLagerBody'), '„📦 Zum Lager“ führt nicht zurück');
+        click(w, 'ffGold'); click(w, 'ffMkGuide'); must(!sheetOn() && shown(w, 'ffGuide') && doc.getElementById('ffGuideNav-markt').classList.contains('on') && w.history.state && w.history.state.ffGuide === 1, '„Mehr dazu“ im Markt-Blatt öffnet nicht den Abschnitt Markt & Gold'); click(w, 'ffGuideX'); F.ignorePop = 0;
+        // back gesture and a tap outside close the Markt page like the Lager page
+        click(w, 'ffGold'); F.ignorePop = 0; w.dispatchEvent(new w.PopStateEvent('popstate', { state: null })); must(!sheetOn(), 'die Zurück-Geste schließt das Markt-Blatt nicht');
+        click(w, 'ffGold'); doc.querySelector('.lg-sheet').click(); must(sheetOn(), 'ein Tipp ins Blatt schließt es'); doc.getElementById('ffLager').click(); must(!sheetOn(), 'ein Tipp daneben schließt das Markt-Blatt nicht'); F.ignorePop = 0;
+        // the prices come from ffInfo.rules (a changed price reaches the labels), and without them the contract's numbers stand
+        click(w, 'ffGold'); RULES.prices.sell.stein = 3; RULES.prices.buy.korn = 4; sendInfo(); must(F.st.rules.prices.sell.stein === 3 && small('stein', 'sell') === '5 🪨 → 💰 3' && small('korn', 'buy') === '💰 4 → 5 🌾', 'geänderte Preise aus ffInfo.rules kommen nicht an: «' + small('stein', 'sell') + '» «' + small('korn', 'buy') + '»');
+        RULES.prices.sell.stein = simRules().prices.sell.stein; RULES.prices.buy.korn = simRules().prices.buy.korn;
+        sendRules = false; sendInfo(); must(small('stein', 'sell') === '5 🪨 → 💰 2' && small('korn', 'buy') === '💰 3 → 5 🌾' && small('stein', 'buy') === '💰 5 → 5 🪨', 'ohne ffInfo.rules gelten nicht die Preise 1/1/2 und 3/3/5: «' + small('stein', 'sell') + '»');
+        sendRules = true; sendInfo(); must(small('stein', 'sell') === lab('stein', 'sell', 1), 'ffInfo.rules kommt nach dem Wiederholen nicht zurück');
+        F.closeLager(); F.ignorePop = 0;
+      }
+
+      // 28: Wehrgang (garrison): drop a banner on a wall, a Torhaus or a tower
+      step = '28 Wehrgang: Fahne auf Mauer, Tor und Turm, Toast, Karte „🏹 n / m besetzt“, Abzeichen';
+      {
+        phase2Reset(); const sitei = LORDS[me].site; m = F.map;
+        const tower = buildings.find((b) => b.lord === me && b.kind === 'wachturm' && b.build >= 1 && !b.ruined); must(tower, 'kein fertiger Wachturm da');
+        const gate = buildings.find((b) => b.lord === me && b.kind === 'torhaus'), piece = buildings.filter((b) => b.lord === me && b.kind === 'mauer').sort((a, b) => b.len - a.len)[0];
+        must(gate && piece, 'für Schritt 28 fehlen das Torhaus oder ein Mauerstück aus den Schritten 25 und 26'); gate.build = 1; piece.build = 1; piece.garrison = 0; gate.garrison = 0; tower.garrison = 0; sendBoard();
+        // the board rows: the 14th and 15th fields, and rows without them mean len 1 and garrison 0
+        tower.garrison = 2; piece.garrison = piece.len - 1 > 0 ? piece.len - 1 : 0; sendBoard();
+        must(F.st.byId[tower.id].garrison === 2 && F.st.byId[tower.id].len === 1 && F.st.byId[piece.id].len === piece.len && F.st.byId[piece.id].garrison === piece.garrison, 'die Felder 14 und 15 des Bretts kommen nicht an: ' + JSON.stringify([F.st.byId[tower.id].garrison, F.st.byId[piece.id].len, F.st.byId[piece.id].garrison]));
+        { const mkRows = (n) => buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.workers, b.paused ? 1 : 0, b.len || 1, b.garrison || 0].slice(0, n));
+          [13, 12, 9].forEach((n) => { toPhone({ t: 'ffBoard', b: mkRows(n), banners: [] }); must(F.st.byId[piece.id].len === 1 && F.st.byId[piece.id].garrison === 0 && F.st.byId[tower.id].garrison === 0, 'eine alte Zeile mit ' + n + ' Feldern muss len 1 und garrison 0 heißen'); });
+          toPhone({ t: 'ffBoard', b: mkRows(14), banners: [] }); must(F.st.byId[piece.id].len === piece.len && F.st.byId[piece.id].garrison === 0, 'eine Zeile mit 14 Feldern: len ja, garrison 0');
+          sendBoard(); }
+        // the map: the footprint of a wall piece is 1 × len, the badges are drawn for own buildings with archers inside
+        { const fp = m.fpOf(F.st.byId[piece.id]); must(fp[0] * fp[1] === piece.len && Math.min(fp[0], fp[1]) === 1, 'ein Wandstück hat nicht den Grundriss 1 × len (' + fp + ')');
+          m.view('mine', true); const ts = spyTexts(() => F.draw()); const nGar = buildings.filter((b) => b.lord === me && b.garrison > 0 && b.build >= 1).length;
+          must(ts.filter((t) => t === '🏹').length === nGar && nGar >= 2, 'die Karte malt nicht für jedes besetzte Gebäude ein 🏹-Abzeichen (' + ts.filter((t) => t === '🏹').length + ' statt ' + nGar + ')');
+          must(ts.indexOf(String(tower.garrison)) >= 0, 'das Abzeichen nennt die Zahl der Bogenschützen nicht'); }
+        // drop banner I on the tower: the order keeps the exact point, the toast says what happens
+        tower.garrison = 0; piece.garrison = 0; gate.garrison = 0; sendBoard(); click(w, 'ffMode-banner'); m.view('all', true); F.draw();
+        const pin = m.ownPins()[0], tc = { x: -72 + tower.i + 0.3, y: -45 + tower.j + 0.3 }, px1 = 1.2 / m.cam.s; let nb = sent.length; dragPin(w, pin, tc, true);   // a point inside the tower that is not its centre: the order keeps it
+        let bm = lastSent('ffBanner', nb); must(bm.length === 1 && bm[0].n === 1 && Math.hypot(bm[0].x - tc.x, bm[0].y - tc.y) <= px1, 'die Fahne auf dem Turm: ffBanner ' + JSON.stringify(bm) + ' statt ' + JSON.stringify(tc) + ' (der Punkt wird nicht beibehalten)');
+        must(toastTexts().some((t) => t === '🏹 Bogenschützen besetzen den Turm'), 'kein Toast „🏹 Bogenschützen besetzen den Turm“: «' + toastTexts().join('|') + '»');
+        must(tower.garrison === Math.min(3, Math.ceil(F.st.ownBanners[1].count / 2)) && F.st.byId[tower.id].garrison === tower.garrison, 'die Besatzung des Turms kommt nach dem ffBanner nicht auf die Karte');
+        // tap-to-send onto the Torhaus and onto the wall: the same orders
+        const tapPoint = (b) => { const fp = FW.footprintOf(b.kind, b.rot, b.len); for (let t = 0; t < fp[0] * fp[1]; t++) { const x = -72 + b.i + (t % fp[0]) + 0.5, y = -45 + b.j + Math.floor(t / fp[0]) + 0.5, sc = m.toScreen(x, y), pk = m.pick(sc.x, sc.y); if (!pk.banner && pk.building && pk.building.id === b.id) return { x, y }; } return centerOf(b); };   // a point of the building that no banner pin covers
+        const tapOrSend = (n, list) => {   // taps a point of one of the buildings that no banner pin covers; where the small map leaves none, the order goes through sendBanner (the tap path is then tested elsewhere)
+          for (const q of list) { const pt = tapPoint(q), sc = m.toScreen(pt.x, pt.y), pk = m.pick(sc.x, sc.y); if (!pk.banner && pk.building && pk.building.id === q.id) { tapMap(w, pt.x, pt.y); return 'tap'; } }
+          const c = centerOf(list[0]); m.sendBanner(n, c.x, c.y); return 'send';
+        };
+        F.armBanner(2); nb = sent.length; const how1 = tapOrSend(2, [gate]); bm = lastSent('ffBanner', nb);
+        must(bm.length === 1 && bm[0].n === 2 && toastTexts().some((t) => t === '🏹 Bogenschützen besetzen das Tor'), 'Tippen aufs Torhaus (' + how1 + '): ' + JSON.stringify(bm) + ' / «' + toastTexts().join('|') + '»');
+        F.armBanner(1); nb = sent.length;
+        { const how2 = tapOrSend(1, buildings.filter((x) => x.lord === me && x.kind === 'mauer' && !x.ruined && x.build >= 1)); bm = lastSent('ffBanner', nb);
+          must(bm.length === 1 && bm[0].n === 1 && toastTexts().some((t) => t === '🏹 Bogenschützen besetzen die Mauer'), 'Tippen auf die Mauer (' + how2 + '): ' + JSON.stringify(bm) + ' / «' + toastTexts().join('|') + '»'); }
+        // a banner without men (a rally point) onto the tower is just that: no garrison toast
+        { F.armBanner(3); nb = sent.length; doc.querySelectorAll('.ff-toast').forEach((t) => t.remove()); const rp = m.sendBanner(3, tc.x, tc.y); must(rp && lastSent('ffBanner', nb).length === 1 && !toastTexts().some((t) => t.indexOf('🏹') >= 0) && toastTexts().some((t) => t.indexOf('Sammelpunkt') >= 0), 'ein Sammelpunkt auf dem Turm bringt den Besatzungs-Toast (oder keinen Sammelpunkt-Toast): «' + toastTexts().join('|') + '»'); }
+        // an order far from any of them is an ordinary order (no 🏹 toast)
+        F.armBanner(1); { let free = null; for (let ex = -60; ex <= 60 && !free; ex += 4) for (let ey = -40; ey <= 40 && !free; ey += 4) { const sc = m.toScreen(ex, ey); if (sc.x < 24 || sc.y < 24 || sc.x > m.w - 24 || sc.y > m.h - 24) continue; const pk = m.pick(sc.x, sc.y); if (!pk.banner && !pk.building && !pk.crossing && !pk.site && m.snapTarget(ex, ey) === null) free = { x: ex, y: ey }; }
+          must(free, 'kein freier Fleck für den Gegenversuch'); doc.querySelectorAll('.ff-toast').forEach((t) => t.remove()); nb = sent.length; tapMap(w, free.x, free.y); must(lastSent('ffBanner', nb).length === 1 && !toastTexts().some((t) => t.indexOf('🏹') >= 0), 'eine Fahne auf freiem Feld löst den Besatzungs-Toast aus'); }
+        // the snap: within 1 cell of the tower wins over everything, 3 cells away it does not
+        { const fpT = FW.footprintOf('wachturm', tower.rot), tx = -72 + tower.i, ty = -45 + tower.j; const near = m.snapTarget(tx - 0.8, ty + 0.5), far = m.snapTarget(tx - 3.5, ty + 0.5);
+          must(near && near.kind === 'garrison' && near.bkind === 'wachturm' && near.x === tx - 0.8, 'ein Punkt 0,8 neben dem Turm ist kein Besatzungs-Ziel: ' + JSON.stringify(near)); must(!far || far.kind !== 'garrison', 'ein Punkt 3,5 neben dem Turm ist ein Besatzungs-Ziel'); }
+        // a site or a ruin cannot be garrisoned
+        tower.build = 0.5; sendBoard(); must(m.snapTarget(-72 + tower.i + 0.5, -45 + tower.j + 0.5) === null || m.snapTarget(-72 + tower.i + 0.5, -45 + tower.j + 0.5).kind !== 'garrison', 'ein Turm im Bau ist ein Besatzungs-Ziel'); tower.build = 1; sendBoard();
+        // the cards: slots per building (Mauer per cell, Torhaus 4, Wachturm 3), the state of the garrison
+        click(w, 'ffMode-bauen'); m.view('mine', true); F.draw();
+        const gar = () => doc.getElementById('ffCGar');
+        tower.garrison = 2; sendBoard(); tapBuilding(w, tower); must(doc.getElementById('ffCNm').textContent === 'Wachturm' && gar().textContent === '🏹 2 / 3 besetzt' && gar().className === 'some' && shown(w, 'ffCGar'), 'die Turm-Karte: «' + gar().textContent + '» (' + gar().className + ')');
+        tower.garrison = 3; sendBoard(); must(gar().textContent === '🏹 3 / 3 besetzt' && gar().className === 'full', 'volle Besatzung: «' + gar().textContent + '»');
+        tower.garrison = 0; sendBoard(); must(gar().textContent.indexOf('🏹 0 / 3 besetzt') === 0 && /Fahne/.test(gar().textContent) && gar().className === '', 'leerer Turm: «' + gar().textContent + '»');
+        gate.garrison = 3; sendBoard(); tapBuilding(w, gate); must(gar().textContent === '🏹 3 / 4 besetzt', 'die Torhaus-Karte: «' + gar().textContent + '»');
+        piece.garrison = 1; sendBoard(); tapBuilding(w, piece); must(gar().textContent === '🏹 1 / ' + piece.len + ' besetzt', 'die Mauer-Karte (' + piece.len + ' Felder): «' + gar().textContent + '»');
+        piece.build = 0.5; sendBoard(); must(!shown(w, 'ffCGar') && doc.getElementById('ffCState').textContent.indexOf('im Bau') >= 0, 'eine Baustelle zeigt die Besatzung'); piece.build = 1; sendBoard();
+        const hutc = buildings.find((b) => b.lord === me && b.kind === 'huette' && !b.ruined && b.build >= 1); tapBuilding(w, hutc); must(!shown(w, 'ffCGar'), 'eine Hütte zeigt „besetzt“'); click(w, 'ffCClose');
+        // a ruined piece is rubble: a card with the rebuild button that costs half of its length (per cell), and sends the length
+        { const rp = piece; rp.ruined = 1; rp.hp = 0; sendBoard(); tapBuilding(w, rp); must(shown(w, 'ffCardRebuild') && !shown(w, 'ffCGar'), 'die Ruine eines Wandstücks hat keine Wiederaufbau-Karte');
+          if (SEND_COSTS) { const half = {}; for (const r in COSTS.build.mauer) half[r] = Math.ceil(COSTS.build.mauer[r] * rp.len * COSTS.rebuild); must(chipsOf('ffCCost').join('|') === costArr(half).join('|'), 'der Wiederaufbau einer Mauerruine kostet nicht ½ pro Feld: «' + chipsOf('ffCCost').join('|') + '» statt «' + costArr(half).join('|') + '»'); }
+          const nr = sent.length, st0 = stock.stein; click(w, 'ffCardRebuild'); const rb = lastSent('ffBuild', nr);
+          must(rb.length === 1 && rb[0].kind === 'mauer' && rb[0].i === rp.i && rb[0].j === rp.j && rb[0].rot === rp.rot && rb[0].len === rp.len && !rp.ruined && stock.stein === st0 - Math.ceil(COSTS.build.mauer.stein * rp.len * COSTS.rebuild), 'der Wiederaufbau sendet nicht Grundriss und Länge: ' + JSON.stringify(rb) + ', Stein ' + stock.stein);
+          rp.build = 1; sendBoard(); }
+        click(w, 'ffMode-bauen'); phase2Reset();
+      }
+
+      // 29: the advisor's new tips, the round-2 leftovers, the 💤 badge for a full workplace, the guide
+      step = '29 Berater (Markt, Rammbock), Reste aus Runde 2, 💤 bei vollem Lager, Anleitung';
+      {
+        phase2Reset(); const sitei = LORDS[me].site, enemy = (me + 1) % NL;
+        const tipTx = () => doc.getElementById('ffTipTx').textContent, tipOn = () => shown(w, 'ffTip'), tipNow = () => { renderTipNow(); return tipOn() ? { id: F.st.tip.id, tx: tipTx(), hot: doc.getElementById('ffTip').classList.contains('hot') } : null; };
+        F.st.tipSnooze = { 1: 1e15, 2: 1e15, 3: 1e15, 4: 1e15, 5: 1e15, 7: 1e15, 8: 1e15, 9: 1e15, 10: 1e15 }; F.st.hungerUntil = 0; F.st.rams = 0;   // (step 24 ordered a ram)
+        const mk = buildings.find((b) => b.lord === me && b.kind === 'markt' && !b.ruined); must(mk, 'für Schritt 29 fehlt der Markt aus Schritt 27'); mk.build = 1; recount(); stock = { korn: 30, holz: 70, stein: 26, gold: 0 }; sendBoard(); sendYou();
+        // full goods: without a finished Markt the reworded tip 6, with one the sell tip (12) first
+        stock.stein = cap.stein; mk.build = 0.5; sendBoard(); sendYou(); let t = tipNow(); must(t && t.id === 6 && t.tx === '🪨 Stein voll – bau ein 📦 Lager oder einen ⚖️ Markt' && !/ruhen/.test(t.tx), 'Tipp 6 ohne Markt: ' + JSON.stringify(t));
+        stock.holz = cap.holz; stock.stein = 26; sendYou(); t = tipNow(); must(t && t.tx === '🪵 Holz voll – bau ein 📦 Lager oder einen ⚖️ Markt', 'Tipp 6 (Holz): ' + JSON.stringify(t));
+        stock.holz = 70; stock.korn = cap.korn; sendYou(); t = tipNow(); must(t && t.tx === '🌾 Korn voll – bau einen 🏚️ Kornspeicher oder einen ⚖️ Markt', 'Tipp 6 (Korn): ' + JSON.stringify(t));
+        mk.build = 1; stock.korn = 30; stock.stein = cap.stein; sendBoard(); sendYou(); t = tipNow(); must(t && t.id === 12 && t.tx === '⚖️ 🪨 Stein voll – verkauf Überschuss auf dem Markt', 'Tipp 12 (Stein voll, Markt fertig): ' + JSON.stringify(t));
+        stock.stein = 26; stock.holz = cap.holz; sendYou(); t = tipNow(); must(t && t.tx === '⚖️ 🪵 Holz voll – verkauf Überschuss auf dem Markt', 'Tipp 12 (Holz): ' + JSON.stringify(t)); stock.holz = 70;
+        stock.stein = cap.stein; sendYou(); click(w, 'ffTipTx'); must(shown(w, 'ffLager') && F.st.sheet === 'markt', 'ein Tipp auf „verkauf Überschuss“ öffnet nicht den Markt'); F.closeLager(); F.ignorePop = 0;
+        // hunger with gold and a Markt: buy (11) comes before „bau mehr Höfe“ (1); without gold or without a Markt it is the old tip
+        F.st.tipSnooze = { 2: 1e15, 3: 1e15, 4: 1e15, 5: 1e15, 7: 1e15, 8: 1e15, 9: 1e15, 10: 1e15 }; hunger = true; F.st.hungerUntil = 0; stock.gold = 12; sendYou(); t = tipNow();
+        must(t && t.id === 11 && t.tx === '⚖️ Hunger – kauf 🌾 auf dem Markt' && t.hot, 'Tipp 11 (Hunger, Gold, Markt): ' + JSON.stringify(t));
+        click(w, 'ffTipTx'); must(shown(w, 'ffLager') && F.st.sheet === 'markt', 'ein Tipp auf „kauf 🌾“ öffnet nicht den Markt'); F.closeLager(); F.ignorePop = 0;
+        stock.gold = 2; sendYou(); t = tipNow(); must(t && t.id === 1 && t.tx.indexOf('Hunger! Bau mehr') >= 0, 'mit zu wenig Gold muss der alte Hunger-Tipp kommen: ' + JSON.stringify(t));
+        stock.gold = 12; mk.build = 0.5; sendBoard(); sendYou(); t = tipNow(); must(t && t.id === 1, 'ohne fertigen Markt muss der alte Hunger-Tipp kommen: ' + JSON.stringify(t)); mk.build = 1; sendBoard();
+        stock.gold = 12; sendYou(); must(tipNow().id === 11, 'Tipp 11 kommt nicht zurück'); click(w, 'ffTipX'); t = tipNow(); must(t && t.id === 1, '✕ blendet Tipp 11 nicht aus (dann kommt der nächste)');
+        hunger = false; F.st.hungerUntil = 0; sendYou(); F.st.tipSnooze = { 1: 1e15, 2: 1e15, 3: 1e15, 4: 1e15, 5: 1e15, 6: 1e15, 7: 1e15, 8: 1e15, 9: 1e15, 10: 1e15 }; stock.stein = 26; sendYou();
+        // enemy walls and no ram (13): fehde only, no ruins, no partners, gone once a ram is ordered
+        must(!tipNow(), 'ohne Feindmauern meldet der Berater etwas: ' + JSON.stringify(tipNow()));
+        const ew = { id: nextId++, lord: enemy, kind: 'mauer', i: 40, j: 5, rot: 0, len: 4, build: 1, hp: 1, fire: 0, ruined: 0, noWood: 0, workers: 0, paused: 0, dur: 0, garrison: 0 }; buildings.push(ew); sendBoard();
+        t = tipNow(); must(t && t.id === 13 && t.tx === '🧱 Feinde haben Mauern – ein 🪵 Rammbock bricht sie schnell', 'Tipp 13 (Feinde haben Mauern): ' + JSON.stringify(t));
+        click(w, 'ffTipTx'); must(doc.getElementById('ffMode-truppen').classList.contains('on'), 'ein Tipp auf den Rammbock-Tipp führt nicht zu ⚔️ Truppen'); click(w, 'ffMode-bauen');
+        ew.ruined = 1; sendBoard(); must(!tipNow(), 'eine Feindmauer-Ruine löst den Tipp aus'); ew.ruined = 0; ew.build = 0.4; sendBoard(); must(!tipNow(), 'eine Feindmauer im Bau löst den Tipp aus'); ew.build = 1; sendBoard();
+        ew.kind = 'torhaus'; ew.rot = 0; sendBoard(); must(tipNow() && tipNow().id === 13, 'ein Feind-Torhaus löst den Tipp nicht aus'); ew.kind = 'mauer'; sendBoard();
+        pact[enemy] = { state: 'active', until: simT + PACT_S }; sendYou(); must(!tipNow(), 'die Mauer eines Paktpartners löst den Tipp aus'); pact[enemy] = { state: 'none', until: 0 }; sendYou(); must(tipNow() && tipNow().id === 13, 'ohne Pakt kommt der Tipp nicht zurück');
+        gotoPhase('frieden'); must(!tipNow(), 'der Rammbock-Tipp kommt im Frieden'); gotoPhase('fehde'); must(tipNow() && tipNow().id === 13, 'der Rammbock-Tipp kommt in der Fehde nicht zurück');
+        F.st.rams = 1; must(!tipNow(), 'mit einem Rammbock läuft der Tipp weiter'); F.st.rams = 0; sendYou(); must(tipNow() && tipNow().id === 13, 'der Tipp kommt ohne Rammbock nicht zurück');
+        { const k0 = buildings.find((b) => b.lord === me && b.kind === 'kaserne'); k0.build = 1; sendBoard(); stock.holz = 60; stock.gold = 10; sendYou(); click(w, 'ffMode-truppen'); click(w, 'ffUnit-ramme'); click(w, 'ffMode-bauen'); must(F.st.rams === 1 && !tipNow(), 'nach dem Rammbock-Auftrag bleibt der Tipp stehen'); }
+        buildings.splice(buildings.indexOf(ew), 1); F.st.rams = 0; queue = []; idle = 3; sendBoard(); sendYou();   // (the ram's queue entry would count as ordered again)
+        // priority: with everything at once the hungry buy tip wins, then food, then the sell tip
+        F.st.tipSnooze = {}; hunger = true; F.st.hungerUntil = 0; stock.gold = 12; stock.stein = cap.stein; buildings.push(ew); sendBoard(); sendYou();
+        must(tipNow().id === 11, 'bei Hunger + Gold + Markt kommt nicht Tipp 11 zuerst'); hunger = false; F.st.hungerUntil = 0; sendYou(); t = tipNow(); must(t && t.id === 12, 'danach (Stein voll, Markt) nicht Tipp 12: ' + JSON.stringify(t));
+        stock.stein = 26; sendYou(); t = tipNow(); must(t && t.id === 13, 'zuletzt nicht Tipp 13: ' + JSON.stringify(t)); buildings.splice(buildings.indexOf(ew), 1); sendBoard(); F.st.tipSnooze = {};
+        F.advice(11); must(tipTx() === '⚖️ Hunger – kauf 🌾 auf dem Markt', 'advice=11'); F.advice(12); must(/verkauf Überschuss/.test(tipTx()), 'advice=12'); F.advice(13); must(/Rammbock/.test(tipTx()), 'advice=13'); F.advice(6); must(/bau ein 📦 Lager oder einen ⚖️ Markt/.test(tipTx()), 'advice=6'); F.advice(0);
+        // round-2 leftovers: no text advises resting a full quarry any more
+        must(F.INFO.steinbruch.viele === '1; ist 🪨 voll, ruht er von selbst' && !/ruhen lassen/.test(JSON.stringify(F.INFO.steinbruch)), 'die Texte des Steinbruchs raten noch zum Ruhen: ' + JSON.stringify(F.INFO.steinbruch));
+        { const sbq = buildings.find((b) => b.lord === me && b.kind === 'steinbruch' && b.build >= 1 && !b.ruined); must(sbq, 'kein Steinbruch'); m = F.map; m.view('mine', true);
+          // the 💤 badge on the war map: by order (blue) and because the store is full (orange), none for a working one
+          sbq.paused = 0; sbq.full = 0; sendBoard(); let n0 = spyTexts(() => F.draw()).filter((x) => x === '💤').length;
+          sbq.full = 1; sbq.workers = 0; sendBoard(); const nFull = spyTexts(() => F.draw()).filter((x) => x === '💤').length; must(F.st.byId[sbq.id].full === true && nFull === n0 + 1, 'ein volles Lager (13. Feld 2) bekommt auf der Karte kein 💤 (' + n0 + ' → ' + nFull + ')');
+          sbq.full = 0; sbq.paused = 1; sendBoard(); const nPaused = spyTexts(() => F.draw()).filter((x) => x === '💤').length; must(nPaused === n0 + 1, 'ein auf Befehl ruhender Betrieb bekommt kein 💤');
+          sbq.paused = 0; sbq.full = 0; sendBoard(); must(spyTexts(() => F.draw()).filter((x) => x === '💤').length === n0, 'ein arbeitender Betrieb hat ein 💤');
+          // the two kinds look different: the full one is washed orange, the paused one blue
+          const fills = (fn) => { const o = [], fr = m.ctx.fillRect; m.ctx.fillRect = function () { o.push(String(this.fillStyle)); return fr.apply(this, arguments); }; try { fn(); } finally { m.ctx.fillRect = fr; } return o; };
+          sbq.full = 1; sendBoard(); const ff = fills(() => F.draw()); sbq.full = 0; sbq.paused = 1; sendBoard(); const fp2 = fills(() => F.draw()); sbq.paused = 0; sendBoard();
+          must(ff.indexOf('rgba(190, 112, 30, 0.3)') >= 0 && ff.indexOf('rgba(64, 86, 132, 0.34)') < 0 && fp2.indexOf('rgba(64, 86, 132, 0.34)') >= 0 && fp2.indexOf('rgba(190, 112, 30, 0.3)') < 0, 'das 💤 unterscheidet „Lager voll“ (orange) und „ruht“ (blau) nicht'); }
+        // the guide: four new sections (with the numbers from the screen), the Truppen section knows the Söldnerlager
+        F.openGuide(); { const sec = (id) => doc.getElementById('ffGuideSec-' + id).textContent; ['mauern', 'markt', 'soeldner', 'ramme'].forEach((id) => must(doc.getElementById('ffGuideNav-' + id) && doc.getElementById('ffGuideSec-' + id), 'der Anleitung fehlt der Abschnitt ' + id));
+          must(/Linie/.test(sec('mauern')) && /Torhaus/.test(sec('mauern')) && /Wehrgang/.test(sec('mauern')) && /Palisaden brennen/.test(sec('mauern')) && /sperrst du dein eigenes Volk ein/.test(sec('mauern')) && /Ruinen/.test(sec('mauern')), '„Mauern & Tore“ erklärt Linie, Tor, Wehrgang, Feuer und Ruinen nicht');
+          if (SEND_COSTS) must(sec('mauern').indexOf(costTxt(COSTS.build.palisade)) >= 0 && sec('mauern').indexOf(costTxt(COSTS.build.mauer)) >= 0, '„Mauern & Tore“ nennt die Kosten nicht: ' + sec('mauern').slice(0, 400));
+          must(sec('markt').indexOf('Paketen zu ' + RULES.tradePack) >= 0 && sec('markt').indexOf('🌾 ' + RULES.prices.sell.korn + ', 🪵 ' + RULES.prices.sell.holz + ', 🪨 ' + RULES.prices.sell.stein) >= 0 && sec('markt').indexOf('🌾 ' + RULES.prices.buy.korn + ', 🪵 ' + RULES.prices.buy.holz + ', 🪨 ' + RULES.prices.buy.stein) >= 0 && /×5/.test(sec('markt')) && /Hälfte/.test(sec('markt')), '„Markt & Gold“ nennt Pakete und Preise aus ffInfo.rules nicht: ' + sec('markt').slice(0, 500));
+          must(/Reiterschütze/.test(sec('soeldner')) && /nicht mehr aus der Kaserne/.test(sec('soeldner')) && (!SEND_COSTS || (sec('soeldner').indexOf(costTxt(COSTS.units.reiterschuetze)) >= 0 && sec('soeldner').indexOf(costTxt(COSTS.units.fackel)) >= 0)), '„Söldner“ erklärt Reiterschütze, den umgezogenen Fackelträger und die Kosten nicht: ' + sec('soeldner').slice(0, 400));
+          must(/keine Leute/.test(sec('ramme')) && /Viertel/.test(sec('ramme')) && (!SEND_COSTS || sec('ramme').indexOf(costTxt(COSTS.units.ramme)) >= 0), '„Rammbock“ erklärt Wirkung, Pfeile und Kosten nicht: ' + sec('ramme').slice(0, 400));
+          must(/Söldnerlager/.test(sec('truppen')) && /Fackelträger: zündet Holzgebäude und Palisaden an/.test(sec('truppen')) && /Rammbock/.test(sec('truppen')) && /Reiterschütze/.test(sec('truppen')) && /🏇 schlägt 🗡️ und 🔥/.test(sec('truppen')), 'der Abschnitt Truppen kennt Söldnerlager, Fackelträger-Umzug, Rammbock und Reiterschütze nicht');
+          click(w, 'ffGuideNav-markt'); must(doc.getElementById('ffGuideBody').scrollTop > 100 && doc.getElementById('ffGuideNav-markt').classList.contains('on'), 'der Chip „Markt“ scrollt nicht dorthin'); }
+        click(w, 'ffGuideX'); F.ignorePop = 0; F.st.tipSnooze = {}; phase2Reset();
+      }
+
+
+      // 30: the real sim as the judge (only when sim.js loads and has trade and buildWall): the Markt's arithmetic, and every wall piece the phone calls good is accepted by sim.buildWall
+      step = '30 Gegenprobe mit dem echten Sim: Handel und Wandstücke';
+      {
+        let sh = null, sh2 = null;   // (no Burgfrieden and 40 s of steps: the flood is gone, the sim builds on dry land)
+        try { if (FS && FS.create) { sh = FS.create({ seed, world, burgfrieden: 0 }); sh2 = FS.create({ seed, world, burgfrieden: 0, lords: LORDS.map((l) => ({ i: l.i, site: l.site })) }); for (let t = 0; t < 40 / sh.dt; t++) { sh.step(); sh2.step(); } } } catch (e) { sh = sh2 = null; }
+        if (!sh || !sh.trade || !sh.buildWall || !sh.dev || !sh2.buildWall) extra += ' · Sim-Gegenprobe übersprungen (kein FurtSim mit trade und buildWall)';
+        else {
+          // (a) trade: the same inputs into sim.trade and into the fake screen's trade must give the same answer and the same stock
+          const msp = FW.suggest(world, 'markt', 0, { L: 0, occ: sh.occ }); must(msp, 'kein Platz für einen Markt im Sim');
+          must(sh.dev.place(0, 'markt', msp.i, msp.j, msp.rot).ok, 'der Sim baut keinen Markt');
+          const caps = sh.youOf(0).cap, GO = ['korn', 'holz', 'stein'];
+          const scen = [['stein', 'sell', 1, { korn: 22, holz: 12, stein: 9, gold: 4 }], ['korn', 'buy', 2, { korn: 22, holz: 12, stein: 9, gold: 4 }], ['holz', 'buy', 9, { korn: 0, holz: 0, stein: 0, gold: 100 }], ['korn', 'sell', 3, { korn: 9, holz: 0, stein: 0, gold: 0 }],
+            ['stein', 'buy', 2, { korn: 0, holz: 0, stein: 0, gold: 7 }], ['holz', 'sell', 1, { korn: 0, holz: 4, stein: 0, gold: 3 }], ['korn', 'sell', 40, { korn: 30, holz: 0, stein: 0, gold: 0 }], ['stein', 'sell', 2, { korn: 0, holz: 0, stein: 30, gold: 0 }], ['korn', 'swap', 1, { korn: 9, holz: 0, stein: 0, gold: 9 }], ['gold', 'sell', 1, { korn: 9, holz: 0, stein: 0, gold: 9 }], ['korn', 'sell', 0, { korn: 9, holz: 0, stein: 0, gold: 9 }]];
+          scen.forEach(([g, side, n, S]) => {
+            sh.dev.stock(0, S); const rs = sh.trade(0, g, side, n), stk = Object.assign({}, S), rf = fakeTrade(stk, caps, g, side, n, true), got = sh.dev.lord(0).stock;
+            must(!!rs.ok === !!rf.ok && (rs.n | 0) === (rf.n | 0) && (rs.reason || null) === (rf.reason || null), 'Handel ' + JSON.stringify([g, side, n, S]) + ': der Sim sagt ' + JSON.stringify(rs) + ', der falsche Fernseher ' + JSON.stringify(rf));
+            must(GO.concat(['gold']).every((k) => (got[k] | 0) === (stk[k] | 0)), 'Handel ' + JSON.stringify([g, side, n]) + ': Vorrat im Sim ' + JSON.stringify(got) + ' ≠ falscher Fernseher ' + JSON.stringify(stk));
+          });
+          if (FS.CONST.TRADE_PRICE) must(rulesEqual(simRules().prices, FS.CONST.TRADE_PRICE) && simRules().tradePack === FS.CONST.TRADE_PACK, 'ffInfo.rules.prices / tradePack stimmen nicht mit FurtSim.CONST überein');
+          // (b) walls: the phone gets the sim's own board (with a Torhaus, a Wachturm, huts and a wall piece), draws a line in front of the keep gate and calls pieces good and cells red
+          const siteI = LORDS[me].site; sh2.dev.stock(me, { holz: 900, stein: 900, korn: 200, gold: 0 });
+          const put = (kind, len) => { const sp = FW.suggest(world, kind, siteI, { L: 0, occ: sh2.occ, len: len || 1 }); if (!sp) return null; return sh2.dev.place(me, kind, sp.i, sp.j, sp.rot, len || 1); };
+          const placed = [put('torhaus'), put('wachturm'), put('huette'), put('mauer', 3), put('hof')].filter((r) => r && r.ok); must(placed.length >= 3, 'der Sim stellt keine Hindernisse hin (' + placed.length + ')');
+          const rows = sh2.state.buildings.map((b) => [b.id, b.lord, b.kind, b.i, b.j, b.rot, r2(b.build), r2(b.hp), r2(b.fire), b.ruined ? 1 : 0, b.noWood ? 1 : 0, b.workers, b.paused ? 1 : b.full ? 2 : 0, b.len || 1, b.garrison || 0]);
+          phase2Reset(); toPhone({ t: 'ffBoard', b: rows, banners: [] }); m = F.map; m.view('mine', true); click(w, 'ffCard-mauer');
+          const gk = typeof FW.keepGate === 'function' ? FW.keepGate(world, siteI) : -1;   // (a world.js without keepGate: the line goes by the keep's centre instead)
+          const kc = keepOf(siteI), gi = gk >= 0 ? gk % FW.GW : Math.round(kc.x + 72), gj = gk >= 0 ? (gk - (gk % FW.GW)) / FW.GW : Math.round(kc.y + 45 + 4);
+          let used = null;
+          for (const dy of [0, 1, 2, 3, -1]) for (const sg of [1, -1]) {
+            if (used) break;
+            const a = { i: gi - 9, j: gj + dy }, b = { i: gi + 9, j: gj + dy + 6 * sg };
+            if (a.i < 0 || b.i >= FW.GW || a.j < 0 || b.j < 0 || b.j >= FW.GH) continue;
+            dragCells(w, [a, { i: b.i, j: a.j }, b], true); const wl = m.getWall();
+            if (wl && wl.okCells >= 6 && wl.badRuns >= 1) used = wl; else click(w, 'ffCard-mauer');
+          }
+          must(used, 'keine Linie vor dem Burgtor mit guten und roten Feldern');
+          // red ⇒ the sim refuses, too (cell by cell, before anything is built)
+          let nBad = 0; for (const pc of used.pieces.filter((p) => !p.ok)) for (let t = 0; t < pc.len; t++) { const ci = pc.i + (pc.rot ? 0 : t), cj = pc.j + (pc.rot ? t : 0); nBad++; must(!sh2.build(me, 'mauer', ci, cj, 0, 1).ok, 'die Karte malt ' + ci + ',' + cj + ' rot, der Sim baut dort eine Mauer'); }
+          // green ⇒ the sim builds every piece, in order, without a reason
+          const rb = sh2.buildWall(me, 'mauer', used.send); must(rb.ok && rb.placed === used.send.length && !rb.reason, 'der Sim baut nicht alle ' + used.send.length + ' grünen Stücke: ' + JSON.stringify(rb));
+          extra += ' · Sim-Gegenprobe: ' + scen.length + ' Handelsfälle, ' + used.send.length + ' Stücke grün, ' + nBad + ' Felder rot';
+          click(w, 'ffNo'); phase2Reset();
+        }
+      }
+      res.className = 'ok'; res.textContent = 'AUTOTEST OK'; const sub = document.createElement('div'); sub.style.cssText = 'font:600 12px system-ui;color:#9fd8aa'; sub.textContent = 'Schritte 1–30' + extra; res.appendChild(sub);
       console.log('AUTOTEST OK' + extra); document.title = 'AUTOTEST OK';
     } catch (e) {
       res.className = 'fail'; res.textContent = 'AUTOTEST FAIL – Schritt ' + step + ': ' + e.message; console.log('AUTOTEST FAIL – Schritt ' + step + ': ' + e.message); document.title = 'AUTOTEST FAIL';

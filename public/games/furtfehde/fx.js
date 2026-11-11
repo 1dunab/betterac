@@ -11,6 +11,8 @@
 // What it draws, by source:
 //   events   shot (arrows on arcs) clash hit death ignite fireOut cropBurnt bucket ruined build rebuild buildDone chop harvest sow order
 //            plunder protEnd crossingOpen pactOn pactOff crown attack (bird flocks flush from fights)
+//            Phase 2: hit on a wall piece or the Torhaus (stone chips and dust, splinters on a palisade) · ram (a dust burst and a ring where the log lands; the piece's shake is the view's)
+//            breach (the rubble cloud of a fallen piece; its `ruined` stays quiet) · plunder with loot.gold (a second fountain of coins); a burning palisade uses the fire fx at a smaller scale
 //   state    burning buildings (flames, smoke, embers, glow; replaces the view's stand-in), smouldering ruins, construction dust and chips,
 //            chimney smoke, damage smoke (a badly damaged keep also crumbles: grey dust and falling stone chips; orange is for real fire only), wading units
 //            (splashes, foam, ripples), protection domes (lords[].prot), Zorn embers (lords[].zorn),
@@ -38,7 +40,7 @@
 
   // ---------------------------------------------------------------- palette (linear rgb, values above 1 glow when additive)
   const K = { FLAME_HOT: 0, FLAME: 1, FLAME_END: 2, EMBER: 3, SMOKE_D: 4, SMOKE_M: 5, SMOKE_L: 6, WHITE: 7, WATER: 8, WATER_HI: 9, SPARK: 10, DUST: 11,
-    WOOD: 12, WOOD_L: 13, LEAF: 14, GOLD: 15, GOLD_S: 16, STEAM: 17, SOOT: 18, GRAIN: 19, SOIL: 20, FOAM: 21, ALERT: 22, GLITTER: 23, STEEL: 24, SILVER: 25, DOMEG: 26, STONE: 27, STONE_L: 28, LORD: 32 };
+    WOOD: 12, WOOD_L: 13, LEAF: 14, GOLD: 15, GOLD_S: 16, STEAM: 17, SOOT: 18, GRAIN: 19, SOIL: 20, FOAM: 21, ALERT: 22, GLITTER: 23, STEEL: 24, SILVER: 25, DOMEG: 26, STONE: 27, STONE_L: 28, STONE_D: 29, LORD: 32 };
   const PAL = new Float32Array(40 * 3);
   [
     [2.6, 0.95, 0.07], [2.6, 0.24, 0.012], [0.85, 0.025, 0.0], [3.0, 0.8, 0.1],         // 0 flame hot, 1 flame, 2 flame end, 3 ember (ACES + sRGB: orange needs little green)
@@ -48,7 +50,7 @@
     [0.9, 0.62, 0.08], [0.92, 0.94, 0.97], [0.05, 0.045, 0.04], [0.85, 0.65, 0.2],   // 16 gold soft, 17 steam, 18 soot, 19 grain
     [0.26, 0.17, 0.10], [0.95, 0.97, 1.0], [2.4, 0.1, 0.06], [2.2, 1.9, 1.2],         // 20 soil, 21 foam, 22 alert red, 23 glitter
     [0.75, 0.78, 0.82], [0.8, 0.88, 0.95], [1.0, 0.86, 0.5],                         // 24 steel, 25 silver, 26 dome gold
-    [0.4, 0.39, 0.38], [0.6, 0.58, 0.55]                                             // 27 stone chip, 28 stone chip light (neutral greys: a crumbling wall is never orange)
+    [0.4, 0.39, 0.38], [0.6, 0.58, 0.55], [0.17, 0.165, 0.16]                        // 27 stone chip, 28 stone chip light, 29 stone chip dark (neutral greys: a crumbling wall is never orange; the dark one is the wall's own tone)
   ].forEach((c, i) => { PAL[i * 3] = c[0]; PAL[i * 3 + 1] = c[1]; PAL[i * 3 + 2] = c[2]; });
 
   const SOFTK = new Uint8Array(40); [K.SMOKE_D, K.SMOKE_M, K.SMOKE_L, K.STEAM, K.DUST, K.SOOT, K.FOAM, K.SOIL, K.GRAIN].forEach((k) => { SOFTK[k] = 1; });
@@ -269,7 +271,8 @@
 
   // chimney anchors exist on these kinds (art.js); a thin smoke thread rises while they stand finished
   const CHIMNEY = { huette: 1.0, hof: 0.9, holzfaeller: 0.7, kaserne: 1.2 };
-  const STONE = { kaserne: 1, wachturm: 1, brunnen: 1, bergfried: 1 };
+  const STONE = { kaserne: 1, wachturm: 1, brunnen: 1, bergfried: 1, mauer: 1, torhaus: 1 };   // stone buildings: damaged ones smoke grey
+  const WALL = { palisade: 1, mauer: 1 }, WALLISH = { palisade: 1, mauer: 1, torhaus: 1 };     // wall lines (1 × len cells) / and the gatehouse: what a ram breaks
 
   // ---------------------------------------------------------------- the fx class
   class FurtFx {
@@ -392,12 +395,13 @@
     geom(b, o) {
       const obj = b.kind === 'bergfried' ? this.view.keepObj(b.lord) : this.view.buildingObj(b.id); if (!obj) return null;
       const g = obj.group; o.cx = g.position.x; o.cz = g.position.z; o.gy = g.position.y; o.th = g.rotation.y; o.obj = obj;
-      let ki = this.kindH.get(b.kind);
-      if (!ki) {      // per kind, once: model-local footprint and the height of the finished model
-        const fp = b.kind === 'bergfried' ? [6, 6] : FW().footprintOf(b.kind, 0);
+      const wl = WALL[b.kind] ? Math.max(1, b.len | 0) : 0, kh = wl ? b.kind + wl : b.kind;   // a wall piece is 1 × len cells: one entry per length
+      let ki = this.kindH.get(kh);
+      if (!ki) {      // per kind (and length), once: model-local footprint and the height of the finished model
+        const fp = b.kind === 'bergfried' ? [6, 6] : FW().footprintOf(b.kind, 0, wl || undefined);
         ki = { lw: fp[0], ld: fp[1], h: b.kind === 'bergfried' ? 9 : 2.4 };
         const m = obj.mesh, gg = m && m.geometry; if (gg) { if (!gg.boundingBox) gg.computeBoundingBox(); if (gg.boundingBox) ki.h = Math.max(1.2, gg.boundingBox.max.y); }
-        this.kindH.set(b.kind, ki);
+        this.kindH.set(kh, ki);
       }
       o.lw = ki.lw; o.ld = ki.ld; o.h = ki.h; return o;
     }
@@ -459,7 +463,9 @@
       switch (ev.t) {
         case 'shot': if (this.evBudget > 0) { this.evBudget--; this.onShot(ev); } break;
         case 'clash': if (this.evBudget > 0) { this.evBudget--; this.onClash(ev.x, ev.y); } break;
-        case 'hit': if (this.evBudget > 0) { this.evBudget--; this.onHit(ev.x, ev.y); } break;
+        case 'hit': if (this.evBudget > 0) { this.evBudget--; this.onHitEv(ev, state); } break;
+        case 'ram': this.onRam(ev, state); break;
+        case 'breach': this.onBreach(ev, state); break;
         case 'death': this.onDeath(ev); break;
         case 'ignite': this.onIgnite(ev, state); break;
         case 'fireOut': this.onFireOut(ev, state); break;
@@ -514,6 +520,49 @@
       const h = this.wy(x, y) + 0.8;
       this.sparks(x, h, y, 4, 4, K.SPARK, 0.3, 0.26, 9); this.glow(x, h, y, 1.1, 0.7, K.WHITE, 0.07);
     }
+    // a hit: on a wall piece or the Torhaus (a building id; unit ids never collide with them) it is stone chips and a puff of dust (splinters on a palisade), else the usual sparks
+    onHitEv(ev, state) {
+      const b = this.findB(state, ev.id);
+      if (!b || !WALLISH[b.kind]) { this.onHit(ev.x, ev.y); return; }
+      const x = ev.x, y = ev.y, wood = b.kind === 'palisade', h = this.wy(x, y) + (wood ? 1.1 : 1.5);
+      this.chips(x, h, y, wood ? 6 : 8, 3.6, wood ? K.WOOD : K.STONE_D, wood ? K.WOOD_L : K.STONE, 0.29);
+      this.puff(x, h - 0.4, y, 3, 0.45, 1.1, 0.8, 2.4, 1.1, K.DUST, K.DUST, 0.5, 0.7, 0.4);
+      if (!wood) this.sparks(x, h, y, 2, 3, K.SPARK, 0.18, 0.2, 9);
+    }
+    // a blow of the Rammbock: where the log lands the ground bursts (a fan of dust and a ring) and chips fly off the struck face. The picture of the swing and the shake of the
+    // piece belong to the view (it locks the swing to this very event); the burst waits the few frames the interpolated picture needs to catch up with the sim
+    onRam(ev, state) {
+      const x = ev.x, y = ev.y, b = this.findB(state, ev.id), wood = !!b && b.kind === 'palisade';
+      this.later(60, () => {
+        const h = this.wy(x, y);
+        this.puff(x, h + 0.35, y, 9, 1.1, 3.0, 1.2, 3.6, 1.5, K.DUST, K.DUST, 0.6, 0.9, 0.5);
+        this.ring(x, h + 0.08, y, 0.4, 3.2, 0.75, K.DUST, 0.75);
+        this.chips(x, h + 1.3, y, 9, 4.6, wood ? K.WOOD : K.STONE_D, wood ? K.WOOD_L : K.STONE, 0.34);
+        this.glow(x, h + 1.2, y, 1.6, 0.35, K.WHITE, 0.06);
+        this.scatter(x, y, 14);
+      });
+    }
+    // a wall piece or the Torhaus fell (the sim also sends `ruined` for it, which stays quiet here): a rubble cloud that rolls out and rises, grey (brown for a palisade) smoke above
+    // it, chips, tumbling blocks or planks and a ring of dust
+    onBreach(ev, state) {
+      const b = this.findB(state, ev.id), o = b && this.geom(b, this.G); if (!o) return;
+      const kind = ev.kind || b.kind, wood = kind === 'palisade', gate = kind === 'torhaus', len = Math.max(1, b.len | 0), size = gate ? 3 : Math.max(1.4, len * 0.75 + 0.8);
+      const cx = o.cx, cz = o.cz, gy = o.gy;
+      this.puff(cx, gy + 0.6, cz, 8 + size * 4, size * 0.9, 3.4, 1.3, 3.2 + size * 1.2, 2.6, K.DUST, K.SMOKE_L, 0.6, 1.6, 0.5);
+      this.puff(cx, gy + 1.4, cz, 5 + size * 2, size * 0.6, 1.6, 1.4, 3 + size * 0.8, 3.4, wood ? K.SMOKE_D : K.SMOKE_L, K.SMOKE_M, 0.45, 2.8, 0.9);
+      if (wood) { this.chips(cx, gy + 1.2, cz, 16, 5, K.WOOD, K.WOOD_L, 0.36); this.sparks(cx, gy + 1.0, cz, 8, 5, K.WOOD_L, 1.0, 0.34, 12); }
+      else this.chips(cx, gy + 1.6, cz, 18 + size * 2, 5.5, K.STONE_D, K.STONE, 0.4);
+      const nb = Math.min(this.bits.length >> 1, wood ? 6 : gate ? 10 : 7);
+      for (let i = 0; i < nb; i++) {
+        const t = this.bit(1), a = rnd() * TAU, s = rr(2, 5.5);
+        t.life = rr(1.2, 2.0); t.x = cx + rr(-1, 1) * Math.max(1, size * 0.5); t.y = gy + rr(1.2, 2.6); t.z = cz + rr(-0.8, 0.8); t.vx = Math.cos(a) * s; t.vy = rr(2.5, 6); t.vz = Math.sin(a) * s;
+        t.yaw = rnd() * TAU; t.spin = rr(-8, 8); t.gy = gy;
+        if (wood) { t.len = rr(0.8, 1.5); t.wid = 0.16; t.r = 0.42; t.g = 0.27; t.b = 0.14; }
+        else { const c = rr(0.09, 0.17); t.len = rr(0.35, 0.7); t.wid = 0.22; t.r = c * 1.04; t.g = c; t.b = c * 0.92; }
+      }
+      this.ring(cx, gy + 0.1, cz, 0.8, size * 1.8 + 2, 1.1, K.DUST, 0.7);
+      this.scatter(cx, cz, 18);
+    }
     onDeath(ev) {
       const x = ev.x, y = ev.y, h = this.wy(x, y), big = ev.kind === 'ritter' ? 1.5 : ev.kind === 'bauer' ? 0.75 : 1.0, l = ev.lord == null ? 0 : ev.lord, ci = K.LORD + (l & 3);
       this.puff(x, h + 0.3, y, 5, 0.45 * big, 1.1, 0.8 * big, 2.5 * big, 0.8, K.STEAM, K.SMOKE_L, 0.7, 0.9, 0.3);
@@ -553,7 +602,9 @@
       this.later(tau * 1000, () => { this.puff(cx, cy, cz, 7, 0.9, 1.6, 1.2, 3.6, 1.4, K.STEAM, K.STEAM, 0.55, 2.0, 1.0); this.sparks(cx, cy, cz, 8, 3.5, K.WATER_HI, 0.6, 0.28, 8); });
     }
     onRuined(ev, state) {
-      const b = this.findB(state, ev.id), o = b && this.geom(b, this.G); if (!o) return;
+      const b = this.findB(state, ev.id);
+      if (b && WALLISH[b.kind]) return;      // a wall piece or the Torhaus: the `breach` that comes with it does the rubble (stone is not brown planks)
+      const o = b && this.geom(b, this.G); if (!o) return;
       const area = o.lw * o.ld, bits = Math.min(this.bits.length >> 1, 8);
       this.puff(o.cx, o.gy + 0.8, o.cz, 10 + area * 1.6, Math.max(o.lw, o.ld) * 0.4, 4.5, 2.2, 7.5, 3.0, K.DUST, K.SMOKE_L, 0.8, 2.4, 0.4);
       this.puff(o.cx, o.gy + o.h * 0.6, o.cz, 8, o.lw * 0.3, 1.8, 1.6, 5.5, 3.6, K.SMOKE_D, K.SMOKE_M, 0.75, 3.2, 1.0);
@@ -628,10 +679,22 @@
       this.ring(ax, ay + 0.12, az, 1, 11, 1.4, K.GOLD_S, 0.9); this.later(260, () => this.ring(ax, ay + 0.12, az, 1, 9, 1.2, K.WHITE, 0.7));
       this.ring(ax, ay + 0.12, az, 1, 13, 1.7, K.ALERT, 0.55);
       this.scatter(ax, az, 30);
+      // Phase 2: gold is part of the loot: a second, brighter fountain of coins (more of them the more gold), a golden flash and a few extra coins on their way to the attacker
+      const gold = ev.loot && ev.loot.gold > 0 ? ev.loot.gold : 0;
+      if (gold > 0) {
+        const n = this.cnt(Math.min(44, 14 + gold * 0.7));
+        for (let i = 0; i < n; i++) {
+          const a = rnd() * TAU, s = rr(1.5, 6.5), x = ax + Math.cos(a) * 1.5, y = ay + 6.5, z = az + Math.sin(a) * 1.5, vx = Math.cos(a) * s, vy = rr(10, 17), vz = Math.sin(a) * s, life = rr(1.4, 2.3);
+          this.A.spawn(x, y, z, vx, vy, vz, life, rr(0.6, 0.9), 0.2, K.GOLD, 1, K.GLITTER, 0, 0.15, 16, 0);
+          if (i % 2 === 0) this.S.spawn(x, y, z, vx, vy, vz, life, rr(0.6, 0.85), 0.45, K.GOLD_S, 1, K.GOLD_S, 0.9, 0.15, 16, 0);
+        }
+        this.glow(ax, ay + 7, az, 10, 0.7, K.GOLD, 0.5);
+        this.ring(ax, ay + 0.14, az, 1, 8, 1.2, K.GOLD, 0.8);
+      }
       // the loot flies to the attacker's keep
       const Bp = att >= 0 ? this.keepPos(att, this.v2, 0) : null;
       if (Bp) {
-        const bx = Bp.x, by = Bp.y, bz = Bp.z, d = Math.hypot(bx - ax, bz - az), n = Math.min(this.bits.length >> 1, 22);
+        const bx = Bp.x, by = Bp.y, bz = Bp.z, d = Math.hypot(bx - ax, bz - az), n = Math.min(this.bits.length >> 1, 22 + (gold > 0 ? Math.min(14, 4 + (gold >> 2)) : 0));
         for (let i = 0; i < n; i++) {
           const b = this.bit(3); b.life = rr(1.5, 2.1) + d * 0.004; b.t0 = this.t + i * 0.055; b.sx = ax + rr(-2, 2); b.sy = ay + 6; b.sz = az + rr(-2, 2); b.ex = bx + rr(-1.5, 1.5); b.ey = by + 6; b.ez = bz + rr(-1.5, 1.5);
           b.H = 10 + d * 0.22 + rr(-2, 3);
@@ -766,28 +829,30 @@
       if (++this.sinceClean > 90) { this.sinceClean = 0; for (const [id, r] of this.brecs) if (r.seen < this.frame - 60) this.brecs.delete(id); }
     }
     fireFx(b, o, fire, dt) {
-      const f = Math.min(1, fire), dn = this.dn, S = this.S, A = this.A, v1 = this.v1, hof = b.kind === 'hof', top = o.h;
+      // a burning palisade (Phase 2) is a thin line: fewer and smaller flames than a house, the more the longer the piece (wk: emission, ws: size) — the particle pools stay what they were
+      const f = Math.min(1, fire), dn = this.dn, S = this.S, A = this.A, v1 = this.v1, hof = b.kind === 'hof', top = o.h, pal = b.kind === 'palisade', wk = pal ? 0.25 + 0.12 * Math.max(1, b.len | 0) : 1, ws = pal ? 0.62 : 1;
       const fl = 0.78 + 0.22 * Math.sin(this.t * 17 + b.id * 3) * Math.sin(this.t * 11.3 + b.id);
       // flame bodies (alpha, so they read on a bright day) + hot additive cores
-      for (let n = this.emit((14 + 80 * f) * dn, dt); n > 0; n--) {
+      for (let n = this.emit((14 + 80 * f) * dn * wk, dt); n > 0; n--) {
         let lx, lz, ly, sz;
         if (hof && rnd() < 0.62) { lx = rr(-o.lw * 0.46, o.lw * 0.46); lz = rr(-o.ld * 0.46, o.ld * 0.46); ly = rr(0.05, 0.4); sz = rr(0.9, 1.6) * (0.6 + 0.6 * f); }
         else if (hof) { lx = rr(-2.4, -0.6); lz = rr(-1.9, -0.1); ly = top * rr(0.4, 1.0); sz = (1.5 + 1.3 * f) * rr(0.7, 1.2); }
         else { lx = rr(-o.lw * 0.32, o.lw * 0.32); lz = rr(-o.ld * 0.32, o.ld * 0.32); ly = top * rr(0.35, 1.05); sz = (1.5 + 1.7 * f) * rr(0.7, 1.2); }
+        sz *= ws;
         this.toW(o, lx, ly, lz, v1);
         const life = rr(0.55, 1.0) * (0.75 + 0.5 * f);
         S.spawn(v1.x, v1.y, v1.z, rr(-0.35, 0.35), rr(2.2, 4.0) + f * 1.6, rr(-0.35, 0.35), life, sz, 0.3, K.FLAME, 1.0, K.FLAME_END, 0.0, 0.4, -1.4, 0.3);
         if (rnd() < 0.5) A.spawn(v1.x, v1.y - 0.1, v1.z, rr(-0.3, 0.3), rr(1.8, 3.4), rr(-0.3, 0.3), life * 0.7, sz * 0.55, 0.15, K.FLAME_HOT, 0.6, K.FLAME, 0, 0.4, -1.4, 0.3);
       }
-      for (let n = this.emit((2 + 18 * f) * dn, dt); n > 0; n--) {      // embers
+      for (let n = this.emit((2 + 18 * f) * dn * wk, dt); n > 0; n--) {      // embers
         this.toW(o, rr(-o.lw * 0.35, o.lw * 0.35), top * rr(0.7, 1.1), rr(-o.ld * 0.35, o.ld * 0.35), v1);
         A.spawn(v1.x, v1.y, v1.z, rr(-1, 1), rr(2.5, 5.5), rr(-1, 1), rr(1.2, 2.6), 0.26, 0.08, K.EMBER, 1, K.FLAME_END, 0, 0.1, -0.5, 1.8);
       }
-      for (let n = this.emit((3.2 + 13 * f) * dn, dt); n > 0; n--) {      // the smoke column, readable from the far camera
+      for (let n = this.emit((3.2 + 13 * f) * dn * wk, dt); n > 0; n--) {      // the smoke column, readable from the far camera
         this.toW(o, rr(-o.lw * 0.28, o.lw * 0.28), top * 1.05, rr(-o.ld * 0.28, o.ld * 0.28), v1);
-        S.spawn(v1.x, v1.y, v1.z, rr(-0.3, 0.3), rr(2.4, 3.6) + f * 1.0, rr(-0.3, 0.3), rr(3.4, 5.2), 1.4 + 0.8 * f, 4.6 + 2.6 * f, K.SMOKE_D, 0.78, K.SMOKE_M, 0, 0.1, -0.2, 1.1);
+        S.spawn(v1.x, v1.y, v1.z, rr(-0.3, 0.3), rr(2.4, 3.6) + f * 1.0, rr(-0.3, 0.3), rr(3.4, 5.2), (1.4 + 0.8 * f) * ws, (4.6 + 2.6 * f) * ws, K.SMOKE_D, 0.78, K.SMOKE_M, 0, 0.1, -0.2, 1.1);
       }
-      this.glow(o.cx, o.gy + top * 0.7, o.cz, (4 + 5 * f) * fl, (0.035 + 0.05 * f) * (1 + 4 * this.night), K.FLAME, 0.07);
+      this.glow(o.cx, o.gy + top * 0.7, o.cz, (4 + 5 * f) * fl * ws, (0.035 + 0.05 * f) * (1 + 4 * this.night) * wk, K.FLAME, 0.07);
     }
 
     // ----- units: wading splashes and ripples, fight dust ------------------------------------------------------------

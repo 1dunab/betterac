@@ -1,5 +1,7 @@
 // ===== Furt & Fehde world: the river valley "Flusskreuz", catalogs, grid helpers (see docs/FURTFEHDE.md) =====
 // Pure data + math, no DOM, no unseeded randomness, no clock: runs in Node (module.exports) and in the browser (global FurtWorld).
+// Phase 2 additions (all additive): walls with a length (footprintOf(kind, rot, len), canPlace { len }), the Torhaus lane (laneOf), the keep gate (keepGate), isWall/slotsOf/CODE,
+// suggest { len } and field(…, block, extra) with per-cell extra costs.
 (function (root) {
   // ---- grid and flood rule ----
   const GW = 144, GH = 90, VRES = 2, BORDER = 12, HX = 337, HY = 229, FX = 168, FY = 114;
@@ -46,10 +48,29 @@
     wachturm:     { name: 'Wachturm',     icon: '🗼', size: [2, 2], mat: 'stein', rule: '',
                     draft: { cost: { holz: 4, stein: 12 }, buildS: 18, hp: 160, arrows: true } },
     brunnen:      { name: 'Brunnen',      icon: '🪣', size: [1, 1], mat: 'stein', rule: 'Löschradius 12',
-                    draft: { cost: { stein: 6 }, buildS: 8, hp: 80, bucketR: 12 } }
+                    draft: { cost: { stein: 6 }, buildS: 8, hp: 80, bucketR: 12 } },
+    // ---- Phase 2 (appended: the building codes 1 + index of the key stay stable) ----
+    // Walls are lines: `size` is one cell, the real footprint is 1 × len (len 1..maxLen) — rot 0 runs len cells along +i, rot 1 along +j.
+    // `slots` = archers of the Wehrgang (the Mauer has `slots` per cell); the sim's CONST.SLOTS is the rule, this is the same number for phone texts.
+    palisade:     { name: 'Palisade',     icon: '🪵', size: [1, 1], mat: 'holz',  rule: 'Linie aus 1–4 Pfählen, brennt', wall: true, maxLen: 4,
+                    draft: { cost: { holz: 1 }, buildS: 2, hp: 150, perCell: true } },
+    mauer:        { name: 'Mauer',        icon: '🧱', size: [1, 1], mat: 'stein', rule: 'Linie aus 1–4 Steinen mit Wehrgang', wall: true, maxLen: 4, slots: 1,
+                    draft: { cost: { stein: 2 }, buildS: 4, hp: 450, perCell: true } },
+    torhaus:      { name: 'Torhaus',      icon: '🏯', size: [3, 2], mat: 'stein', rule: 'Gasse in der Mitte offen für Eigene und Paktpartner', slots: 4,
+                    draft: { cost: { holz: 4, stein: 12 }, buildS: 20, hp: 1400 } },
+    markt:        { name: 'Markt',        icon: '⚖️', size: [4, 3], mat: 'holz',  rule: '',
+                    draft: { cost: { holz: 10 }, buildS: 14, hp: 300 } },
+    soeldnerlager:{ name: 'Söldnerlager', icon: '⛺', size: [5, 4], mat: 'holz',  rule: '',
+                    draft: { cost: { holz: 12 }, buildS: 16, hp: 350 } }
   };
+  BUILDINGS.wachturm.slots = 3;
   const BKEYS = Object.keys(BUILDINGS);
+  const CODE = {};   // occupancy code of a kind: 1 + its index in BKEYS (bergfried = 1)
+  BKEYS.forEach((k, n) => { CODE[k] = n + 1; });
   const WOODEN = BKEYS.filter(k => BUILDINGS[k].mat === 'holz');
+  const isWall = (kind) => !!(BUILDINGS[kind] && BUILDINGS[kind].wall);
+  // archer slots of a building (0 = none): a Mauer has `slots` per cell
+  const slotsOf = (kind, len) => { const B = BUILDINGS[kind]; return !B || !B.slots ? 0 : B.wall ? B.slots * (len > 0 ? len | 0 : 1) : B.slots; };
 
   const UNITS = {
     bauer: { name: 'Bauer',        icon: '🧑‍🌾', height: 1.0,  role: 'Arbeiter und Träger (Korn, Holz, Stein, Eimer)',
@@ -61,7 +82,12 @@
     ritter:{ name: 'Ritter',       icon: '🐎', height: 1.8,  role: 'schnell und stark, schlägt Bogenschützen',
              draft: { cost: { korn: 2, stein: 2 }, hp: 90, dmg: 9, speed: 1.9, beats: 'bogen' } },
     fackel:{ name: 'Fackelträger', icon: '🔥', height: 1.05, role: 'schnell und zerbrechlich, zündet Felder und Holzbauten an',
-             draft: { cost: { korn: 1, holz: 1 }, hp: 18, dmg: 1, speed: 1.6, fire: true } }
+             draft: { cost: { korn: 1, holz: 1 }, hp: 18, dmg: 1, speed: 1.6, fire: true } },
+    // ---- Phase 2 (appended) ----
+    reiterschuetze: { name: 'Reiterschütze', icon: '🏇', height: 1.7, role: 'Söldner: schießt im Reiten und weicht Nahkämpfern aus',
+             draft: { cost: { gold: 6, korn: 2 }, hp: 70, dmg: 6, range: 8, speed: 4.4 } },
+    ramme: { name: 'Rammbock',      icon: '🪵', height: 1.6,  role: 'bricht Mauern und Tore, verletzt keine Leute',
+             draft: { cost: { holz: 10, gold: 4 }, hp: 400, dmg: 60, speed: 1.6 } }
   };
 
   // ---- seeded randomness (independent streams) ----
@@ -161,7 +187,9 @@
   }
   // travel time from every cell to the nearest target (cell indices); Infinity = unreachable. `block` (optional Uint8Array):
   // non-zero cells (building footprints) cannot be entered; a blocked target still seeds the field into its free neighbours.
-  function field(g, targets, L, out, block) {
+  // `extra` (optional Float32Array(N), values ≥ 0): a weighted field — entering cell k costs `extra[k]` on top of the walking time
+  // (the sim prices a breach of an enemy wall or gate this way). Without it the result is unchanged.
+  function field(g, targets, L, out, block, extra) {
     const { inv } = speedMap(g, L, block);
     const d = out && out.length === N ? out : new Float32Array(N);
     d.fill(Infinity); _hn = 0;
@@ -176,7 +204,7 @@
         const nk = nj * GW + ni, inn = inv[nk];
         if (inn === 0) continue;
         if (n >= 4 && (inv[j * GW + ni] === 0 || inv[nj * GW + i] === 0)) continue;   // no corner cutting
-        const nd = _popKey + DSTEP[n] * 0.5 * (ik + inn);
+        const nd = _popKey + DSTEP[n] * 0.5 * (ik + inn) + (extra ? extra[nk] : 0);
         if (nd < d[nk]) { d[nk] = nd; hpush(nd, nk); }
       }
     }
@@ -281,7 +309,46 @@
     }
     return m;
   }
-  const footprintOf = (kind, rot) => { const s = BUILDINGS[kind].size; return rot ? [s[1], s[0]] : [s[0], s[1]]; };
+  // [w, h] in cells. Walls are 1 × len: rot 0 = len cells along +i (x), rot 1 = len cells along +j (y); a missing or bad len counts as 1, a long one is cut to maxLen.
+  const footprintOf = (kind, rot, len) => {
+    const B = BUILDINGS[kind], s = B.size;
+    if (B.wall) { const n = len >= 1 ? Math.min(len | 0, B.maxLen) : 1; return rot ? [1, n] : [n, 1]; }
+    return rot ? [s[1], s[0]] : [s[0], s[1]];
+  };
+  // The Torhaus lane: rot 0 is a 3 × 2 block whose middle column runs north–south, rot 1 a 2 × 3 block whose middle row runs west–east.
+  // laneOf → the two lane cells and the two cells just outside its mouths (as [i, j] pairs), for a Torhaus whose top-left cell is (i, j).
+  function laneOf(i, j, rot) {
+    return rot
+      ? { cells: [[i, j + 1], [i + 1, j + 1]], ends: [[i - 1, j + 1], [i + 2, j + 1]] }
+      : { cells: [[i + 1, j], [i + 1, j + 1]], ends: [[i + 1, j - 1], [i + 1, j + 2]] };
+  }
+  // The keep gate cell of a site: the cell in front of the middle of the keep's south (sites 0, 1) or north (sites 2, 3) side — from the
+  // keep mask and owner only, so a decoded grid gives the same answer as the world.
+  const gateCache = new WeakMap();
+  function keepGate(g, site) {
+    let a = gateCache.get(g);
+    if (!a) {
+      a = [-1, -1, -1, -1];
+      const keep = keepMask(g), ki = [GW, GW, GW, GW], kj = [GH, GH, GH, GH];
+      for (let k = 0; k < N; k++) if (keep[k] && g.owner[k] >= 0 && g.owner[k] < 4) { const s = g.owner[k], i = k % GW, j = (k - i) / GW; if (i < ki[s]) ki[s] = i; if (j < kj[s]) kj[s] = j; }
+      for (let s = 0; s < 4; s++) if (ki[s] < GW) { const gj = s < 2 ? kj[s] + 6 : kj[s] - 1; if (gj >= 0 && gj < GH) a[s] = gj * GW + ki[s] + 3; }
+      gateCache.set(g, a);
+    }
+    return a[site] === undefined ? -1 : a[site];
+  }
+  // the bounding box [x0, y0, x1, y1] of the Torhaus (cells holding its code) that contains cell k
+  function torhausBox(occ, k) {
+    let x0 = k % GW, x1 = x0, y0 = (k - x0) / GW, y1 = y0;
+    for (let pass = 0; pass < 3; pass++) {
+      let grew = false;
+      for (let j = Math.max(0, y0 - 1); j <= Math.min(GH - 1, y1 + 1); j++) for (let i = Math.max(0, x0 - 1); i <= Math.min(GW - 1, x1 + 1); i++) {
+        if (occ[j * GW + i] !== CODE.torhaus || (i >= x0 && i <= x1 && j >= y0 && j <= y1)) continue;
+        if (i < x0) x0 = i; if (i > x1) x1 = i; if (j < y0) y0 = j; if (j > y1) y1 = j; grew = true;
+      }
+      if (!grew) break;
+    }
+    return [x0, y0, x1, y1];
+  }
   // the two requirement rules (Holzfäller needs forest nearby, Steinbruch must touch rock); null = fine
   function kindRule(g, kind, i, j, w, h) {
     if (kind === 'holzfaeller') {
@@ -307,32 +374,71 @@
     return null;
   }
   // (i, j) = top-left cell. Checks in the documented order: bounds, owner, terrain, wet, occupied, tight, forest, rock.
+  // `o.len` (walls only: 1..maxLen, default 1) is the wall length; any other len is 'bounds'.
+  // Gaps: every building keeps one free cell to every other. Phase 2 exceptions: a wall may touch walls, Torhaus and Wachturm, and a Torhaus or
+  // Wachturm may touch walls. But a wall never goes within one cell of a keep gate or of the mouth of a Torhaus lane, and a Torhaus needs both
+  // lane mouths inside the map ('bounds') on walkable ground ('terrain') with the cell around each of them free ('tight').
   function canPlace(g, kind, i, j, rot, o) {
     o = o || {};
     const B = BUILDINGS[kind], L = o.L || 0, occ = o.occ, lord = o.lord;
     if (!B || kind === 'bergfried') return { ok: false, reason: 'occupied' };   // keeps stand on their site already
-    const [w, h] = footprintOf(kind, rot);
+    let len = 1;
+    if (B.wall && o.len !== undefined && o.len !== null) len = o.len;
+    if (B.wall && !(len === (len | 0) && len >= 1 && len <= B.maxLen)) return { ok: false, reason: 'bounds' };
+    const [w, h] = footprintOf(kind, rot, len);
     if (i !== (i | 0) || j !== (j | 0) || i < 0 || j < 0 || i + w > GW || j + h > GH) return { ok: false, reason: 'bounds' };
+    const lane = kind === 'torhaus' ? laneOf(i, j, rot ? 1 : 0) : null;
+    if (lane) for (const [ei, ej] of lane.ends) if (ei < 0 || ej < 0 || ei >= GW || ej >= GH) return { ok: false, reason: 'bounds' };
     const keep = keepMask(g);
     const each = (fn) => { for (let dj = 0; dj < h; dj++) for (let di = 0; di < w; di++) if (fn((j + dj) * GW + i + di)) return true; return false; };
     if (each(k => g.owner[k] !== lord)) return { ok: false, reason: 'owner' };
     if (each(k => g.cls[k] !== cG && g.cls[k] !== cA)) return { ok: false, reason: 'terrain' };
+    if (lane && lane.ends.some(([ei, ej]) => WALK[g.cls[ej * GW + ei]] === 0)) return { ok: false, reason: 'terrain' };
     if (each(k => !dry(g, k, L))) return { ok: false, reason: 'wet' };
     const busy = (k) => keep[k] || (occ && occ[k]);
     if (each(busy)) return { ok: false, reason: 'occupied' };
+    const mix = B.wall || kind === 'torhaus' || kind === 'wachturm';
+    const exempt = (k) => {   // a ring cell this kind may touch
+      if (!mix || !occ || keep[k]) return false;
+      const c = occ[k];
+      return c === CODE.palisade || c === CODE.mauer || (B.wall && (c === CODE.torhaus || c === CODE.wachturm));
+    };
     for (let cj = Math.max(0, j - 1); cj <= Math.min(GH - 1, j + h); cj++)
-      for (let ci = Math.max(0, i - 1); ci <= Math.min(GW - 1, i + w); ci++)
-        if (busy(cj * GW + ci)) return { ok: false, reason: 'tight' };
+      for (let ci = Math.max(0, i - 1); ci <= Math.min(GW - 1, i + w); ci++) {
+        const k = cj * GW + ci;
+        if (busy(k) && !exempt(k)) return { ok: false, reason: 'tight' };
+      }
+    if (lane) {   // the approach to both lane mouths stays clear (the Torhaus's own cells do not count)
+      for (const [ei, ej] of lane.ends)
+        for (let cj = Math.max(0, ej - 1); cj <= Math.min(GH - 1, ej + 1); cj++)
+          for (let ci = Math.max(0, ei - 1); ci <= Math.min(GW - 1, ei + 1); ci++)
+            if (!(ci >= i && ci < i + w && cj >= j && cj < j + h) && busy(cj * GW + ci)) return { ok: false, reason: 'tight' };
+    }
+    if (B.wall) {
+      const gate = keepGate(g, lord);   // a wall keeps one free cell to the keep gate …
+      if (gate >= 0) { const gi = gate % GW, gj = (gate - gi) / GW; if (gi >= i - 1 && gi <= i + w && gj >= j - 1 && gj <= j + h) return { ok: false, reason: 'tight' }; }
+      if (occ) {   // … and to the mouth of every Torhaus lane
+        for (let cj = Math.max(0, j - 2); cj <= Math.min(GH - 1, j + h + 1); cj++) for (let ci = Math.max(0, i - 2); ci <= Math.min(GW - 1, i + w + 1); ci++) {
+          if (occ[cj * GW + ci] !== CODE.torhaus) continue;
+          const bx = torhausBox(occ, cj * GW + ci), bw = bx[2] - bx[0] + 1, bh = bx[3] - bx[1] + 1;
+          const ends = bw === 3 && bh === 2 ? [[bx[0] + 1, bx[1] - 1], [bx[0] + 1, bx[3] + 1]] : bw === 2 && bh === 3 ? [[bx[0] - 1, bx[1] + 1], [bx[2] + 1, bx[1] + 1]] : [];
+          for (const [ei, ej] of ends) if (ei >= i - 1 && ei <= i + w && ej >= j - 1 && ej <= j + h) return { ok: false, reason: 'tight' };
+        }
+      }
+    }
     const rule = kindRule(g, kind, i, j, w, h);
     return rule ? { ok: false, reason: rule } : { ok: true };
   }
 
   // Best spot for a building in the lord's quarter (shared by phones and bots). `occ` values may carry
   // 1 + index of the BUILDINGS key (any non-zero counts as occupied); the heuristics use that when present.
+  // Walls (`o.len`, default 1) and the Torhaus are looked for towards the nearest crossing and verified with canPlace, because their
+  // rules differ from the plain one-free-cell gap; nothing is suggested for a line of walls beyond a single piece (the phone draws lines).
   function suggest(g, kind, lord, o) {
     o = o || {};
     const B = BUILDINGS[kind], L = o.L || 0, occ = o.occ;
     if (!B || kind === 'bergfried') return null;
+    const wlen = B.wall ? (o.len >= 1 ? Math.min(o.len | 0, B.maxLen) : 1) : 1, verify = B.wall || kind === 'torhaus', cands = [];
     const keep = keepMask(g), cls = g.cls, owner = g.owner, W1 = GW + 1;
     const badP = new Int32Array(W1 * (GH + 1)), occP = new Int32Array(W1 * (GH + 1)), aueP = new Int32Array(W1 * (GH + 1));
     let kx = 0, ky = 0, kn = 0;
@@ -376,18 +482,20 @@
       const src = prod || (trees && rocks ? mid(trees, rocks) : trees || rocks);
       target = src ? mid(K, src) : K;
     } else if (kind === 'kaserne') target = [K[0] + 0.45 * (X[0] - K[0]), K[1] + 0.45 * (X[1] - K[1])];
-    else if (kind === 'wachturm') target = X;
+    else if (kind === 'soeldnerlager') target = [K[0] + 0.3 * (X[0] - K[0]), K[1] + 0.3 * (X[1] - K[1])];
+    else if (kind === 'wachturm' || kind === 'torhaus' || B.wall) target = X;
     const woody = (v) => v && BKEYS[v - 1] && (WOODEN.indexOf(BKEYS[v - 1]) >= 0) ? 1 : 0;
     let best = null, bestC = Infinity;
     if (i1 < 0) return null;
-    for (let rot = 0; rot < (B.size[0] === B.size[1] ? 1 : 2); rot++) {
-      const [w, h] = footprintOf(kind, rot);
+    for (let rot = 0; rot < (B.size[0] === B.size[1] && !B.wall ? 1 : 2); rot++) {
+      const [w, h] = footprintOf(kind, rot, wlen);
+      if (wlen === 1 && B.wall && rot === 1) break;   // a single cell has no direction
       for (let j = j0; j + h - 1 <= j1; j++) for (let i = i0; i + w - 1 <= i1; i++) {
         if (rect(badP, i, j, i + w, j + h) || rect(occP, Math.max(0, i - 1), Math.max(0, j - 1), Math.min(GW, i + w + 1), Math.min(GH, j + h + 1))) continue;
         if (kindRule(g, kind, i, j, w, h)) continue;
         const cx = i - 72 + w / 2, cy = j - 45 + h / 2, dk = Math.hypot(cx - kcx, cy - kcy);
         let c;
-        if (kind === 'huette' || kind === 'holzfaeller' || kind === 'steinbruch') c = dk;
+        if (kind === 'huette' || kind === 'holzfaeller' || kind === 'steinbruch' || kind === 'markt') c = dk;
         else if (kind === 'hof') c = dk - 30 * rect(aueP, i, j, i + w, j + h) / (w * h);
         else if (kind === 'brunnen') {
           let n = 0;
@@ -397,8 +505,14 @@
           }
           c = -n + 0.1 * dk;
         } else c = Math.hypot(cx - target[0], cy - target[1]) + 0.02 * dk;
-        if (c < bestC - 1e-9) { bestC = c; best = { i, j, rot }; }
+        if (verify) cands.push({ c, i, j, rot });
+        else if (c < bestC - 1e-9) { bestC = c; best = { i, j, rot }; }
       }
+    }
+    if (verify) {   // best first (ties keep the scan order), the first one canPlace accepts wins
+      cands.sort((a, b) => a.c - b.c);
+      for (const q of cands) if (canPlace(g, kind, q.i, q.j, q.rot, { lord, L, occ, len: wlen }).ok) return { i: q.i, j: q.j, rot: q.rot };
+      return null;
     }
     return best;
   }
@@ -1342,6 +1456,6 @@
 
   const api = { GW, GH, VRES, BORDER, HX, HY, FX, FY, FLOOD_Y, WADE_MAX, DRY_EPS, WADE_SPEED, CLASSES, CI, BUILDINGS, UNITS,
     make, surf, cellOf, cellXY, heightAt, walk, dry, canPlace, suggest, field, path, pathTime, encode, decode, mulberry32,
-    components, keepMask, footprintOf, PAIRS, SITE_NAMES, _gen: { phaseA, phaseB, phaseC, finishUnfair, hash32 } };
+    components, keepMask, footprintOf, isWall, slotsOf, laneOf, keepGate, CODE, PAIRS, SITE_NAMES, _gen: { phaseA, phaseB, phaseC, finishUnfair, hash32 } };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.FurtWorld = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Uruser42/betterac.git"
+    "url": "git+https://github.com/1dunab/betterac.git"
   },
   "main": "server.js",
   "scripts": {

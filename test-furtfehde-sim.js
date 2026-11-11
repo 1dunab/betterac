@@ -3,6 +3,10 @@
 // R5 (Pause), R6 (Burgbrunnen), R7 (Pfeile gegen Fackelträger), R8 (langsameres Springen des Feuers) und den Futterversuch (8 Höfe, 13–16 Leute).
 // Phase 1b, zweite Runde (Feedback 3): R10 (das Tor-Gebot gilt nur für Hunger-Ankünfte), R11 (ein volles Lager gibt seine Arbeiter frei, FULL_WAIT_S, buildings[].full),
 // R12 (TRAIN_PAR je fertiger Kaserne) und die Szene des Nutzers (popCap 88, 44 Leute, volle Lager, Belagerung am Bergfried: das Haus wächst und bildet aus).
+// Phase 2 (Mauern & Söldner): Kosten, Größen und Zahlen der neuen Gebäude und Einheiten, Mauern bauen (len, buildWall, Ruinen, Schutt), Torhaus-Gasse (Besitzer, Paktpartner, Fremde),
+// Durchbruch (Feld mit BREACH_COST, Rammbock, VS_WALL, Pfeile gegen Stein und Holz), Palisadenbrand, Markt und Gold (trade, Plünderung), Söldnerlager (Rekrutierung nach Haus, TRAIN_PAR je Haus),
+// Reiterschütze (Ausweichen, Schuss im Ritt), Rammbock (nur Gebäude, Pfeile × 0.25), Wehrgang (Besetzen, Reichweite, Rüstung, Abstieg, Sturz, Burgwache), Zustandsform, Zwischenspeicher der Sichten,
+// eine 4-Minuten-Belagerung (Determinismus, Invarianten) und die Leistung mit Mauern auf der Karte.
 const fs = require('fs');
 const W = require('./public/games/furtfehde/world.js');
 const Sim = require('./public/games/furtfehde/sim.js');
@@ -83,10 +87,18 @@ function stage(sim, l, kind, p, n) {
   eq(['huette', 'hof', 'kornspeicher', 'lager', 'holzfaeller'].map(b).join(' '), '4h0s/8s/120hp/0w 5h0s/10s/160hp/1w 6h0s/12s/200hp/0w 5h0s/10s/180hp/0w 3h0s/8s/120hp/1w', 'Gebäude 1');
   eq(['steinbruch', 'kaserne', 'wachturm', 'brunnen'].map(b).join(' '), '6h0s/12s/200hp/2w 8h8s/18s/500hp/0w 2h10s/16s/600hp/0w 0h4s/6s/250hp/0w', 'Gebäude 2');
   eq(C.BUILD.bergfried.hp, 3000, 'Bergfried 3000 HP');
-  const u = (k) => { const x = C.UNIT[k], c = x.cost || {}; return (c.korn || 0) + 'k' + (c.holz || 0) + 'h' + (c.stein || 0) + 's/' + (x.train || 0) + '/' + [x.hp, x.dmg, x.cd, x.range, x.speed, x.r].join(','); };
+  const u = (k) => { const x = C.UNIT[k], c = x.cost || {}; return (c.korn || 0) + 'k' + (c.holz || 0) + 'h' + (c.stein || 0) + 's' + (c.gold || 0) + 'g/' + (x.train || 0) + '/' + [x.hp, x.dmg, x.cd, x.range, x.speed, x.r].join(',') + (x.at ? '@' + x.at : ''); };
   eq(['bauer', 'speer', 'bogen', 'ritter', 'fackel'].map(u).join(' '),
-    '0k0h0s/0/25,2,1.5,1,2.4,0.3 2k2h0s/4/60,8,1,1.3,2.6,0.35 2k3h0s/4/40,6,1.4,9,2.6,0.35 4k0h3s/6/140,14,1.2,1.5,4.2,0.6 1k1h0s/3/30,0,0,1.2,4,0.3', 'Einheiten');
-  eq(JSON.stringify(C.VS) + JSON.stringify(C.VS_BUILDING), '{"speer":{"ritter":2},"bogen":{"fackel":1.5},"ritter":{"bogen":2}}{"speer":1,"ritter":0.6,"bogen":0.3}', 'Gegenspieler und Gebäudeschaden');
+    '0k0h0s0g/0/25,2,1.5,1,2.4,0.3 2k2h0s0g/4/60,8,1,1.3,2.6,0.35@kaserne 2k3h0s0g/4/40,6,1.4,9,2.6,0.35@kaserne 4k0h3s0g/6/140,14,1.2,1.5,4.2,0.6@kaserne 1k0h0s2g/2/30,0,0,1.2,4,0.3@soeldnerlager', 'Einheiten (Phase 2: der Fackelträger kostet 💰 2 🌾 1, bildet in 2 s im Söldnerlager aus)');
+  eq(['reiterschuetze', 'ramme'].map(u).join(' '), '2k0h0s6g/4/70,6,1.3,8,4.4,0.6@soeldnerlager 0k10h0s4g/10/400,60,2,1.6,1.6,0.9@kaserne', 'Phase-2-Einheiten: Reiterschütze und Rammbock');
+  eq(JSON.stringify(C.VS) + JSON.stringify(C.VS_BUILDING), '{"speer":{"ritter":2},"bogen":{"fackel":1.5},"ritter":{"bogen":2,"reiterschuetze":1.5},"reiterschuetze":{"speer":1.5,"fackel":1.5}}{"speer":1,"ritter":0.6,"bogen":0.3,"reiterschuetze":0.3,"ramme":1}', 'Gegenspieler und Gebäudeschaden');
+  eq(JSON.stringify(C.VS_WALL) + JSON.stringify(C.ARROW_WALL) + C.ARROW_RAM, '{"speer":0.4,"ritter":0.25,"ramme":1}{"stein":0,"holz":0.15}0.25', 'Phase 2: Schaden gegen Mauern, Pfeile gegen Stein und Holz, Pfeile gegen den Rammbock');
+  eq([C.TRADE_PACK, JSON.stringify(C.TRADE_PRICE)].join(' '), '5 {"sell":{"korn":1,"holz":1,"stein":2},"buy":{"korn":3,"holz":3,"stein":5}}', 'Phase 2: Handelspaket und Preise');
+  eq([C.BREACH_COST, JSON.stringify(C.BREACH_MUL), C.RUBBLE_SLOW].join(' '), '60 {"palisade":0.4,"mauer":1,"torhaus":1} 0.6', 'Phase 2: Breschenkosten und Schutt');
+  eq([JSON.stringify(C.SLOTS), C.GARRISON_RANGE, C.GARRISON_ARMOR, C.GARRISON_TOUCH, C.GARRISON_NEAR, C.GARRISON_FALL, C.RAM_R, C.KITE_R].join(' '), '{"mauer":1,"torhaus":4,"wachturm":3} 3 0.5 1 4 0.2 3 3', 'Phase 2: Wehrgang, Rammbock, Ausweichen');
+  eq([C.GARRISON_ENTER_R, C.GARRISON_WALK_R, C.GARRISON_S, C.GARRISON_DROP_R, C.GARRISON_RETRY_S, C.WALL_PIECES_MAX, C.SLOT_LOS_R, C.KITE_S].join(), '1.1,7,1,4,5,64,1.5,0.4', 'Phase 2: eigene Feineinstellungen (Besatzung, Linien, Reiter)');
+  const bb = (k) => { const x = C.BUILD[k], c = x.cost || {}; return (c.holz || 0) + 'h' + (c.stein || 0) + 's/' + x.buildS + 's/' + x.hp + 'hp' + (x.perCell ? '/je Zelle' : ''); };
+  eq(['palisade', 'mauer', 'torhaus', 'markt', 'soeldnerlager'].map(bb).join(' '), '1h0s/2s/150hp/je Zelle 0h2s/4s/450hp/je Zelle 4h12s/20s/1400hp 10h0s/14s/300hp 12h0s/16s/350hp', 'Phase-2-Gebäude: Kosten, Bauzeit, HP');
   eq([C.WADE_DEALT, C.WADE_TAKEN, C.ZORN_MUL, C.ZORN_S].join(), '0.7,1.25,1.25,60', 'Waten und Zorn');
   eq([C.SCAN_S, C.AGGRO_MELEE, C.AGGRO_BOGEN, C.LEASH, C.GUARD_R, C.GUARD_SELF_R, C.SLOT_GAP, C.SLOT_ROW, C.SNAP_R, C.SIEGE_R, C.TORCH_R, C.TORCH_DODGE_R].join(), '0.5,6,10,12,16,8,1.3,6,12,3,15,3', 'Heer');
   eq([C.KEEP.range, C.KEEP.dmg, C.KEEP.cd, C.TOWER.range, C.TOWER.dmg, C.TOWER.cd, C.FLIGHT_MIN, C.FLIGHT_MAX].join(), '12,6,2,12,7,1.5,0.35,0.7', 'Pfeile');
@@ -114,14 +126,15 @@ function stage(sim, l, kind, p, n) {
   ok(st.trees instanceof Float32Array && st.trees.length === w.trees.length && st.trees.every(v => v === 1), 'trees: Float32Array, alle Bäume 1'); eq(st.treeV, 0, 'treeV = 0');
   eq(st.lords.length, 4, '4 Häuser');
   const lf = (l) => Object.keys(l).join();
-  eq(lf(st.lords[0]), 'i,site,emblem,crown,ruhm,people,soldiers,prot,zorn,hunger', 'Haus-Felder');
-  eq(JSON.stringify(st.lords[2]), JSON.stringify({ i: 2, site: 2, emblem: 2, crown: false, ruhm: 0, people: 6, soldiers: 0, prot: 0, zorn: 0, hunger: false }), 'Haus 2 am Anfang');
+  eq(lf(st.lords[0]), 'i,site,emblem,crown,ruhm,people,soldiers,prot,zorn,hunger,gold', 'Haus-Felder (Phase 2: gold)');
+  eq(JSON.stringify(st.lords[2]), JSON.stringify({ i: 2, site: 2, emblem: 2, crown: false, ruhm: 0, people: 6, soldiers: 0, prot: 0, zorn: 0, hunger: false, gold: 0 }), 'Haus 2 am Anfang');
   eq(st.buildings.length, 4, 'vier Bergfriede');
-  eq(Object.keys(st.buildings[0]).join(), 'id,lord,kind,i,j,rot,build,hp,fire,burnt,ruined,growth,workers,paused,full', 'Gebäude-Felder');
+  eq(Object.keys(st.buildings[0]).join(), 'id,lord,kind,i,j,rot,build,hp,fire,burnt,ruined,growth,workers,paused,full,len,garrison', 'Gebäude-Felder (Phase 2: len, garrison)');
   st.buildings.forEach((b, i) => { eq(b.kind, 'bergfried', 'Burg ' + i); eq(b.i, w.sites[i].keep.i, 'Burg i'); eq(b.j, w.sites[i].keep.j, 'Burg j'); eq(b.hp, 1, 'Burg hp 1'); eq(b.build, 1, 'Burg fertig'); });
   eq(st.units.length, 24, '4 × 6 Bauern');
-  eq(Object.keys(st.units[0]).join(), 'id,lord,kind,x,y,px,py,h,ph,hp,anim,carry,n', 'Einheiten-Felder');
-  ok(st.units.every(u => u.kind === 'bauer' && u.n === -1 && u.carry === null && u.hp === 25), 'Starteinheiten: Bauern, n = −1, hp 25');
+  eq(Object.keys(st.units[0]).join(), 'id,lord,kind,x,y,px,py,h,ph,hp,anim,carry,n,on,slot', 'Einheiten-Felder (Phase 2: on, slot)');
+  ok(st.units.every(u => u.kind === 'bauer' && u.n === -1 && u.carry === null && u.hp === 25 && u.on === null && u.slot === -1), 'Starteinheiten: Bauern, n = −1, hp 25, nicht im Wehrgang');
+  ok(st.buildings.every(b => b.len === 1 && b.garrison === 0), 'Bergfriede: len 1, keine Besatzung');
   ok(new Set([...st.units.map(u => u.id), ...st.buildings.map(b => b.id)]).size === 28, 'Ids sind eindeutig');
   // every peasant stands within 4 of its own gate
   ok(st.units.every(u => dist(u, gateOf(sim, u.lord)) <= C.YARD_R + 1e-9), 'Bauern warten im Hof (≤ 4 vom Tor)');
@@ -130,7 +143,7 @@ function stage(sim, l, kind, p, n) {
   w.sites.forEach((s, i) => { const g = gateOf(sim, i); near(g.x, s.x + 0.5, 1e-9, 'Tor x ' + i); near(g.y, s.y + (i < 2 ? 3.5 : -3.5), 1e-9, 'Tor y ' + i); });
   const y = sim.youOf(1);
   eq(Object.keys(y).join(), 'stock,cap,pop,popCap,idle,hunger,queue,ruhm,crown,banners,pacts,food', 'youOf-Felder');
-  eq(JSON.stringify(y.stock) + JSON.stringify(y.cap) + y.pop + '/' + y.popCap + '/' + y.idle, '{"korn":20,"holz":25,"stein":0}{"korn":30,"holz":30,"stein":30}6/8/6', 'youOf am Anfang');
+  eq(JSON.stringify(y.stock) + JSON.stringify(y.cap) + y.pop + '/' + y.popCap + '/' + y.idle, '{"korn":20,"holz":25,"stein":0,"gold":0}{"korn":30,"holz":30,"stein":30}6/8/6', 'youOf am Anfang');
   eq(y.hunger, false, 'youOf.hunger'); eq(JSON.stringify(y.queue), '[]', 'youOf.queue'); eq(y.pacts.length, 3, 'youOf.pacts: die drei anderen Häuser'); ok(y.pacts.every(p => p.state === 'none' && p.until === 0), 'youOf.pacts: keine Pakte');
   eq(sim.youOf(7), null, 'youOf(unbekannt) = null');
   // 3 and 2 houses: the glue passes lords [{i, site}]
@@ -150,22 +163,26 @@ function stage(sim, l, kind, p, n) {
       () => sim.build(bad, 'huette', 5, 5, 0), () => sim.build(0, bad, 5, 5, 0), () => sim.build(0, 'huette', bad, 5, 0), () => sim.build(0, 'huette', 5, bad, 0), () => (bad === undefined || bad === null || bad === true ? { ok: false } : sim.build(0, 'huette', 5, 5, bad)),
       () => sim.cancel(bad, 1), () => sim.cancel(0, bad), () => sim.pause(bad, 1, true), () => sim.pause(0, bad, true), () => sim.pause(0, 1, bad), () => sim.recruit(bad, 'speer', 1), () => sim.recruit(0, bad, 1), () => sim.recruit(0, 'speer', bad),
       () => sim.banner(bad, 1, 0, 0), () => sim.banner(0, bad, 0, 0), () => sim.banner(0, 1, bad, 0), () => sim.banner(0, 1, 0, bad), () => sim.home(bad),
-      () => sim.pact(bad, 1, true), () => sim.pact(0, bad, true), () => sim.pact(0, 1, bad), () => sim.youOf(bad)
+      () => sim.pact(bad, 1, true), () => sim.pact(0, bad, true), () => sim.pact(0, 1, bad), () => sim.youOf(bad),
+      // Phase 2: walls (len), buildWall, trade
+      () => sim.build(0, 'mauer', 5, 5, 0, bad), () => sim.buildWall(bad, 'mauer', [[5, 5, 0, 1]]), () => sim.buildWall(0, bad, [[5, 5, 0, 1]]), () => sim.buildWall(0, 'mauer', bad), () => sim.buildWall(0, 'mauer', [[bad, bad, bad, bad]]), () => sim.buildWall(0, 'mauer', [bad]),
+      () => sim.trade(bad, 'korn', 'sell', 1), () => sim.trade(0, bad, 'sell', 1), () => sim.trade(0, 'korn', bad, 1), () => sim.trade(0, 'korn', 'sell', bad)
     ];
     for (const f of calls) {
       const r = noThrow(f, 'Eingabe ' + String(bad)), isYou = r === null || (r && r.stock);
       n++;
       if (r !== undefined && !isYou) ok(r && typeof r.ok === 'boolean', 'Antwort hat ok');
+      if (r && (r.placed !== undefined || r.n !== undefined)) ok(r.ok === false && (r.placed === 0 || r.n === 0 || r.reason === 'bounds'), 'schlechte Eingabe setzt nichts und handelt nichts' + JSON.stringify(r));
     }
   }
-  ok(n > 250, 'viele ungültige Aufrufe geprüft (' + n + ')');
+  ok(n > 380, 'viele ungültige Aufrufe geprüft (' + n + ')');
   const r1 = sim.build(9, 'huette', 5, 5, 0), r2 = sim.build(0, 'zelt', 5, 5, 0), r3 = sim.build(0, 'bergfried', 5, 5, 0), r4 = sim.build(0, 'huette', NaN, 5, 0);
   eq(r1.ok === false && r1.reason, 'lord', 'unbekanntes Haus'); eq(r2.reason, 'kind', 'unbekannte Art'); eq(r3.reason, 'kind', 'Bergfried ist nicht baubar'); eq(r4.reason, 'bounds', 'NaN-Koordinate');
   eq(sim.recruit(0, 'bauer', 1).reason, 'unit', 'Bauern kann man nicht ausheben'); eq(sim.recruit(0, 'speer', 7).reason, 'banner', 'Banner 7 gibt es nicht');
   eq(sim.banner(0, 0, 0, 0).reason, 'none', 'die Burgwache bekommt keine Befehle'); eq(sim.banner(0, 4, 0, 0).reason, 'none', 'Banner 4 gibt es nicht'); eq(sim.banner(5, 1, 0, 0).reason, 'lord', 'banner: unbekanntes Haus');
   eq(sim.pact(0, 0, true).reason, 'self', 'Pakt mit sich selbst'); eq(sim.pact(0, 9, true).reason, 'lord', 'Pakt mit Unbekanntem'); eq(sim.cancel(0, 12345).reason, 'none', 'cancel: unbekannte Id'); eq(sim.cancel(0, 1).reason, 'kind', 'der Bergfried lässt sich nicht abreißen');
   eq(sim.home(9).ok, false, 'home(unbekannt)');
-  ok(sim.state.buildings.length === 4, 'ungültige Aufrufe haben nichts gebaut'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":25,"stein":0}', 'und nichts bezahlt');
+  ok(sim.state.buildings.length === 4, 'ungültige Aufrufe haben nichts gebaut'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":25,"stein":0,"gold":0}', 'und nichts bezahlt');
 }
 
 // ---- match flow: phases, level, events ----
@@ -328,7 +345,7 @@ const JOB = { IDLE: 0, TOWORK: 1, WORK: 2, CARRY: 3, RETURN: 4, FETCH: 5, BUILD:
   eq(r.ok, true, 'build ok'); ok(Number.isInteger(r.id), 'build liefert die Id');
   const b = st.buildings.find(x => x.id === r.id);
   eq(b.build, 0, 'Baustelle: build 0'); near(b.hp, 0.1, 1e-9, 'Baustelle: hp mindestens 10 %'); eq(b.ruined, false, 'nicht ruiniert'); eq(b.lord, 0, 'Besitzer'); eq(b.kind, 'huette', 'Art'); eq(b.growth, 1, 'growth bei Nicht-Höfen 1');
-  eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":21,"stein":0}', 'Kosten sofort bezahlt (4 Holz)');
+  eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":21,"stein":0,"gold":0}', 'Kosten sofort bezahlt (4 Holz)');
   const [fw, fh] = W.footprintOf('huette', s.rot);
   let occN = 0; for (let k = 0; k < N; k++) if (sim.occ[k] === 1 + Object.keys(W.BUILDINGS).indexOf('huette')) occN++;
   eq(occN, fw * fh, 'occ trägt den Grundriss ein (Code 1 + Index)');
@@ -366,12 +383,12 @@ const JOB = { IDLE: 0, TOWORK: 1, WORK: 2, CARRY: 3, RETURN: 4, FETCH: 5, BUILD:
   const s = W.suggest(sim.world, 'kaserne', 0, { L: 1, occ: sim.occ });
   sim.dev.stock(0, { holz: 30, stein: 20 });
   const r = sim.build(0, 'kaserne', s.i, s.j, s.rot);
-  eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":22,"stein":12}', 'Kaserne kostet 8 Holz und 8 Stein');
+  eq(JSON.stringify(sim.youOf(0).stock), '{"korn":20,"holz":22,"stein":12,"gold":0}', 'Kaserne kostet 8 Holz und 8 Stein');
   run(sim, secs(4));
   const builder = unitsOf(sim, 0).find(u => u._.site && u._.site.id === r.id);
   ok(builder, 'Baumeister unterwegs');
   const c = sim.cancel(0, r.id);
-  eq(c.ok, true, 'cancel ok'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":' + sim.youOf(0).stock.korn + ',"holz":30,"stein":20}', 'Baustelle: volle Rückerstattung');
+  eq(c.ok, true, 'cancel ok'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":' + sim.youOf(0).stock.korn + ',"holz":30,"stein":20,"gold":0}', 'Baustelle: volle Rückerstattung');
   ok(!st.buildings.some(b => b.id === r.id), 'Baustelle verschwindet'); const l1 = run(sim, 2); eq(ofType(l1, 'cancel').length, 1, 'cancel-Ereignis'); eq(ofType(l1, 'cancel')[0].id, r.id, 'cancel.id');
   eq(builder._.job, JOB.IDLE, 'Baumeister ist frei'); eq(sim.occ[s.j * GW + s.i], 0, 'Grundriss frei');
   eq(sim.build(0, 'kaserne', s.i, s.j, s.rot).ok, true, 'der Platz ist wieder bebaubar');
@@ -909,7 +926,7 @@ function foodScene(o) {   // returns { hungryAfter, emptyAfter, … } measured a
   eq(sim.recruit(0, 'speer', 1).reason, 'cost', 'zu wenig Vorrat: cost'); eq(sim.recruit(0, 'ritter', 1).reason, 'cost', 'Ritter: Stein fehlt');
   sim.dev.stock(0, { korn: 20, holz: 25, stein: 10 });
   const r = sim.recruit(0, 'speer', 1);
-  eq(r.ok, true, 'recruit ok'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":18,"holz":23,"stein":10}', 'Speer kostet 2 Korn und 2 Holz, sofort');
+  eq(r.ok, true, 'recruit ok'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":18,"holz":23,"stein":10,"gold":0}', 'Speer kostet 2 Korn und 2 Holz, sofort');
   eq(JSON.stringify(sim.youOf(0).queue), '[{"unit":"speer","n":1,"p":0,"wait":true}]', 'Warteschlange mit Fortschritt p (und wait: noch kein Bauer unterwegs)');
   eq(st.banners.length, 1, 'ein Banner existiert, sobald Rekruten in der Ausbildung sind'); eq(st.banners[0].count, 0, 'noch ohne Soldaten'); eq(st.banners[0].n, 1, 'Banner 1'); eq(Object.keys(st.banners[0]).join(), 'id,lord,n,x,y,px,py,count,moving,tx,ty', 'Banner-Felder');
   const ps = [], samples = new Set(); let trainer = null;
@@ -1562,7 +1579,7 @@ function spotBetween(sim, l, kind, lo, hi) {
   const ruhm0 = st.lords[0].ruhm, tgtBefore = st.banners.find(b => b.lord === 2).tx;
   sim.dev.damage(k1, 1e9, 0);
   const l = run(sim, 2), pl = ofType(l, 'plunder');
-  eq(pl.length, 1, 'plunder-Ereignis'); eq(pl[0].lord, 1, 'plunder.lord = Verlierer'); eq(pl[0].by, 0, 'plunder.by = Angreifer'); eq(JSON.stringify(pl[0].loot), JSON.stringify({ korn: 10, holz: 12, stein: 2 }), 'Beute: die Hälfte jeder Ware');
+  eq(pl.length, 1, 'plunder-Ereignis'); eq(pl[0].lord, 1, 'plunder.lord = Verlierer'); eq(pl[0].by, 0, 'plunder.by = Angreifer'); eq(JSON.stringify(pl[0].loot), JSON.stringify({ korn: 10, holz: 12, stein: 2, gold: 0 }), 'Beute: die Hälfte jeder Ware (und von dem Gold, hier 0)');
   eq(JSON.stringify(sim.youOf(1).stock.holz), '12', 'der Verlierer büßt die Hälfte ein'); eq(sim.youOf(1).stock.korn <= 10 && sim.youOf(1).stock.korn >= 9, true, 'Korn halbiert (' + sim.youOf(1).stock.korn + ')'); eq(sim.youOf(1).stock.stein, 3, 'Stein 5 → 3');
   ok(sim.youOf(0).stock.holz === 12 && sim.youOf(0).stock.stein === 2 && sim.youOf(0).stock.korn >= 18, 'der Sieger erhält die Beute (' + JSON.stringify(sim.youOf(0).stock) + ')');
   near(st.lords[0].ruhm - ruhm0, 20, 1e-9, 'Ruhm +20 für die Plünderung'); eq(sim.dev.lord(0).stats.plunders, 1, 'Plünderungen gezählt');
@@ -1667,11 +1684,640 @@ function spotBetween(sim, l, kind, lo, hi) {
   const s3 = mk({ lords: [{ i: 0, site: 0 }, { i: 1, site: 1 }, { i: 2, site: 3 }] }); eq(s3.pact(0, 2, true).state, 'offered', 'drei Häuser: Angebot'); eq(s3.pact(2, 0, true).state, 'active', 'und Pakt');
   eq(s3.youOf(0).pacts.length, 2, 'youOf.pacts: zwei andere Häuser');
 }
+// =====================================================================================================================
+// Phase 2 — Mauern & Söldner (docs/FURTFEHDE.md "Phase 2"): Mauern und Tore, Markt und Gold, Söldnerlager, Wehrgang, Rammbock, Reiterschütze
+// =====================================================================================================================
+const cellP = (p) => ({ i: Math.floor(p.x + 72), j: Math.floor(p.y + 45) });
+const bld = (sim, id) => sim.state.buildings.find(b => b.id === id);
+const WCODE = (k) => W.CODE[k];
+// the direction (+1 / −1 along x) in which n cells of dry, walkable ground at full speed lie ahead of p (null if neither)
+function dryDir(sim, p, n) {
+  for (const d of [1, -1]) { let good = true; for (let s = 0; s <= n && good; s++) { const k = W.cellOf(p.x + d * s, p.y); if (k < 0 || sim.world.hq[k] < 1 || W.walk(sim.world, k, 0) !== 1 || sim.occ[k]) good = false; } if (good) return d; }
+  return null;
+}
+// the longest straight dry run (≤ max) from p along the x axis: { d: ±1, n } (n = 0 when neither side is dry even for 4 cells)
+function dryRay(sim, p, max) { for (let n = max; n >= 4; n--) { const d = dryDir(sim, p, n); if (d) return { d, n }; } return { d: -1, n: 0 }; }
+// a point at distance r from `from` on dry, walkable, unoccupied ground at full speed (nothing wading), or null
+function dryPoint(sim, from, r) {
+  for (let a = 0; a < 360; a += 15) { const q = { x: from.x + Math.cos(a * Math.PI / 180) * r, y: from.y + Math.sin(a * Math.PI / 180) * r }, k = W.cellOf(q.x, q.y); if (k >= 0 && sim.world.hq[k] >= 1 && W.walk(sim.world, k, 0) === 1 && !sim.occ[k] && sim.world.owner[k] === 0) return q; }
+  return null;
+}
+// a level-0 match in the Fehde with a free 7 × 7 patch of house l; returns { sim, c (centre), ci, cj }
+function patch(l, o) { const sim = mk(Object.assign({ burgfrieden: 0 }, o || {})); toFehde(sim); const c = clearing(sim, l || 0), q = cellP(c); return { sim, c, ci: q.i, cj: q.j }; }
+
+// ---- Phase 2: building walls through the sim — len, cost per cell, hp per cell, build time per cell, ruins and rebuild; Torhaus, Markt, Söldnerlager ----
+{
+  const { sim, ci, cj } = patch(0), st = sim.state;
+  sim.dev.stock(0, { korn: 30, holz: 30, stein: 30, gold: 0 });
+  const r1 = sim.build(0, 'mauer', ci - 3, cj - 3, 0, 4); eq(r1.ok, true, 'Mauer len 4 gebaut');
+  const b1 = bld(sim, r1.id);
+  eq(b1.len, 4, 'buildings[].len = 4'); eq(b1.kind, 'mauer', 'Art mauer'); eq(b1.garrison, 0, 'noch keine Besatzung'); eq(b1.build, 0, 'Baustelle: build 0');
+  eq(sim.youOf(0).stock.stein, 30 - 8, 'Mauer: 🪨 2 je Zelle, bei len 4 also 8');
+  eq(b1._.maxHp, 4 * 450, 'Mauer len 4: 450 HP je Zelle'); eq(b1._.w + 'x' + b1._.h, '4x1', 'Fußabdruck 4 × 1 bei rot 0');
+  { let all = true; for (let d = 0; d < 4; d++) if (sim.occ[(cj - 3) * GW + ci - 3 + d] !== WCODE('mauer')) all = false; ok(all, 'die vier Zellen tragen den Mauer-Code ' + WCODE('mauer')); eq(sim.occ[(cj - 3) * GW + ci - 3 + 4], 0, 'die fünfte nicht'); }
+  near(b1.hp, 0.1, 1e-9, 'Baustelle: 10 % der HP (hp ist ein Anteil)');
+  const r2 = sim.build(0, 'palisade', ci - 3, cj - 1, 1, 3); eq(r2.ok, true, 'Palisade len 3, rot 1');
+  const b2 = bld(sim, r2.id); eq(b2.len, 3, 'Palisade len 3'); eq(b2._.w + 'x' + b2._.h, '1x3', 'rot 1: 1 × 3'); eq(b2._.maxHp, 450, 'Palisade: 150 HP je Zelle'); eq(sim.youOf(0).stock.holz, 30 - 3, 'Palisade: 🪵 1 je Zelle');
+  eq(b2.kind, 'palisade', 'Art palisade'); eq(sim.occ[(cj - 1 + 2) * GW + ci - 3], WCODE('palisade'), 'rot 1 läuft in +j');
+  // Mauern dürfen aneinander stoßen
+  eq(sim.build(0, 'mauer', ci + 1, cj - 3, 0, 2).ok, true, 'Mauer Ende an Ende mit der ersten'); eq(sim.build(0, 'mauer', ci - 3, cj - 2, 0, 1).ok, true, 'Mauer Seite an Seite');
+  // schlechte Längen und Arten
+  eq(sim.build(0, 'mauer', ci, cj + 3, 0, 0).reason, 'bounds', 'len 0: bounds'); eq(sim.build(0, 'mauer', ci, cj + 3, 0, 5).reason, 'bounds', 'len 5: bounds'); eq(sim.build(0, 'mauer', ci, cj + 3, 0, 1.5).reason, 'bounds', 'len 1.5: bounds'); eq(sim.build(0, 'palisade', ci, cj + 3, 0, NaN).reason, 'bounds', 'len NaN: bounds'); eq(sim.build(0, 'mauer', ci, cj + 3, 0, '2').reason, 'bounds', 'len "2": bounds');
+  eq(sim.build(0, 'constructor', ci, cj, 0).reason, 'kind', 'Art "constructor" gibt es nicht'); eq(sim.build(0, '__proto__', ci, cj, 0).reason, 'kind', 'Art "__proto__" gibt es nicht'); eq(sim.recruit(0, 'constructor', 1).reason, 'unit', 'Einheit "constructor" gibt es nicht');
+  const r3 = sim.build(0, 'huette', ci + 1, cj + 1, 0, 99); eq(r3.ok, true, 'len wirkt nur bei Mauern (Hütte ignoriert es)'); eq(bld(sim, r3.id).len, 1, 'Hütte: len 1');
+  // 'tight' gilt für Mauern wie für alles: eine Hütte dicht an der Mauer
+  eq(sim.build(0, 'huette', ci, cj - 2, 0).reason, 'tight', 'Hütte dicht an der Mauer: tight');
+  // Kosten: zu wenig Stein
+  { const q = patch(0); q.sim.dev.stock(0, { stein: 7 }); eq(q.sim.build(0, 'mauer', q.ci - 3, q.cj, 0, 4).reason, 'cost', 'Mauer len 4 braucht 8 Stein: cost'); eq(q.sim.build(0, 'mauer', q.ci - 3, q.cj, 0, 3).ok, true, 'len 3 (6 Stein) geht noch'); eq(q.sim.youOf(0).stock.stein, 1, 'und kostet 6'); }
+  // Bauzeit je Zelle: ein Baumeister braucht buildS · len (Mauer 4 s, Palisade 2 s je Zelle)
+  const tp = patch(0), t = tp.sim, ti = tp.ci, tj = tp.cj; t.dev.stock(0, { stein: 30, holz: 30 });
+  const w4 = t.build(0, 'mauer', ti - 3, tj - 3, 0, 4), w2 = t.build(0, 'palisade', ti - 3, tj, 0, 3), s4 = bld(t, w4.id), s2 = bld(t, w2.id);
+  let tw = -1, t0 = -1, b0 = 0; until(t, () => { if (t0 < 0 && s4.build > 0 && t.state.units.some(u => u._.job === JOB.BUILD && u._.site === t.dev.lord(0).bld.find(x => x.id === s4.id) && u._.ws === 1)) { t0 = t.state.t; b0 = s4.build; } return s4.build >= 1; }, secs(120));
+  ok(s4.build >= 1, 'die Mauer wird fertig'); ok(t0 > 0, 'ein Baumeister arbeitet an ihr');
+  near((t.state.t - t0) / (1 - b0), 4 * 4, 1.2, 'Mauer len 4: Bauzeit 4 s je Zelle = 16 s (' + ((t.state.t - t0) / (1 - b0)).toFixed(1) + ')');
+  until(t, () => s2.build >= 1, secs(60)); ok(s2.build >= 1, 'die Palisade wird fertig'); eq(s4.hp, 1, 'fertig: hp 1'); eq(s4._.hpAbs, 1800, '1800 HP');
+  // Torhaus, Markt, Söldnerlager: Größen, Kosten, HP
+  const u = patch(0), us = u.sim; us.dev.stock(0, { korn: 30, holz: 30, stein: 30 });
+  const th = us.build(0, 'torhaus', u.ci - 2, u.cj - 1, 0); eq(th.ok, true, 'Torhaus gebaut'); eq(JSON.stringify([us.youOf(0).stock.holz, us.youOf(0).stock.stein]), '[26,18]', 'Torhaus: 🪵 4 🪨 12'); eq(bld(us, th.id)._.maxHp, 1400, 'Torhaus 1400 HP'); eq(bld(us, th.id)._.w + 'x' + bld(us, th.id)._.h, '3x2', 'Torhaus 3 × 2');
+  const us2 = patch(0).sim; us2.dev.stock(0, { holz: 30 }); const q2 = cellP(clearing(us2, 0));
+  const mk1 = us2.build(0, 'markt', q2.i - 2, q2.j - 1, 0); eq(mk1.ok, true, 'Markt gebaut'); eq(us2.youOf(0).stock.holz, 20, 'Markt: 🪵 10'); eq(bld(us2, mk1.id)._.maxHp, 300, 'Markt 300 HP'); eq(bld(us2, mk1.id)._.w + 'x' + bld(us2, mk1.id)._.h, '4x3', 'Markt 4 × 3');
+  const us3 = patch(0).sim; us3.dev.stock(0, { holz: 30 }); const q3 = cellP(clearing(us3, 0));
+  const sl = us3.build(0, 'soeldnerlager', q3.i - 2, q3.j - 2, 0); eq(sl.ok, true, 'Söldnerlager gebaut'); eq(us3.youOf(0).stock.holz, 18, 'Söldnerlager: 🪵 12'); eq(bld(us3, sl.id)._.maxHp, 350, 'Söldnerlager 350 HP'); eq(bld(us3, sl.id)._.w + 'x' + bld(us3, sl.id)._.h, '5x4', 'Söldnerlager 5 × 4');
+  eq(us3.build(0, 'soeldnerlager', q3.i - 3, q3.j - 3, 0).reason, 'occupied', 'auf derselben Stelle: occupied');
+}
+
+// ---- Phase 2: wall pieces are ruins that can be rebuilt (same footprint, same len, half the cost, same id) or cleared; wall ruins give no Ruhm ----
+{
+  const { sim, ci, cj } = patch(0); sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 });
+  const r = sim.dev.place(0, 'mauer', ci - 2, cj, 0, 3); ok(r.ok, 'Mauer len 3 steht'); const w = r.b, id = w.id;
+  sim.dev.damage(w, 1e9, 1); eq(w.ruined, true, 'Mauer zerstört'); eq(sim.state.lords[1].ruhm, 0, 'eine zerstörte Mauer gibt kein Ruhm'); eq(sim.dev.lord(1).stats.razed, 0, 'und zählt nicht als Zerstörung');
+  eq(sim.build(0, 'mauer', ci - 2, cj, 0, 2).reason, 'occupied', 'die Ruine blockt len 2 an derselben Stelle: occupied'); eq(sim.build(0, 'mauer', ci - 2, cj, 0, 3).ok, true, 'len 3 baut die Ruine wieder auf');
+  eq(w.ruined, false, 'Ruine ist wieder eine Baustelle'); eq(w.id, id, 'die Id bleibt'); eq(sim.youOf(0).stock.stein, 30 - Math.ceil(6 * 0.5), 'halbe Kosten (6 Stein → 3)'); eq(w.build, 0, 'build 0'); eq(w.len, 3, 'len bleibt');
+  { let solid = true; for (let d = 0; d < 3; d++) if (!sim.dev.blk[(cj) * GW + ci - 2 + d]) solid = false; ok(solid, 'als Baustelle blockt sie wieder'); }
+  eq(sim.cancel(0, id).ok, true, 'Baustelle abbrechen: ok'); eq(sim.state.buildings.find(b => b.id === id), undefined, 'und weg');
+  const p = sim.dev.place(0, 'palisade', ci - 2, cj + 2, 1, 2); sim.dev.damage(p.b, 1e9, 1); eq(p.b.ruined, true, 'Palisade zerstört'); eq(sim.cancel(0, p.b.id).ok, true, 'Ruine räumen: ok'); eq(sim.occ[(cj + 2) * GW + ci - 2], 0, 'die Zellen sind frei'); eq(sim.dev.rub[(cj + 2) * GW + ci - 2], 0, 'ohne Schutt');
+  // Ruhm: Torhaus und Söldnerlager zählen wie Kaserne und Wachturm (+5), der Markt wie ein Haus (+3)
+  const s5 = mk({ burgfrieden: 0 }); toFehde(s5);
+  const th = placeAt(s5, 1, 'torhaus'), sl = placeAt(s5, 1, 'soeldnerlager'), mk2 = placeAt(s5, 1, 'markt');
+  ok(th && sl && mk2, 'Torhaus, Söldnerlager und Markt stehen'); s5.dev.damage(th, 1e9, 0); eq(s5.state.lords[0].ruhm, 5, 'Torhaus zerstört: +5'); s5.dev.damage(sl, 1e9, 0); eq(s5.state.lords[0].ruhm, 10, 'Söldnerlager: +5'); s5.dev.damage(mk2, 1e9, 0); eq(s5.state.lords[0].ruhm, 13, 'Markt: +3');
+  const wl = placeAt(s5, 1, 'mauer'); ok(wl, 'Mauer steht'); s5.dev.damage(wl, 1e9, 0); eq(s5.state.lords[0].ruhm, 13, 'Mauer: kein Ruhm');
+}
+
+// ---- Phase 2: sim.buildWall — pieces in order while the stock lasts ----
+{
+  const { sim, ci, cj } = patch(0), st = sim.state;
+  sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 });
+  const line = [[ci - 3, cj - 3, 0, 4], [ci + 1, cj - 3, 0, 2], [ci + 3, cj - 3, 1, 3]];   // an L: two along +i, one down +j
+  const ev0 = run(sim, 0), r = sim.buildWall(0, 'mauer', line);
+  eq(JSON.stringify(r), '{"ok":true,"placed":3}', 'buildWall: alle drei Stücke'); eq(sim.youOf(0).stock.stein, 30 - 2 * (4 + 2 + 3), 'Kosten: 18 Stein'); eq(st.buildings.filter(b => b.kind === 'mauer').length, 3, 'drei Mauer-Stücke im Zustand');
+  eq(st.buildings.filter(b => b.kind === 'mauer').map(b => b.len).join(), '4,2,3', 'len 4, 2, 3 in der Reihenfolge');
+  const l2 = run(sim, 1); eq(ofType(l2, 'build').length, 3, 'drei build-Ereignisse'); ok(ofType(l2, 'build').every(e => e.kind === 'mauer' && e.lord === 0), 'build-Ereignisse: kind mauer');
+  // zu wenig Vorrat: die Reihe endet bei 'cost', die gesetzten Stücke bleiben
+  const { sim: s2, ci: c2, cj: j2 } = patch(0); s2.dev.stock(0, { stein: 10 });
+  const r2 = s2.buildWall(0, 'mauer', [[c2 - 3, j2 - 3, 0, 4], [c2 - 3, j2, 0, 4], [c2 - 3, j2 + 2, 0, 1]]);
+  eq(JSON.stringify(r2), '{"ok":true,"placed":1,"reason":"cost"}', '10 Stein: das erste Stück (8), das zweite ist zu teuer – die Reihe endet (cost), auch wenn das dritte noch ginge'); eq(s2.youOf(0).stock.stein, 2, 'Rest 2');
+  const r2b = s2.buildWall(0, 'mauer', [[c2 - 3, j2 + 2, 0, 2]]); eq(JSON.stringify(r2b), '{"ok":false,"placed":0,"reason":"cost"}', 'nichts gesetzt: ok false, cost');
+  // ein Stück, das nicht geht, wird übersprungen, die Reihe geht weiter; der erste Grund wird gemeldet
+  const { sim: s3, ci: c3, cj: j3 } = patch(0); s3.dev.stock(0, { stein: 30, holz: 30 });
+  const r3 = s3.buildWall(0, 'palisade', [[c3 - 3, j3 - 3, 0, 2], [GW - 3, GH - 3, 0, 2], [c3 + 0, j3 - 3, 0, 2]]); eq(r3.ok, true, 'ein Stück ungültig: der Rest wird gesetzt'); eq(r3.placed, 2, 'zwei von drei'); eq(r3.reason, 'owner', 'Grund des ersten Fehlschlags: owner (die Ecke gehört einem anderen Haus)');
+  // Eingaben
+  const bad = (a, b, c) => JSON.stringify(sim.buildWall(a, b, c));
+  eq(bad(9, 'mauer', line), '{"ok":false,"placed":0,"reason":"lord"}', 'unbekanntes Haus'); eq(bad(0, 'huette', line), '{"ok":false,"placed":0,"reason":"kind"}', 'keine Mauer-Art: kind'); eq(bad(0, 'torhaus', line), '{"ok":false,"placed":0,"reason":"kind"}', 'Torhaus ist keine Linie: kind');
+  eq(bad(0, 'mauer', []), '{"ok":false,"placed":0,"reason":"bounds"}', 'leere Liste: bounds'); eq(bad(0, 'mauer', null), '{"ok":false,"placed":0,"reason":"bounds"}', 'null: bounds'); eq(bad(0, 'mauer', 'x'), '{"ok":false,"placed":0,"reason":"bounds"}', 'Text: bounds');
+  eq(bad(0, 'mauer', new Array(65).fill([0, 0, 0, 1])), '{"ok":false,"placed":0,"reason":"bounds"}', 'mehr als 64 Stücke: bounds'); eq(bad(0, 'mauer', ['x', null, { a: 1 }, [], [1.5, 2]]), '{"ok":false,"placed":0,"reason":"bounds"}', 'Müll als Stücke: bounds');
+  for (const junk of [undefined, NaN, {}, [], () => 1]) noThrow(() => sim.buildWall(junk, junk, junk), 'buildWall(' + typeof junk + ') wirft nicht');
+  const so = mk({ dauer: 1, burgfrieden: 0 }); run(so, secs(61)); eq(so.state.phase, 'over', 'Spiel zu Ende'); eq(JSON.stringify(so.buildWall(0, 'mauer', [[1, 1, 0, 1]])), '{"ok":false,"placed":0,"reason":"phase"}', 'nach dem Ende: phase');
+}
+
+// ---- Phase 2: gold and the Markt — trade(lord, good, side, packs) → { ok, n, reason? } ----
+{
+  const sim = mk({ burgfrieden: 0 }); toFehde(sim); const st = sim.state;
+  sim.dev.stock(0, { korn: 30, holz: 30, stein: 30, gold: 0 });
+  eq(JSON.stringify(sim.trade(0, 'korn', 'sell', 1)), '{"ok":false,"n":0,"reason":"markt"}', 'ohne Markt: markt');
+  const mkt = placeAt(sim, 0, 'markt'); ok(mkt, 'Markt steht');
+  const T = (g, s, n) => JSON.stringify(sim.trade(0, g, s, n)), stock = () => JSON.stringify(sim.youOf(0).stock);
+  eq(T('korn', 'sell', 1), '{"ok":true,"n":1}', 'ein Paket 🌾 verkaufen'); eq(stock(), '{"korn":25,"holz":30,"stein":30,"gold":1}', '5 🌾 weniger, 💰 1 mehr'); eq(st.lords[0].gold, 1, 'state.lords[].gold = 1 sofort');
+  eq(T('holz', 'sell', 2), '{"ok":true,"n":2}', 'zwei Pakete 🪵'); eq(stock(), '{"korn":25,"holz":20,"stein":30,"gold":3}', '10 🪵 weniger, 💰 2 mehr');
+  eq(T('stein', 'sell', 3), '{"ok":true,"n":3}', 'drei Pakete 🪨 (je 💰 2)'); eq(stock(), '{"korn":25,"holz":20,"stein":15,"gold":9}', '15 🪨 weniger, 💰 6 mehr');
+  eq(T('korn', 'buy', 1), '{"ok":true,"n":1}', 'ein Paket 🌾 kaufen (💰 3)'); eq(stock(), '{"korn":30,"holz":20,"stein":15,"gold":6}', '💰 3 weniger, 5 🌾 mehr');
+  eq(T('stein', 'buy', 1), '{"ok":true,"n":1}', 'ein Paket 🪨 kaufen (💰 5)'); eq(stock(), '{"korn":30,"holz":20,"stein":20,"gold":1}', '💰 5 weniger');
+  // teilweise: nicht genug Ware, nicht genug Gold, voller Speicher
+  sim.dev.stock(0, { korn: 12, holz: 30, stein: 30, gold: 7 });
+  eq(T('korn', 'sell', 3), '{"ok":true,"n":2,"reason":"cost"}', '12 🌾 reichen für 2 von 3 Paketen: n 2, Grund cost'); eq(sim.youOf(0).stock.korn, 2, 'Rest 2 🌾'); eq(T('korn', 'sell', 1), '{"ok":false,"n":0,"reason":"cost"}', 'weniger als ein Paket: ok false, cost');
+  sim.dev.stock(0, { holz: 10, gold: 7 }); eq(T('holz', 'buy', 5), '{"ok":true,"n":2,"reason":"cost"}', '💰 7 reichen für 2 von 5 Paketen 🪵 (je 3)'); eq(sim.youOf(0).stock.gold, 1, 'Rest 💰 1'); eq(sim.youOf(0).stock.holz, 20, '+10 🪵');
+  sim.dev.stock(0, { holz: 20, gold: 100 }); eq(T('holz', 'buy', 5), '{"ok":true,"n":2,"reason":"cap"}', 'Speicher 30: bei 20 passen nur 2 Pakete – Grund cap'); eq(sim.youOf(0).stock.holz, 30, 'voll: 30'); eq(sim.youOf(0).stock.gold, 94, '💰 6 bezahlt');
+  eq(T('holz', 'buy', 1), '{"ok":false,"n":0,"reason":"cap"}', 'voller Speicher: nichts, cap'); sim.dev.stock(0, { holz: 28 }); eq(T('holz', 'buy', 1), '{"ok":false,"n":0,"reason":"cap"}', 'bei 28 von 30 passt kein ganzes Paket: cap');
+  eq(sim.youOf(0).cap.holz, 30, 'cap steht in youOf'); ok(!('gold' in sim.youOf(0).cap), 'Gold hat keine Obergrenze (kein cap.gold)');
+  // Eingaben
+  eq(T('gold', 'sell', 1), '{"ok":false,"n":0,"reason":"good"}', 'Ware gold: good'); eq(T('x', 'buy', 1), '{"ok":false,"n":0,"reason":"good"}', 'unbekannte Ware: good'); eq(T('korn', 'swap', 1), '{"ok":false,"n":0,"reason":"side"}', 'unbekannte Seite: side'); eq(T('korn', undefined, 1), '{"ok":false,"n":0,"reason":"side"}', 'keine Seite: side');
+  for (const bad of [0, -1, 1.5, NaN, Infinity, '2', null, undefined]) eq(T('korn', 'sell', bad), '{"ok":false,"n":0,"reason":"packs"}', 'packs ' + String(bad) + ': packs');
+  eq(JSON.stringify(sim.trade(9, 'korn', 'sell', 1)), '{"ok":false,"n":0,"reason":"lord"}', 'unbekanntes Haus: lord'); for (const junk of [undefined, null, NaN, {}, [], () => 1]) noThrow(() => sim.trade(junk, junk, junk, junk), 'trade(' + typeof junk + ') wirft nicht');
+  // das Ereignis kommt mit dem nächsten step
+  sim.dev.stock(0, { korn: 30, holz: 30, stein: 30, gold: 0 }); run(sim, 1); sim.trade(0, 'stein', 'sell', 2); const l = run(sim, 1), te = ofType(l, 'trade'); eq(te.length, 1, 'trade-Ereignis'); eq(JSON.stringify(te[0]), JSON.stringify({ t: 'trade', lord: 0, good: 'stein', side: 'sell', n: 2, gold: 4 }), 'trade-Felder');
+  // Gold ist unbegrenzt, wird nicht gegessen und bleibt über die Zeit
+  sim.dev.stock(0, { gold: 5000 }); run(sim, secs(20)); eq(sim.youOf(0).stock.gold, 5000, '💰 5000 bleiben stehen (kein Limit, keine Verluste)'); eq(st.lords[0].gold, 5000, 'state.lords[].gold folgt');
+  // ein Markt im Bau, eine Ruine und der Markt eines anderen Hauses handeln nicht
+  const s2 = mk({ burgfrieden: 0 }); toFehde(s2); s2.dev.stock(0, { korn: 30, holz: 30 }); const q = cellP(clearing(s2, 0)); const site = s2.build(0, 'markt', q.i - 2, q.j - 1, 0); eq(site.ok, true, 'Markt im Bau'); eq(s2.trade(0, 'korn', 'sell', 1).reason, 'markt', 'Baustelle handelt nicht');
+  const m2 = placeAt(s2, 1, 'markt'); eq(s2.trade(0, 'korn', 'sell', 1).reason, 'markt', 'der Markt eines anderen Hauses zählt nicht'); eq(s2.trade(1, 'korn', 'sell', 1).ok, true, 'der eigene schon'); s2.dev.damage(m2, 1e9, 0); eq(s2.trade(1, 'korn', 'sell', 1).reason, 'markt', 'eine Ruine handelt nicht');
+  // Plünderung: die Hälfte des Goldes wandert zum Angreifer, ohne Obergrenze
+  const s3 = mk({ burgfrieden: 0 }); toFehde(s3); s3.dev.stock(1, { korn: 20, holz: 24, stein: 4, gold: 11 }); s3.dev.stock(0, { korn: 0, holz: 0, stein: 0, gold: 3 }); const k1 = s3.dev.lord(1).keepB;
+  s3.dev.damage(k1, 1e9, 0); const pl = ofType(run(s3, 1), 'plunder'); eq(pl.length, 1, 'plunder-Ereignis'); eq(JSON.stringify(pl[0].loot), JSON.stringify({ korn: 10, holz: 12, stein: 2, gold: 5 }), 'Beute: die Hälfte jeder Ware, 💰 5 von 11');
+  eq(s3.youOf(1).stock.gold, 6, 'der Verlierer behält 6'); eq(s3.youOf(0).stock.gold, 8, 'der Angreifer hat 3 + 5'); eq(s3.state.lords[1].gold + '/' + s3.state.lords[0].gold, '6/8', 'state.lords[].gold stimmt');
+  const s4 = mk({ burgfrieden: 0 }); toFehde(s4); s4.dev.stock(0, { gold: 1000 }); s4.dev.stock(1, { gold: 1001 }); s4.dev.damage(s4.dev.lord(1).keepB, 1e9, 0); run(s4, 1); eq(s4.youOf(0).stock.gold, 1500, 'Gold hat keine Obergrenze: 1000 + 500'); eq(s4.youOf(1).stock.gold, 501, 'Verlierer: 1001 − 500');
+}
+
+
+// ---- Phase 2: recruiting by unit — Kaserne or Söldnerlager, gold costs, training times, TRAIN_PAR per building ----
+{
+  const sim = mk({ burgfrieden: 0 }); toFehde(sim);
+  sim.dev.stock(0, { korn: 40, holz: 40, stein: 40, gold: 50 });
+  for (const [u, why] of [['speer', 'kaserne'], ['bogen', 'kaserne'], ['ritter', 'kaserne'], ['ramme', 'kaserne'], ['fackel', 'lager'], ['reiterschuetze', 'lager']]) eq(sim.recruit(0, u, 1).reason, why, 'ohne jedes Haus: ' + u + ' → ' + why);
+  const kas = placeAt(sim, 0, 'kaserne'); ok(kas, 'Kaserne steht');
+  eq(sim.recruit(0, 'fackel', 1).reason, 'lager', 'Kaserne, aber kein Söldnerlager: Fackelträger → lager'); eq(sim.recruit(0, 'reiterschuetze', 1).reason, 'lager', 'Reiterschütze → lager'); eq(sim.recruit(0, 'ramme', 1).ok, true, 'der Rammbock kommt aus der Kaserne');
+  eq(sim.youOf(0).stock.holz + '/' + sim.youOf(0).stock.gold, '30/46', 'Rammbock: 🪵 10 💰 4'); eq(JSON.stringify(sim.youOf(0).queue), '[{"unit":"ramme","n":1,"p":0,"wait":true}]', 'in der Warteschlange');
+  const sl = placeAt(sim, 0, 'soeldnerlager'); ok(sl, 'Söldnerlager steht');
+  sim.dev.stock(0, { korn: 5, gold: 1 }); eq(sim.recruit(0, 'fackel', 2).reason, 'cost', 'Fackelträger mit 💰 1: cost'); sim.dev.stock(0, { korn: 0, gold: 9 }); eq(sim.recruit(0, 'fackel', 2).reason, 'cost', 'ohne 🌾: cost');
+  sim.dev.stock(0, { korn: 5, gold: 5 }); eq(sim.recruit(0, 'reiterschuetze', 2).reason, 'cost', 'Reiterschütze braucht 💰 6: cost');
+  sim.dev.stock(0, { korn: 5, gold: 2 }); eq(sim.recruit(0, 'fackel', 2).ok, true, 'Fackelträger: 💰 2 🌾 1'); eq(JSON.stringify(sim.youOf(0).stock), '{"korn":4,"holz":30,"stein":40,"gold":0}', 'bezahlt: 💰 2, 🌾 1 (kein 🪵)'); eq(sim.state.lords[0].gold, 0, 'state.lords[].gold folgt sofort');
+  sim.dev.stock(0, { korn: 5, gold: 9 }); eq(sim.recruit(0, 'reiterschuetze', 2).ok, true, 'Reiterschütze: 💰 6 🌾 2'); eq(JSON.stringify([sim.youOf(0).stock.korn, sim.youOf(0).stock.gold]), '[3,3]', 'bezahlt');
+  eq(sim.recruit(0, 'speer', 1).ok, true, 'ein Speerträger kostet kein Gold'); eq(sim.youOf(0).stock.gold, 3, 'Gold unberührt');
+  eq(sim.recruit(0, 'ritter', 7).reason, 'banner', 'Reihenfolge der Gründe: unit, banner, phase, Haus, pop, cost');
+}
+{
+  // training times: 2 s (Fackelträger), 4 s (Reiterschütze), 10 s (Rammbock); each trained at the right house
+  const train = (unit, house) => {
+    const sim = mk({ burgfrieden: 0 }); toFehde(sim); sim.dev.stock(0, { korn: 40, holz: 40, stein: 40, gold: 50 });
+    const h = placeAt(sim, 0, house), n = unit === 'ramme' ? 1 : 2; sim.recruit(0, unit, n);
+    let t0 = -1, store = null; const l = until(sim, () => sim.state.units.some(u => u.kind === unit), secs(60), () => { const q = sim.youOf(0).queue[0]; if (q && q.p > 0 && t0 < 0) t0 = sim.state.t; const w = unitsOf(sim, 0).find(x => x._.qe); if (w) store = w._.store; });
+    const tr = ofType(l.log, 'trained'), u = sim.state.units.find(x => x.kind === unit);
+    return { sim, h, t: sim.state.t - t0, t0, tr, u, store };
+  };
+  for (const [unit, house, secsNeed, hp] of [['fackel', 'soeldnerlager', 2, 30], ['reiterschuetze', 'soeldnerlager', 4, 70], ['ramme', 'kaserne', 10, 400]]) {
+    const r = train(unit, house);
+    ok(r.u, unit + ' wird ausgebildet'); if (!r.u) continue;
+    near(r.t, secsNeed, 0.3, unit + ': Ausbildung ' + secsNeed + ' s (' + r.t.toFixed(2) + ')'); eq(r.store && r.store.kind, house, unit + ' wird im ' + house + ' ausgebildet'); eq(r.u.hp, hp, unit + ': hp ' + hp);
+    eq(r.tr.length, 1, 'trained-Ereignis'); eq(r.tr[0].unit, unit, 'trained.unit'); eq(r.u.n, unit === 'ramme' ? 1 : 2, 'n = Bannernummer'); eq(r.u.on, null, 'nicht im Wehrgang'); eq(r.u.slot, -1, 'slot −1');
+  }
+}
+{
+  // TRAIN_PAR counts per building: one Kaserne and one Söldnerlager take three recruits each at the same time; the other kind does not queue behind a full house
+  const savedP = C.START_PEASANTS; C.START_PEASANTS = 14;
+  const sim = mk({ burgfrieden: 0 }); toFehde(sim); sim.dev.stock(0, { korn: 40, holz: 40, stein: 40, gold: 60 });
+  const kas = placeAt(sim, 0, 'kaserne'), sl = placeAt(sim, 0, 'soeldnerlager');
+  const per = (k) => unitsOf(sim, 0, 'bauer').filter(u => u._.qe && u._.store === k).length;
+  for (let i = 0; i < 4; i++) eq(sim.recruit(0, 'speer', 1).ok, true, 'Speerträger ' + (i + 1)); for (let i = 0; i < 4; i++) eq(sim.recruit(0, 'fackel', 2).ok, true, 'Fackelträger ' + (i + 1));
+  run(sim, secs(3));
+  eq(per(kas) + '/' + per(sl), '3/3', 'drei Speerträger bei der Kaserne, drei Fackelträger beim Söldnerlager – der Fackelträger wartet nicht hinter den Speerträgern');
+  eq(sim.youOf(0).queue.filter(q => q.wait).map(q => q.unit).join(), 'speer,fackel', 'je einer wartet auf einen freien Platz');
+  ok(unitsOf(sim, 0, 'bauer').filter(u => u._.qe && UN_AT(u._.qe.unit) !== u._.store.kind).length === 0, 'keiner steht beim falschen Haus');
+  const l = until(sim, () => sim.state.units.filter(u => u.kind === 'speer' || u.kind === 'fackel').length === 8, secs(60)); ok(l.hit, 'alle acht werden ausgebildet');
+  eq(sim.state.units.filter(u => u.kind === 'fackel').length + '/' + sim.state.units.filter(u => u.kind === 'speer').length, '4/4', '4 Fackelträger und 4 Speerträger');
+  // the Söldnerlager falls during training: the order stays (no other house of its kind), the peasant goes back; a new one finishes it
+  const s2 = mk({ burgfrieden: 0 }); toFehde(s2); s2.dev.stock(0, { korn: 40, holz: 40, gold: 20 }); const sl2 = placeAt(s2, 0, 'soeldnerlager'); s2.recruit(0, 'fackel', 2);
+  until(s2, () => unitsOf(s2, 0).some(u => u._.qe && u._.ws === 1), secs(20)); s2.dev.damage(sl2, 1e9, 1); run(s2, 3);
+  eq(s2.youOf(0).queue.length, 1, 'die Bestellung bleibt'); eq(s2.youOf(0).queue[0].p, 0, 'Fortschritt zurückgesetzt'); eq(unitsOf(s2, 0).filter(u => u._.qe).length, 0, 'kein Bauer übt mehr'); eq(s2.youOf(0).stock.gold, 18, 'bezahlt bleibt bezahlt');
+  placeAt(s2, 0, 'soeldnerlager'); ok(until(s2, () => s2.state.units.some(u => u.kind === 'fackel'), secs(40)).hit, 'mit neuem Söldnerlager wird der Fackelträger fertig');
+  C.START_PEASANTS = savedP;
+}
+function UN_AT(u) { return C.UNIT[u].at; }
+
+// ---- Phase 2: the Reiterschütze — damage multipliers, shooting on the move, backing away from melee while reloading ----
+{
+  const table = [['reiterschuetze', 'speer', 9], ['reiterschuetze', 'fackel', 9], ['reiterschuetze', 'bogen', 6], ['reiterschuetze', 'ritter', 6], ['reiterschuetze', 'reiterschuetze', 6], ['ritter', 'reiterschuetze', 21], ['speer', 'reiterschuetze', 8], ['bogen', 'reiterschuetze', 6]];
+  for (const [a, b, d] of table) {
+    const r = duel(a, b, 5); ok(r.n >= 2, a + ' → ' + b + ': trifft (' + r.n + ' Treffer)');
+    const melee = C.UNIT[a].range < 3;
+    for (const bl of r.blows) { const exp = melee ? d * (bl.wetA ? C.WADE_DEALT : 1) * (bl.wetB ? C.WADE_TAKEN : 1) : d; near(bl.dmg, exp, 1e-6, a + ' → ' + b + ': Schaden je Treffer'); }
+  }
+  const rb = duel('reiterschuetze', 'speer', 9, 6), hs = rb.log.filter(e => e.t === 'shot'); ok(hs.length >= 4 && hs.length <= 9, 'Reiterschütze: ≈ 1 Schuss je 1.3 s (' + hs.length + ' in 9 s)'); ok(hs.every(s => s.src === 'bogen'), 'shot.src = bogen');
+  // arrows from the Reiterschütze: flight like every arrow, damage on arrival; range 8 (a spearman at 9 is out of reach, at 7 in reach)
+  const outS = (gap) => { const s = mk({ burgfrieden: 0 }); toFehde(s); const p = clearing(s, 0), d = dryDir(s, p, 14) || 1, A = stage(s, 0, 'reiterschuetze', p), B = stage(s, 1, 'speer', { x: p.x + d * gap, y: p.y }); A.hp = B.hp = 1e5; B._.cd = 1e9; const sh = []; let x0 = A.x, xFirst = null; for (let i = 0; i < secs(3); i++) for (const e of s.step()) if (e.t === 'shot') { sh.push(e); if (xFirst === null) xFirst = A.x; } return { sh, A, B, moved: xFirst === null ? 0 : Math.abs(xFirst - x0) }; };
+  { const o = outS(7); ok(o.sh.length >= 1, 'Ziel auf 7: es wird geschossen'); ok(o.sh.every(s => Math.hypot(s.to[0] - s.from[0], s.to[1] - s.from[1]) <= 8.1), 'Reichweite 8: kein Schuss weiter'); const f = outS(9.5); ok(f.sh.length >= 1, 'Ziel auf 9.5 (Aggro 10, Reichweite 8): der Reiter reitet heran und schießt'); ok(f.sh.every(s => Math.hypot(s.to[0] - s.from[0], s.to[1] - s.from[1]) <= 8.1), 'erst aus Reichweite (≤ 8)'); ok(f.moved >= 1.2, 'er ist vor dem ersten Schuss herangeritten (' + f.moved.toFixed(1) + ')'); }
+  // 4 shots in the air … the rider keeps riding: in range of a target it still follows its banner and shoots on the way
+  const mv = mk({ burgfrieden: 0 }); toFehde(mv); const p = clearing(mv, 0), dx = dryDir(mv, { x: p.x - 3, y: p.y }, 16) || 1, sx = dx > 0 ? -3 : 3;   // (x grows towards the dry side: dx = +1 means east)
+  const R = stage(mv, 0, 'reiterschuetze', { x: p.x + sx, y: p.y + 3 }); const T = stage(mv, 1, 'bogen', { x: p.x + sx + dx * 4, y: p.y }, 1); R.hp = T.hp = 1e5; T._.cd = 1e9;
+  mv.banner(0, 1, p.x + sx + dx * 14, p.y + 3); const shots = [], path = []; for (let i = 0; i < secs(6); i++) { for (const e of mv.step()) if (e.t === 'shot') shots.push({ ...e, rx: R.x }); path.push(R.x); }
+  ok(shots.length >= 2, 'im Reiten geschossen (' + shots.length + ' Schüsse)'); if (shots.length >= 2) { ok(Math.abs(shots[shots.length - 1].from[0] - shots[0].from[0]) > 3, 'der Reiter hat sich zwischen den Schüssen bewegt (' + Math.abs(shots[shots.length - 1].from[0] - shots[0].from[0]).toFixed(1) + ' Zellen)'); ok(shots.every(s => Math.hypot(s.to[0] - T.x, s.to[1] - T.y) < 2), 'alle Schüsse gehen auf das Ziel'); }
+  ok(Math.abs(path[path.length - 1] - path[0]) > 5, 'und er ist weitergeritten, nicht stehen geblieben (' + Math.abs(path[path.length - 1] - path[0]).toFixed(1) + ')');
+  // backing away: a spearman who never strikes chases the rider, which keeps its distance (a bogen, which does not kite, lets him come up)
+  const kite = (kindA) => {
+    const s = mk({ burgfrieden: 0 }); toFehde(s); const q = clearing(s, 0), A = stage(s, 0, kindA, q), B = stage(s, 1, 'speer', { x: q.x + 1.6, y: q.y }); A.hp = B.hp = 1e5; B._.cd = 1e9;
+    let near2 = 0, n = 0, shots2 = 0; for (let i = 0; i < secs(8); i++) { for (const e of s.step()) if (e.t === 'shot') shots2++; if (i > secs(2)) { n++; if (dist(A, B) < 2) near2++; } }
+    return { share: near2 / n, shots: shots2, d: dist(A, B) };
+  };
+  const kr = kite('reiterschuetze'), kb = kite('bogen');
+  ok(kb.share > 0.9, 'Kontrolle: der Bogenschütze lässt den Speerträger heran (' + (kb.share * 100).toFixed(0) + ' % der Zeit unter 2 Zellen)'); ok(kr.share < 0.35, 'der Reiterschütze hält Abstand zum Nahkämpfer (' + (kr.share * 100).toFixed(0) + ' % der Zeit unter 2 Zellen)');
+  ok(kr.shots >= 3, 'und schießt dabei weiter (' + kr.shots + ' Schüsse in 8 s)');
+  // a rider out of reach of any melee enemy does not run off; against a ritter (4.2 < 4.4) it still tries
+  const calm = mk({ burgfrieden: 0 }); toFehde(calm); const cp = clearing(calm, 0), CA = stage(calm, 0, 'reiterschuetze', cp); CA.hp = 1e5; run(calm, secs(3)); ok(dist(CA, cp) < 1.5, 'ohne Feind bleibt er stehen');
+}
+
+// ---- Phase 2: the Rammbock — no damage to people, arrows × 0.25, melee full; it moves at its own pace (speed 1.6) ----
+{
+  const f = duel('ramme', 'speer', 6); eq(f.n, 0, 'Rammbock schlägt Leute nicht (kein Treffer)'); eq(f.B.hp, 1e5, 'und richtet keinen Schaden an');
+  const d1 = duel('speer', 'ramme', 5); ok(d1.n >= 3, 'Speerträger schlagen den Rammbock'); for (const bl of d1.blows) near(bl.dmg, 8 * (bl.wetA ? C.WADE_DEALT : 1) * (bl.wetB ? C.WADE_TAKEN : 1), 1e-6, 'Nahkampf gegen den Rammbock: voller Schaden (8)');
+  const d2 = duel('bogen', 'ramme', 6, 2.5); ok(d2.n >= 3, 'Bogenschütze beschießt den Rammbock'); for (const bl of d2.blows) near(bl.dmg, 6 * C.ARROW_RAM * (bl.wetA ? C.WADE_DEALT : 1) * (bl.wetB ? C.WADE_TAKEN : 1), 1e-6, 'Pfeil gegen den Rammbock: × 0.25 = 1.5'); ok(d2.blows.some(bl => !bl.wetA && !bl.wetB && Math.abs(bl.dmg - 1.5) < 1e-6), 'mindestens ein trockener Treffer: genau 1.5');
+  const d3 = duel('ritter', 'ramme', 5); for (const bl of d3.blows) near(bl.dmg, 14 * (bl.wetA ? C.WADE_DEALT : 1) * (bl.wetB ? C.WADE_TAKEN : 1), 1e-6, 'Ritter gegen den Rammbock: voll (14)');
+  // a tower's arrow: 7 × 0.25
+  const tw = mk({ burgfrieden: 0 }); toFehde(tw); const t1 = placeAt(tw, 0, 'wachturm'), tc = { x: t1._.cx, y: t1._.cy }, kp = tw.dev.lord(0).keepB._;
+  let spot = null; for (let a = 0; a < 360 && !spot; a += 5) { const q = { x: tc.x + Math.cos(a * Math.PI / 180) * 6, y: tc.y + Math.sin(a * Math.PI / 180) * 6 }; if (!blockedAt(tw, q) && Math.hypot(q.x - kp.cx, q.y - kp.cy) > 13 && W.walk(tw.world, W.cellOf(q.x, q.y), 0) === 1) spot = q; }
+  if (spot) { const R = stage(tw, 1, 'ramme', spot); R.hp = 1e5; R._.cd = 1e9; const hp0 = R.hp, hits = []; let last = R.hp; for (let i = 0; i < secs(6); i++) { tw.step(); if (R.hp < last - 1e-9) { hits.push(last - R.hp); last = R.hp; } } ok(hits.length >= 2 && hits.every(h => Math.abs(h - 7 * C.ARROW_RAM) < 1e-9), 'Turmpfeil gegen den Rammbock: 7 × 0.25 = 1.75 (' + hits.join(',') + ')'); }
+  // marching: the banner goes at the ram's pace
+  const m = mk({ burgfrieden: 0 }); toFehde(m); const q = clearing(m, 0), R = stage(m, 0, 'ramme', q), S = m.dev.spawn(0, 'speer', q.x + 1, q.y, 1);
+  eq(m.dev.lord(0).bn[1].march, 1.6, 'der Zug marschiert im Tempo des Rammbocks (1.6)'); m.banner(0, 1, q.x + 3, q.y); const x0 = R.x; run(m, secs(2)); const mv = R.x - x0; ok(mv > 1.5 && mv < 3.6, 'der Rammbock rollt ≈ 1.6 Zellen je Sekunde (' + (mv / 2).toFixed(2) + ')');
+  eq(m.dev.lord(0).bn[1].members[0], R, 'er steht vorn im Aufgebot (Platz 0)');
+}
+
+
+// ---- Phase 2: walls — the closed 5 × 5 outline of wall pieces around a 3 × 3 yard (with `gate`: a Torhaus replaces the three top cells; its lane runs north–south) ----
+function ringOf(sim, l, ci, cj, kind, gate) {
+  const pieces = [], put = (i, j) => { const r = sim.dev.place(l, kind, i, j, 0, 1); if (!r.ok) throw new Error('ring ' + kind + ' ' + i + ',' + j + ': ' + r.reason); pieces.push(r.b); };
+  for (let d = -2; d <= 2; d++) { if (!gate || Math.abs(d) === 2) put(ci + d, cj - 2); put(ci + d, cj + 2); }
+  for (let d = -1; d <= 1; d++) { put(ci - 2, cj + d); put(ci + 2, cj + d); }
+  let th = null;
+  if (gate) { const r = sim.dev.place(l, 'torhaus', ci - 1, cj - 2, 0); if (!r.ok) throw new Error('Torhaus: ' + r.reason); th = r.b; }
+  const cx = -71.5 + ci, cy = -44.5 + cj;
+  return { pieces, th, mid: { x: cx, y: cy + (gate ? 1 : 0) }, inside: (u) => u.x > -72 + ci - 1 + 0.05 && u.x < -72 + ci + 2 - 0.05 && u.y > -45 + (gate ? cj : cj - 1) + 0.05 && u.y < -45 + cj + 2 - 0.05 };
+}
+const laneKs = (b) => W.laneOf(b.i, b.j, b.rot).cells.map(([i, j]) => j * GW + i);
+
+// ---- Phase 2: the Torhaus lane — open for the owner and its active pact partners, closed for everybody else; a site and a ruin are no gate ----
+{
+  const { sim, ci, cj } = patch(0), R = ringOf(sim, 0, ci, cj, 'mauer', true), th = R.th, lk = laneKs(th);
+  eq(lk.join(), [(cj - 2) * GW + ci, (cj - 1) * GW + ci].join(), 'die Gasse ist die Mittelspalte des Torhauses');
+  ok(lk.every(k => sim.dev.blk[k] === 1), 'die Grundmaske sperrt die Gasse für alle');
+  ok(lk.every(k => sim.dev.view(0)[k] === 0), 'der Besitzer darf durch'); ok(lk.every(k => sim.dev.view(1)[k] === 1) && lk.every(k => sim.dev.view(2)[k] === 1), 'andere Häuser nicht');
+  const flank = [(cj - 2) * GW + ci - 1, (cj - 1) * GW + ci + 1]; ok(flank.every(k => sim.dev.view(0)[k] === 1), 'die Turmflanken sperren auch den Besitzer'); ok(R.pieces.every(b => laneKs(th).indexOf(b.j * GW + b.i) < 0), 'kein Mauerstück liegt in der Gasse');
+  sim.pact(0, 1, true); eq(lk.every(k => sim.dev.view(1)[k] === 1), true, 'ein bloßes Angebot öffnet nichts'); sim.pact(1, 0, true); eq(sim.youOf(0).pacts.find(p => p.with === 1).state, 'active', 'Pakt aktiv');
+  ok(lk.every(k => sim.dev.view(1)[k] === 0), 'Paktpartner dürfen durch'); ok(lk.every(k => sim.dev.view(2)[k] === 1), 'Haus 2 weiter nicht'); ok(lk.every(k => sim.dev.view(0)[k] === 0), 'der Besitzer sowieso');
+  ok(flank.every(k => sim.dev.view(1)[k] === 1), 'die Flanken bleiben auch für Partner dicht'); ok(R.pieces.every(b => sim.dev.view(1)[b.j * GW + b.i] === 1), 'Mauern sperren auch Partner');
+  sim.pact(0, 1, false); ok(lk.every(k => sim.dev.view(1)[k] === 1), 'Pakt gebrochen: die Gasse ist wieder zu'); ok(lk.every(k => sim.dev.view(0)[k] === 0), 'dem Besitzer bleibt sie offen');
+  // a partner standing in the lane when the pact ends is moved out of it (the lane is a wall for him again)
+  sim.pact(0, 1, true); sim.pact(1, 0, true); const lanePt = { x: -71.5 + lk[0] % GW, y: -44.5 + Math.floor(lk[0] / GW) }, vs = sim.dev.spawn(1, 'speer', lanePt.x, lanePt.y, 1); run(sim, 2); ok(lk.indexOf(W.cellOf(vs.x, vs.y)) >= 0, 'der Partner steht in der Gasse (Pakt aktiv)'); sim.pact(0, 1, false); run(sim, 3);
+  ok(lk.indexOf(W.cellOf(vs.x, vs.y)) < 0 && !sim.dev.view(1)[W.cellOf(vs.x, vs.y)], 'Pakt beendet: er wurde aus der Gasse auf eine freie Zelle gesetzt'); vs.hp = 0; sim.dev.kill(vs);
+  // the breach view: enemy walls and gates are passable at BREACH_COST; own walls and a partner's never
+  const f1 = sim.dev.fview(1), f0 = sim.dev.fview(0), wk = R.pieces[0].j * GW + R.pieces[0].i;
+  eq(f1.B[wk], 0, 'für Haus 1 ist die Mauer von Haus 0 durchbrechbar'); near(f1.X[wk], C.BREACH_COST, 1e-9, '… zu BREACH_COST (60)'); ok(lk.every(k => f1.B[k] === 0 && Math.abs(f1.X[k] - C.BREACH_COST) < 1e-9), 'auch die Gasse und das Torhaus kosten 60 je Zelle'); ok(flank.every(k => f1.B[k] === 0 && f1.X[k] === 60), 'Flanken ebenso');
+  eq(f0.B[wk], 1, 'die eigene Mauer ist kein Ziel'); eq(f0.X, null, 'ohne Feindmauern: kein extra-Feld'); ok(lk.every(k => f0.B[k] === 0), 'eigene Gasse offen');
+  sim.pact(0, 1, true); sim.pact(1, 0, true); const fp = sim.dev.fview(1); eq(fp.B[wk], 1, 'mit Pakt sind Partnermauern nicht durchbrechbar'); eq(fp.X, null, 'kein extra'); ok(lk.every(k => fp.B[k] === 0), 'aber die Gasse ist offen'); sim.pact(0, 1, false);
+  // a Torhaus under construction is closed for the owner, too; a ruin is rubble for everybody
+  const s2 = patch(0); s2.sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 }); const site = s2.sim.build(0, 'torhaus', s2.ci - 1, s2.cj - 2, 0); eq(site.ok, true, 'Torhaus als Baustelle'); const sb = s2.sim.dev.lord(0).bld.find(b => b.id === site.id), sl = laneKs(sb);
+  ok(sl.every(k => s2.sim.dev.view(0)[k] === 1), 'Baustelle: die Gasse ist zu, auch für den Besitzer'); s2.sim.dev.finish(sb); ok(sl.every(k => s2.sim.dev.view(0)[k] === 0), 'fertig: sie geht auf (die Sicht wird neu berechnet)'); ok(sl.every(k => s2.sim.dev.view(1)[k] === 1), 'für Fremde weiter zu');
+  s2.sim.dev.damage(sb, 1e9, 1); const all6 = []; for (let dj = 0; dj < 2; dj++) for (let di = 0; di < 3; di++) all6.push((s2.cj - 2 + dj) * GW + s2.ci - 1 + di);
+  ok(all6.every(k => s2.sim.dev.blk[k] === 0 && s2.sim.dev.rub[k] === 1 && s2.sim.dev.view(1)[k] === 0), 'Torhaus zerstört: alle sechs Zellen sind Schutt, für jedes Haus begehbar'); ok(all6.every(k => s2.sim.occ[k] === WCODE('torhaus')), '(und zählen weiter als belegt)');
+  s2.sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 }); eq(s2.sim.build(0, 'torhaus', s2.ci - 1, s2.cj - 2, 0).ok, true, 'Wiederaufbau'); ok(all6.every(k => s2.sim.dev.blk[k] === 1 && s2.sim.dev.rub[k] === 0), 'als Baustelle wieder fest');
+}
+
+// ---- Phase 2: a banner walks through its own Torhaus; a banner of an enemy house has to break in ----
+{
+  const t = (who) => {   // who: 0 = the owner's banner leaves the yard through the gate, 1 = an enemy banner marches on the yard
+    const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 12);
+    const R = ringOf(sim, 0, ci, cj, 'mauer', true);
+    const log = [], us = [];
+    if (who === 0) {
+      sim.banner(0, 1, R.mid.x, R.mid.y); for (let i = 0; i < 4; i++) us.push(sim.dev.spawn(0, 'speer', R.mid.x - 0.8 + i * 0.5, R.mid.y + 0.4, 1));
+      const o = sim.banner(0, 1, c.x, c.y - 9); return { sim, R, us, o, c, log };
+    }
+    const sx = c.x + (dir || -1) * 9; sim.banner(1, 1, sx, c.y);
+    for (let i = 0; i < 6; i++) us.push(sim.dev.spawn(1, 'speer', sx + (i % 3) * 0.8, c.y - 1 + Math.floor(i / 3) * 0.8, 1));
+    sim.step(); const o = sim.banner(1, 1, R.mid.x, R.mid.y);
+    return { sim, R, us, o, c, log };
+  };
+  // the owner: out through the gate, nothing is damaged
+  const a = t(0), lane = laneKs(a.R.th); eq(a.o.ok, true, 'Befehl aus dem Hof hinaus angenommen'); const bn = a.sim.dev.lord(0).bn[1], tgt = { x: a.o.x, y: a.o.y };
+  let onLane = false, arrivedT = -1, breaches = 0; const t0 = a.sim.state.t;
+  until(a.sim, () => { for (const u of a.us) { const k = W.cellOf(u.x, u.y); if (lane.indexOf(k) >= 0) onLane = true; } return Math.hypot(bn.x - tgt.x, bn.y - tgt.y) < 1.5; }, secs(40), () => {}); arrivedT = a.sim.state.t - t0;
+  ok(Math.hypot(bn.x - tgt.x, bn.y - tgt.y) < 1.5, 'der Zug kommt draußen an (' + arrivedT.toFixed(1) + ' s)'); ok(onLane, 'und ging durch die Torgasse'); ok(a.R.pieces.every(b => b.hp === 1) && a.R.th.hp === 1, 'ohne dass ein Stück beschädigt wurde'); ok(a.us.every(u => u.hp > 0), 'alle Soldaten leben'); eq(a.sim.dev.lord(0).bn[1].breach, null, 'kein Durchbruch');
+  // …and back in: the yard is a reachable target for its own banner (no snapping away from it)
+  const back = a.sim.banner(0, 1, a.R.mid.x, a.R.mid.y); eq(back.reason, undefined, 'Ziel im Hof: erreichbar, ohne Verschiebung'); const b0 = a.sim.state.t; until(a.sim, () => Math.hypot(bn.x - a.R.mid.x, bn.y - a.R.mid.y) < 1.2, secs(40)); ok(Math.hypot(bn.x - a.R.mid.x, bn.y - a.R.mid.y) < 1.2, 'und der Zug kehrt durchs Tor heim (' + (a.sim.state.t - b0).toFixed(1) + ' s)');
+  // the enemy: no way in but breaking a wall; nobody stands in the yard before the first piece falls
+  const e = t(1); eq(e.o.ok, true, 'Befehl auf den Hof: angenommen (Bresche gilt als erreichbar)'); eq(e.o.reason, undefined, 'ohne zu snappen'); near(e.o.x, e.R.mid.x, 1e-9, 'Ziel unverändert');
+  let firstBreach = -1, insideBefore = false, insideAfter = false, nBreach = 0;
+  for (let i = 0; i < secs(150) && !insideAfter; i++) {
+    for (const ev of e.sim.step()) if (ev.t === 'breach') { nBreach++; if (firstBreach < 0) firstBreach = e.sim.state.t; }
+    for (const u of e.us) if (u.hp > 0 && e.R.inside(u)) { if (firstBreach < 0) insideBefore = true; else insideAfter = true; }
+  }
+  ok(firstBreach > 0 && nBreach >= 1, 'ein Stück wurde durchbrochen (breach-Ereignis)'); ok(!insideBefore, 'vor dem Durchbruch steht kein Feind im Hof'); ok(insideAfter, 'danach sind sie drin');
+  ok(e.R.pieces.some(b => b.ruined) || e.R.th.ruined, 'ein Stück liegt in Trümmern'); ok(e.us.filter(u => u.hp > 0).length >= 5, 'die Belagerer leben noch (keine Verteidiger, keine Türme)');
+}
+
+
+// ---- Phase 2: blows against wall pieces — VS_WALL for melee, ARROW_WALL for arrows, the ram 60 every 2 s ----
+{
+  // one attacker of house 1 stands next to a piece of house 0 (a banner standing within 3 of an enemy building attacks it); every drop of the piece's hit points is a blow
+  const against = (attacker, wallKind, secsRun, gap) => {
+    const { sim, ci, cj } = patch(0), wl = sim.dev.place(0, wallKind === 'torhaus' ? 'torhaus' : wallKind, wallKind === 'torhaus' ? ci - 1 : ci, wallKind === 'torhaus' ? cj - 1 : cj, 0, 1).b, bp = wl._;
+    const A = stage(sim, 1, attacker, { x: bp.x0 - (gap || 1.0), y: bp.cy }); A.hp = 1e5;
+    const drops = [], ev = []; let last = bp.hpAbs; const times = [];
+    for (let i = 0; i < secs(secsRun); i++) { for (const e of sim.step()) { ev.push(e); if (e.t === 'ram') times.push(sim.state.t); } if (bp.hpAbs < last - 1e-9) { drops.push(last - bp.hpAbs); last = bp.hpAbs; } }
+    return { sim, wl, bp, A, drops, ev, times, shots: ev.filter(e => e.t === 'shot').length };
+  };
+  const sp = against('speer', 'mauer', 10); ok(sp.drops.length >= 7, 'Speerträger schlägt die Mauer (' + sp.drops.length + ' Schläge in 10 s)'); ok(sp.drops.every(d => Math.abs(d - 8 * C.VS_WALL.speer) < 1e-9), 'Speerträger gegen die Mauer: 8 × 0.4 = 3.2 je Schlag (' + [...new Set(sp.drops)].join(',') + ')');
+  const rt = against('ritter', 'mauer', 10); ok(rt.drops.length >= 5, 'Ritter schlägt die Mauer'); ok(rt.drops.every(d => Math.abs(d - 14 * C.VS_WALL.ritter) < 1e-9), 'Ritter gegen die Mauer: 14 × 0.25 = 3.5 (' + [...new Set(rt.drops)].join(',') + ')');
+  const sp2 = against('speer', 'palisade', 6); ok(sp2.drops.length >= 4 && sp2.drops.every(d => Math.abs(d - 3.2) < 1e-9), 'Speerträger gegen die Palisade: ebenfalls 3.2'); ok(sp2.drops.reduce((a, b) => a + b, 0) > 12, '(150 HP: sie hält länger als 40 s nicht)');
+  const spT = against('speer', 'torhaus', 8, 1.0); ok(spT.drops.length >= 4 && spT.drops.every(d => Math.abs(d - 3.2) < 1e-9), 'Speerträger gegen das Torhaus: 3.2 (VS_WALL gilt auch für Tore)');
+  // arrows: nothing against stone — and archers do not even stand there shooting at it — 0.15 against palisades
+  const bm = against('bogen', 'mauer', 12, 3.0); eq(bm.drops.length, 0, 'Bogenschütze gegen die Mauer: kein Schaden'); eq(bm.shots, 0, 'er schießt gar nicht erst auf Stein'); eq(bm.bp.hpAbs, bm.bp.maxHp, 'Mauer unversehrt');
+  const bp2 = against('bogen', 'palisade', 12, 3.0); ok(bp2.drops.length >= 3, 'Bogenschütze gegen die Palisade: er trifft (' + bp2.drops.length + ')'); ok(bp2.drops.every(d => Math.abs(d - 6 * C.ARROW_WALL.holz) < 1e-9), 'Pfeil gegen die Palisade: 6 × 0.15 = 0.9 (' + [...new Set(bp2.drops)].join(',') + ')');
+  const rm = against('reiterschuetze', 'mauer', 8, 3.0); eq(rm.drops.length, 0, 'Reiterschütze gegen die Mauer: nichts'); const rp = against('reiterschuetze', 'palisade', 8, 3.0); ok(rp.drops.length >= 2 && rp.drops.every(d => Math.abs(d - 0.9) < 1e-9), 'Reiterschütze gegen die Palisade: 0.9');
+  const bh = against('bogen', 'torhaus', 8, 3.0); eq(bh.drops.length, 0, 'Pfeile gegen das Torhaus (Stein): 0');
+  // the ram: no blow for 2 s, then 60 every 2 s; hit and ram events at the same moments; against a hut it is just as strong
+  const rm1 = against('ramme', 'mauer', 14, 2.0); ok(rm1.times.length >= 4, 'Rammbock schlägt zu (' + rm1.times.length + ' Schläge)'); ok(rm1.drops.every(d => Math.abs(d - 60) < 1e-9), 'Rammbock gegen die Mauer: 60 je Schlag (' + [...new Set(rm1.drops)].join(',') + ')');
+  ok(rm1.times.every((t, i) => i === 0 || Math.abs(t - rm1.times[i - 1] - 2) < 0.07), 'alle 2.0 s (Schläge landen am Ende des Ausholens: ' + rm1.times.map(t => t.toFixed(1)).join(', ') + ')'); eq(rm1.drops.length, rm1.times.length, 'jeder ram-Ereignis ist ein Treffer'); eq(Object.keys(rm1.ev.find(e => e.t === 'ram')).join(), 't,id,x,y', 'ram-Felder');
+  ok(rm1.ev.filter(e => e.t === 'hit' && e.id === rm1.wl.id).length === rm1.times.length, 'und je ein hit-Ereignis');
+  { const a = against('ramme', 'mauer', 6, 2.0); const anims = []; const s2 = a.sim; for (let i = 0; i < secs(3); i++) { s2.step(); anims.push(a.A.anim); } ok(anims.filter(x => x === 'fight').length > anims.length * 0.6, 'der Rammbock zeigt das Ausholen als fight (Anim 2) – ' + anims.filter(x => x === 'fight').length + ' von ' + anims.length); }
+  { const s = mk({ burgfrieden: 0 }); toFehde(s); const hut = placeAt(s, 1, 'huette'), bp = hut._; for (const u of unitsOf(s, 1, 'bauer')) s.dev.kill(u); const spot = [[bp.cx, bp.y1 + 1.0], [bp.cx, bp.y0 - 1.0], [bp.x1 + 1.0, bp.cy], [bp.x0 - 1.0, bp.cy]].map(([x, y]) => ({ x, y })).find(q => !blockedAt(s, q)); const R = stage(s, 0, 'ramme', spot); R.hp = 1e5; const l = run(s, secs(5)); ok(ofType(l, 'ram').length >= 1 && ofType(l, 'ram').every(e => e.id === hut.id), 'der Rammbock schlägt auch eine Hütte'); near(hut._.maxHp - hut._.hpAbs, 60 * ofType(l, 'ram').length, 1e-9, 'Hütte: 60 je Schlag (VS_BUILDING.ramme 1)'); }
+}
+
+// ---- Phase 2: breaching — the field leads to the cheapest breach; an open way beats it; a ram is faster than troops ----
+{
+  const price = (kind) => {   // the travel field of an enemy banner at its start cell: free ground, a closed ring of `kind`
+    const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 12) || -1;
+    const R = kind ? ringOf(sim, 0, ci, cj, kind, false) : { mid: { x: c.x, y: c.y } };
+    const sx = c.x + dir * 8; sim.banner(1, 1, sx, c.y); sim.dev.spawn(1, 'speer', sx, c.y, 1); sim.step(); const r = sim.banner(1, 1, R.mid.x, R.mid.y);
+    const bn = sim.dev.lord(1).bn[1], f = sim.dev.field(bn); return { v: f[W.cellOf(sx, c.y)], r };
+  };
+  const free = price(null), mau = price('mauer'), pal = price('palisade');
+  ok(free.v > 5 && free.v < 12, 'freies Feld: ≈ 8 Zellen (' + free.v.toFixed(2) + ')'); near(mau.v - free.v, C.BREACH_COST, 2.5, 'ein Ring aus Mauern: + BREACH_COST (' + (mau.v - free.v).toFixed(1) + ')'); near(pal.v - free.v, C.BREACH_COST * C.BREACH_MUL.palisade, 2.5, 'ein Ring aus Palisaden: + 24 (' + (pal.v - free.v).toFixed(1) + ')');
+  eq(mau.r.ok, true, 'Befehl in den geschlossenen Ring: angenommen'); eq(mau.r.reason, undefined, 'ohne Verschiebung (die Bresche gilt als Weg)');
+  // an open way is taken when the detour is cheaper than breaking: a wall of 4 across the road, the target behind it
+  { const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 12) || -1; const wl = sim.dev.place(0, 'mauer', ci, cj - 2, 1, 4).b;
+    const sx = c.x + dir * 6; sim.banner(1, 1, sx, c.y); const us = []; for (let i = 0; i < 4; i++) us.push(sim.dev.spawn(1, 'speer', sx, c.y - 1 + i * 0.7, 1)); sim.step(); const tg = { x: c.x - dir * 4.5, y: c.y }; const o = sim.banner(1, 1, tg.x, tg.y); eq(o.reason, undefined, 'Ziel hinter der Mauer: erreichbar');
+    const bn = sim.dev.lord(1).bn[1]; let sawBreach = false, nb = 0; for (let i = 0; i < secs(30) && Math.hypot(bn.x - tg.x, bn.y - tg.y) > 1.2; i++) { for (const e of sim.step()) if (e.t === 'breach') nb++; if (bn.breach) sawBreach = true; }
+    ok(Math.hypot(bn.x - tg.x, bn.y - tg.y) <= 1.2, 'der Zug umgeht die Mauer und kommt an (' + sim.state.t.toFixed(0) + ' s)'); ok(!sawBreach && nb === 0, 'er greift sie nicht an'); eq(wl.hp, 1, 'die Mauer ist unversehrt'); eq(us.filter(u => u.hp > 0).length, 4, 'alle leben'); }
+  // times: 4 spearmen, a ram, both — against a ring of single stones around the target
+  const siege = (nSpear, ram) => {
+    const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 12) || -1, R = ringOf(sim, 0, ci, cj, 'mauer', false);
+    const sx = c.x + dir * 9; sim.banner(1, 1, sx, c.y); const us = []; for (let i = 0; i < nSpear; i++) us.push(sim.dev.spawn(1, 'speer', sx + (i % 3) * 0.8, c.y - 1 + Math.floor(i / 3) * 0.8, 1)); if (ram) us.push(sim.dev.spawn(1, 'ramme', sx - 1, c.y, 1));
+    sim.step(); const o = sim.banner(1, 1, R.mid.x, R.mid.y), bn = sim.dev.lord(1).bn[1], t0 = sim.state.t; let tB = -1, tIn = -1, brId = null, firstId = null, held = false;
+    for (let i = 0; i < secs(140) && tIn < 0; i++) { if (bn.breach) { brId = bn.breach.id; held = true; } for (const e of sim.step()) if (e.t === 'breach' && tB < 0) { tB = sim.state.t - t0; firstId = e.id; } if (Math.hypot(bn.x - R.mid.x, bn.y - R.mid.y) < 1) tIn = sim.state.t - t0; }
+    return { tB, tIn, brId, firstId, held, ruined: R.pieces.filter(b => b.ruined).length, sim, R, bn, o };
+  };
+  const a = siege(4, false), b = siege(0, true), c3 = siege(4, true);
+  ok(a.tB > 0 && a.tIn > 0, 'vier Speerträger brechen durch und erreichen das Ziel (' + a.tB.toFixed(0) + ' s / ' + a.tIn.toFixed(0) + ' s)'); ok(a.held, 'der Zug hielt an der Mauer (breach gesetzt)'); eq(a.firstId, a.brId, 'das Stück, das fiel, war das bezeichnete'); eq(a.ruined, 1, 'genau ein Stück liegt in Trümmern');
+  near(a.tB, 450 / (4 * 8 * C.VS_WALL.speer / 1.0) + 9 / 2.6, 12, 'Zeit ≈ Weg + 450 HP / (4 × 3.2 je s) = ' + (450 / 12.8 + 9 / 2.6).toFixed(0) + ' s (war ' + a.tB.toFixed(0) + ')');
+  ok(b.tB > 0 && b.tIn > 0, 'ein Rammbock allein bricht durch und kommt an (' + b.tB.toFixed(0) + ' s / ' + b.tIn.toFixed(0) + ' s)'); ok(b.tB < a.tB * 0.7, 'der Rammbock ist deutlich schneller als vier Speerträger (' + b.tB.toFixed(0) + ' s gegen ' + a.tB.toFixed(0) + ' s)'); near(b.tB, 9 / 1.6 + 450 / 60 * 2, 5, 'Rammbock: Weg bei Tempo 1.6 plus 8 Schläge zu 2 s (' + b.tB.toFixed(0) + ' s)');
+  ok(c3.tB > 0 && c3.tIn > 0 && c3.tB <= b.tB + 1, 'Rammbock mit Speerträgern: nicht langsamer als der Rammbock allein (' + c3.tB.toFixed(0) + ' s)'); ok(c3.tIn < a.tIn, 'und früher am Ziel als die Speerträger allein (' + c3.tIn.toFixed(0) + ' s gegen ' + a.tIn.toFixed(0) + ' s)');
+  // after the fall the way is rubble: free for everybody, slower (see the next block)
+  const hole = a.R.pieces.find(p => p.ruined); ok(hole && a.sim.dev.blk[hole.j * GW + hole.i] === 0 && a.sim.dev.rub[hole.j * GW + hole.i] === 1, 'die Bresche ist Schutt: begehbar, nicht blockiert');
+}
+
+// ---- Phase 2: rubble — a ruined wall piece is passable at RUBBLE_SLOW (0.6 × speed), still occupies the footprint, can be rebuilt ----
+{
+  const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 14);
+  const wl = sim.dev.place(0, 'mauer', ci - 2, cj, 0, 4).b; sim.dev.damage(wl, 1e9, 1);
+  const ks = []; for (let d = 0; d < 4; d++) ks.push(cj * GW + ci - 2 + d);
+  ok(ks.every(k => sim.dev.rub[k] === 1 && sim.dev.blk[k] === 0 && sim.occ[k] === WCODE('mauer')), 'Schutt: kein Block, aber belegt'); ok(ks.every(k => sim.dev.view(0)[k] === 0 && sim.dev.view(1)[k] === 0), 'für jedes Haus begehbar');
+  eq(sim.build(0, 'huette', ci - 1, cj - 1, 0).reason, 'occupied', 'darauf baut man nichts anderes'); eq(sim.build(0, 'huette', ci, cj - 2, 0).reason, 'tight', 'und daneben nichts dicht heran');
+  // speed: a lone soldier walks along the rubble strip: its leader moves at 0.6 of the pace on the strip, at full pace beside it
+  const along = (row) => {
+    const s = mk({ burgfrieden: 0 }); toFehde(s); const q = clearing(s, 0), cj2 = Math.floor(q.y + 45), ci2 = Math.floor(q.x + 72);
+    const w2 = s.dev.place(0, 'mauer', ci2 - 2, cj2, 0, 4).b; s.dev.damage(w2, 1e9, 1);
+    const y = -44.5 + cj2 + row, u = stage(s, 0, 'speer', { x: -71.5 + ci2 - 3, y }); const bn = s.dev.lord(0).bn[1]; s.banner(0, 1, -71.5 + ci2 + 3, y);
+    const sp = []; let prev = bn.x; for (let i = 0; i < secs(4); i++) { s.step(); const k = W.cellOf(bn.x, bn.y); if (bn.x > prev + 1e-9 && k >= 0) sp.push({ v: (bn.x - prev) * 15, rub: s.dev.rub[k] }); prev = bn.x; }
+    return { on: sp.filter(z => z.rub), off: sp.filter(z => !z.rub) };
+  };
+  const onR = along(0), offR = along(2); const avg = (a) => a.reduce((x, z) => x + z.v, 0) / (a.length || 1);
+  ok(onR.on.length >= 8, 'der Zug läuft über den Schutt (' + onR.on.length + ' Schritte)'); near(avg(onR.on) / avg(onR.off.length ? onR.off : offR.off), C.RUBBLE_SLOW, 0.08, 'auf dem Schutt 0.6 × Tempo (' + avg(onR.on).toFixed(2) + ' gegen ' + avg(onR.off).toFixed(2) + ')');
+  ok(offR.on.length === 0 && offR.off.length > 10, 'zwei Zellen daneben: volles Tempo (' + avg(offR.off).toFixed(2) + ')');
+  // rebuild the same piece: half the cost, same id, the cells are solid again
+  sim.dev.stock(0, { stein: 30 }); eq(sim.build(0, 'mauer', ci - 2, cj, 0, 4).ok, true, 'Wiederaufbau'); eq(sim.youOf(0).stock.stein, 30 - 4, 'halbe Kosten: 8 → 4'); ok(ks.every(k => sim.dev.blk[k] === 1 && sim.dev.rub[k] === 0), 'als Baustelle wieder fest');
+  // a ruined Wachturm (not a wall piece) keeps blocking
+  const tw = placeAt(sim, 0, 'wachturm'); sim.dev.damage(tw, 1e9, 1); const twk = []; for (let dj = 0; dj < 2; dj++) for (let di = 0; di < 2; di++) twk.push((tw.j + dj) * GW + tw.i + di); ok(twk.every(k => sim.dev.blk[k] === 1 && sim.dev.rub[k] === 0), 'die Ruine eines Wachturms blockt weiter');
+}
+
+// ---- Phase 2: fire — torch-bearers ignite palisades (they burn and spread), stone walls never burn ----
+{
+  const { sim, ci, cj } = patch(0); sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 }); keepWell(false);
+  const pa = sim.dev.place(0, 'palisade', ci - 3, cj - 2, 0, 4).b, pb = sim.dev.place(0, 'palisade', ci - 3, cj, 0, 4).b, mu = sim.dev.place(0, 'mauer', ci - 3, cj + 2, 0, 4).b;
+  eq(sim.dev.fire(mu, 0.5, 1), false, 'eine Mauer lässt sich nicht anzünden'); eq(mu.fire, 0, 'Mauer: fire 0'); eq(sim.dev.fire(pa, 0.5, 1), true, 'die Palisade schon');
+  const l = run(sim, 1); eq(ofType(l, 'ignite').length, 1, 'ignite-Ereignis'); eq(ofType(l, 'ignite')[0].id, pa.id, 'für die Palisade'); eq(ofType(l, 'ignite')[0].by, 1, 'von Haus 1');
+  // 600 HP: it burns for a good while and sets the neighbour (2 cells away) alight after SPREAD_AFTER_S above 0.6; the stone wall next to that one stays cold
+  let tSpread = -1, tRuin = -1; const t0 = sim.state.t; for (let i = 0; i < secs(60) && tRuin < 0; i++) { for (const e of sim.step()) if (e.t === 'ruined' && e.id === pa.id) tRuin = sim.state.t - t0; if (tSpread < 0 && pb.fire > 0) tSpread = sim.state.t - t0; }
+  ok(tSpread > 0, 'das Feuer springt auf die Nachbarpalisade über (nach ' + tSpread.toFixed(1) + ' s)'); near(tSpread, 3.3 + C.SPREAD_AFTER_S, 2.5, 'frühestens nach SPREAD_AFTER_S über 0.6 (≈ 11 s)'); ok(tRuin > tSpread, 'die erste brennt noch eine Weile (Ruine nach ' + tRuin.toFixed(0) + ' s)');
+  ok(tRuin > 20 && tRuin < 60, 'eine Palisade mit 600 HP brennt in ' + tRuin.toFixed(0) + ' s nieder'); eq(mu.fire, 0, 'die Steinmauer bleibt kalt'); eq(pa.ruined, true, 'Ruine'); eq(sim.dev.rub[pa.j * GW + pa.i], 1, 'Brandschutt ist begehbar'); eq(sim.dev.lord(1).by.buildings + '/' + sim.dev.lord(1).stats.razed, '0/0', 'für niedergebrannte Wände gibt es weder Ruhm noch eine Zerstörung gutgeschrieben');
+  keepWell(true);
+  // a torch-bearer of its own: runs to a palisade within 15 of its banner target and lights it
+  const t2 = patch(0), s2 = t2.sim; keepWell(false); const pl = s2.dev.place(0, 'palisade', t2.ci, t2.cj, 1, 3).b; for (const u of unitsOf(s2, 0, 'bauer')) s2.dev.kill(u);
+  const f = stage(s2, 1, 'fackel', { x: -71.5 + t2.ci - 6, y: -44.5 + t2.cj + 1 }, 1); const log = run(s2, secs(12)); keepWell(true);
+  const ig = ofType(log, 'ignite'); ok(ig.length >= 1 && ig[0].id === pl.id && ig[0].by === 1, 'der Fackelträger zündet die Palisade (' + ig.length + ' Ereignis)'); ok(pl.fire > 0 || pl.ruined, 'sie brennt');
+}
+
+
+// ---- Phase 2: the Wehrgang — archers garrison walls, gatehouses and watchtowers ----
+// every building's `garrison` is the number of units whose `on` is its id, slots are unique and below the capacity (checked here and in the long runs)
+function garrisonOk(sim) {
+  const per = {}, slots = {};
+  for (const u of sim.state.units) {
+    if (u.on === null) { if (u.slot !== -1) return 'slot ohne on bei ' + u.id; continue; }
+    const b = sim.state.buildings.find(x => x.id === u.on); if (!b) return 'on zeigt auf kein Gebäude (' + u.on + ')';
+    if (u.kind !== 'bogen') return 'nur Bogenschützen im Wehrgang, nicht ' + u.kind;
+    const cap = W.slotsOf(b.kind, b.len); if (!(u.slot >= 0 && u.slot < cap)) return 'slot ' + u.slot + ' außerhalb 0..' + (cap - 1);
+    if (b.ruined || b.build < 1) return 'Besatzung in einem unfertigen oder zerstörten Gebäude';
+    per[b.id] = (per[b.id] || 0) + 1; const key = b.id + ':' + u.slot; if (slots[key]) return 'Platz doppelt belegt ' + key; slots[key] = 1;
+  }
+  for (const b of sim.state.buildings) if (b.garrison !== (per[b.id] || 0)) return 'garrison ' + b.garrison + ' ≠ gezählt ' + (per[b.id] || 0) + ' bei ' + b.kind + ' ' + b.id;
+  return null;
+}
+// a finished building of kind at the first valid cell around (cx, cy) of house l (ring search); returns the building or null
+function placeNear(sim, l, kind, cx, cy, rot, len) {
+  const i0 = Math.floor(cx + 72), j0 = Math.floor(cy + 45);
+  for (let r = 0; r <= 8; r++) for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) { if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue; const res = sim.dev.place(l, kind, i0 + di, j0 + dj, rot || 0, len); if (res.ok) return res.b; }
+  return null;
+}
+{
+  const { sim, c, ci, cj } = patch(0), st = sim.state;
+  const wall = sim.dev.place(0, 'mauer', ci - 2, cj, 0, 4).b, bp = wall._;
+  const sx = c.x - 1, sy = c.y + 3; sim.banner(0, 1, sx, sy);
+  const as = [], sps = []; for (let i = 0; i < 6; i++) as.push(sim.dev.spawn(0, 'bogen', sx - 2 + i * 0.7, sy, 1)); for (let i = 0; i < 2; i++) sps.push(sim.dev.spawn(0, 'speer', sx - 0.5 + i * 0.7, sy + 0.8, 1));
+  run(sim, 2); eq(wall.garrison, 0, 'ohne Befehl: keine Besatzung (auch wenn die Bogenschützen daneben stehen)');
+  const o = sim.banner(0, 1, c.x, c.y); eq(o.ok, true, 'Befehl auf die eigene Mauer'); eq(o.garrison, true, 'die Antwort sagt: Besatzungsbefehl'); ok(o.reason === 'snapped', 'das Ziel selbst wird an eine freie Zelle neben der Mauer verlegt (' + o.reason + ')');
+  const log = run(sim, secs(14)), ge = ofType(log, 'garrison');
+  eq(wall.garrison, 4, 'vier Plätze, vier Bogenschützen drin (buildings[].garrison)'); eq(ge.length, 4, 'vier garrison-Ereignisse'); ok(ge.every(e => e.on === true && e.id === wall.id && e.lord === 0), 'on: true, id der Mauer'); eq(Object.keys(ge[0]).join(), 't,lord,id,unit,on', 'garrison-Felder');
+  const inside = as.filter(u => u.on === wall.id); eq(inside.length, 4, 'units[].on = die Id der Mauer'); eq(inside.map(u => u.slot).sort().join(), '0,1,2,3', 'jeder Platz genau einmal'); eq(sps.filter(u => u.on !== null).length, 0, 'Speerträger gehen nicht hinein (nur Bogenschützen)'); eq(as.filter(u => u.on === null).length, 2, 'zwei Bogenschützen bleiben unten (der Rest formiert sich dahinter)');
+  for (const u of inside) { near(u.x, bp.x0 + u.slot + 0.5, 1e-9, 'Platz ' + u.slot + ': x auf der Mauerkrone'); near(u.y, bp.y0 + 0.5, 1e-9, 'Platz ' + u.slot + ': y'); ok(u.hp === 40, 'unverletzt'); }
+  eq(garrisonOk(sim), null, 'Besatzung stimmig'); eq(st.banners[0].count, 8, 'sie bleiben im Banner (count 8)'); eq(sim.youOf(0).banners[0].count, 8, 'auch in youOf.banners'); ok(as.every(u => u.n === 1) && sps.every(u => u.n === 1), 'n bleibt 1');
+  ok(until(sim, () => false, secs(4), () => {}).log.every(e => e.t !== 'garrison'), 'danach keine weiteren Wechsel'); eq(wall.garrison, 4, 'noch vier');
+  // an order near the same wall (within 4 of it) keeps them; a different one sends them away
+  const o2 = sim.banner(0, 1, c.x + 1, c.y + 0.5); eq(o2.garrison, true, 'zweiter Befehl an derselben Mauer'); const l2 = run(sim, secs(3)); eq(ofType(l2, 'garrison').length, 0, 'sie bleiben oben'); eq(wall.garrison, 4, 'weiter vier');
+  const o3 = sim.banner(0, 1, c.x, c.y + 6); eq(o3.garrison, undefined, 'ein Befehl woanders hat kein garrison'); const l3 = run(sim, 2); const out = ofType(l3, 'garrison'); eq(out.length, 4, 'vier Abgänge'); ok(out.every(e => e.on === false), 'on: false'); eq(wall.garrison, 0, 'garrison 0');
+  ok(inside.every(u => u.on === null && u.slot === -1), 'on null, slot −1'); ok(inside.every(u => { const k = W.cellOf(u.x, u.y); return k >= 0 && !sim.dev.view(0)[k]; }), 'sie stehen auf freien Zellen'); eq(garrisonOk(sim), null, 'stimmig'); ok(inside.every(u => u.hp === 40), 'ohne Schaden');
+  const back = until(sim, () => as.every(u => Math.hypot(u.x - o3.x, u.y - o3.y) < 5), secs(15)); ok(back.hit, 'sie ziehen mit dem Banner zum neuen Ziel (Ziel ' + o3.x + ',' + o3.y + ': ' + as.map(u => u.x.toFixed(1) + ',' + u.y.toFixed(1) + (u.on !== null ? 'W' : '')).join(' ') + ')');
+  // an order within 1 of the wall but on an enemy house's wall, or beside the wall (2 away), is no garrison order
+  const o4 = sim.banner(0, 1, c.x, c.y + 2.6); eq(o4.garrison, undefined, 'zwei Zellen daneben: kein Besatzungsbefehl');
+  // home() sends every banner to the keep gate: the garrison steps down, too (and a banner that dies out forgets its garrison order)
+  sim.banner(0, 1, c.x + 0.5, c.y + 0.5); run(sim, secs(10)); ok(wall.garrison >= 1, 'wieder oben (' + wall.garrison + ')'); const lh = (sim.home(0), run(sim, 2)); ok(ofType(lh, 'garrison').filter(e => e.on === false).length >= 1 && wall.garrison === 0, 'home: alle steigen ab'); eq(garrisonOk(sim), null, 'stimmig');
+  sim.banner(0, 1, c.x + 0.5, c.y + 0.5); run(sim, secs(10)); for (const u of sps.concat(as)) sim.dev.kill(u); run(sim, 2); eq(sim.dev.lord(0).bn[1].gar, false, 'ein ausgestorbenes Banner vergisst den Besatzungsbefehl'); eq(wall.garrison, 0, 'und die Mauer ist leer'); eq(garrisonOk(sim), null, 'stimmig');
+}
+{
+  // capacities and the order of buildings: the nearest slot first; a Torhaus holds 4, a Wachturm 3, a Mauer one per cell
+  const { sim, c, ci, cj } = patch(0);
+  const w2 = sim.dev.place(0, 'mauer', ci - 2, cj, 0, 2).b, tw = sim.dev.place(0, 'wachturm', ci + 2, cj - 1, 0).b;
+  sim.banner(0, 1, c.x, c.y + 4); const as = []; for (let i = 0; i < 8; i++) as.push(sim.dev.spawn(0, 'bogen', c.x - 3 + i * 0.7, c.y + 4.5, 1)); sim.step();
+  const o = sim.banner(0, 1, c.x - 1, c.y); eq(o.garrison, true, 'Befehl an der Mauer (Wachturm 2.5 daneben)'); run(sim, secs(14));
+  eq(w2.garrison + '/' + tw.garrison, '2/3', 'Mauer len 2: zwei Plätze, Wachturm: drei – dazu reichen die Plätze der Gebäude im Umkreis von 4 (' + as.filter(u => u.on !== null).length + ' von 8 drin)'); eq(garrisonOk(sim), null, 'stimmig'); eq(as.filter(u => u.on === null).length, 3, 'die anderen drei stehen hinter ihnen');
+  eq(JSON.stringify(as.filter(u => u.on === tw.id).map(u => u.slot).sort()), '[0,1,2]', 'Wachturm: Plätze 0 bis 2');
+  // nearest first: with fewer archers than slots, the slots nearest to the order are taken first
+  const s2 = patch(0), w3 = s2.sim.dev.place(0, 'mauer', s2.ci - 2, s2.cj, 0, 4).b, t3 = s2.sim.dev.place(0, 'wachturm', s2.ci + 3, s2.cj - 1, 0).b;
+  s2.sim.banner(0, 1, s2.c.x, s2.c.y + 4); const bs = []; for (let i = 0; i < 3; i++) bs.push(s2.sim.dev.spawn(0, 'bogen', s2.c.x - 1 + i * 0.7, s2.c.y + 4.5, 1)); s2.sim.step(); s2.sim.banner(0, 1, s2.c.x - 0.5, s2.c.y); run(s2.sim, secs(14));
+  eq(w3.garrison + '/' + t3.garrison, '3/0', 'drei Bogenschützen: alle auf die nähere Mauer (nächster Platz zuerst)'); eq(garrisonOk(s2.sim), null, 'stimmig');
+  // Torhaus: four places on the towers; the order may be on the gate's flank
+  const s3 = patch(0), R = ringOf(s3.sim, 0, s3.ci, s3.cj, 'mauer', true); s3.sim.banner(0, 1, R.mid.x, R.mid.y); const cs = []; for (let i = 0; i < 6; i++) cs.push(s3.sim.dev.spawn(0, 'bogen', R.mid.x - 1 + (i % 3) * 0.8, R.mid.y + (i >> 1 & 1) * 0.6, 1));
+  s3.sim.step(); const tOrder = s3.sim.banner(0, 1, -71.5 + s3.ci, -44.5 + s3.cj - 1.5); eq(tOrder.garrison, true, 'Befehl auf das Torhaus'); run(s3.sim, secs(14)); eq(R.th.garrison, 4, 'Torhaus: vier Plätze (+ die Mauerstücke in der Nähe: ' + R.pieces.reduce((a, b) => a + b.garrison, 0) + ')'); eq(garrisonOk(s3.sim), null, 'stimmig');
+  eq(cs.filter(u => u.on === R.th.id).map(u => u.slot).sort().join(), '0,1,2,3', 'Plätze 0–3 des Torhauses'); ok(cs.filter(u => u.on !== null && u.on !== R.th.id).every(u => R.pieces.some(p => p.id === u.on)), 'der Rest steht auf den Mauerstücken daneben');
+  // Torhaus slots sit on the four tower cells
+  for (const u of cs.filter(u => u.on === R.th.id)) { const b = R.th._; near(u.x, b.x0 + 0.5 + (u.slot >> 1) * 2, 1e-9, 'Torhaus-Platz ' + u.slot + ': x'); near(u.y, b.y0 + 0.5 + (u.slot & 1), 1e-9, 'Torhaus-Platz ' + u.slot + ': y'); }
+}
+{
+  // inside: +3 range (12 instead of 9), arrows × 0.5, melee cannot reach
+  const setup = (garrison) => {
+    const { sim, c, ci, cj } = patch(0), dir = dryDir(sim, c, 14) || 1, wall = sim.dev.place(0, 'mauer', ci - 2, cj, 0, 4).b;
+    sim.banner(0, 1, c.x, c.y + 4); const A = sim.dev.spawn(0, 'bogen', c.x, c.y + 4, 1); A.hp = 1e5; sim.step();
+    if (garrison) { sim.banner(0, 1, c.x, c.y); run(sim, secs(8)); }
+    return { sim, c, A, wall, dir };
+  };
+  {   // reach: an enemy 11 away, who stands still and never shoots, is hit from the wall, not from the ground
+    const mkT = (garrison) => { const s = setup(garrison), slotY = s.wall._.cy; if (garrison) eq(s.A.on, s.wall.id, 'Bogenschütze steht auf der Mauer'); const x0 = s.A.x, y0 = s.A.y; s.sim.banner(1, 1, x0 + s.dir * 11, y0); const T = s.sim.dev.spawn(1, 'bogen', x0 + s.dir * 11, y0, 1); T.hp = 1e5; T._.cd = 1e9; return { ...s, T, x0, y0 }; };
+    const g = mkT(true), n = mkT(false), d11 = (u, T) => Math.hypot(u.x - T.x, u.y - T.y);
+    const shotsOf = (s) => { const out = []; for (let i = 0; i < secs(1.2); i++) for (const e of s.sim.step()) if (e.t === 'shot') out.push(e); return out; };
+    const gs = shotsOf(g); ok(gs.length >= 1, 'von der Mauer wird auf 11 geschossen (' + gs.length + ')'); ok(gs.every(e => Math.hypot(e.from[0] - g.A.x, e.from[1] - g.A.y) < 0.01 && Math.hypot(e.to[0] - e.from[0], e.to[1] - e.from[1]) > 9.5), 'Schüsse starten auf der Mauer und fliegen weiter als 9 (' + gs.map(e => Math.hypot(e.to[0] - e.from[0], e.to[1] - e.from[1]).toFixed(1)).join(',') + ')');
+    const ns = shotsOf(n); ok(ns.every(e => Math.hypot(e.to[0] - e.from[0], e.to[1] - e.from[1]) <= 9.05), 'zum Vergleich: am Boden schießt er nie weiter als 9');
+  }
+  {   // arrows deal half against a garrisoned archer
+    const dmgs = (garrison) => { const s = setup(garrison), ep = dryPoint(s.sim, s.A, 5); s.sim.banner(1, 1, ep.x, ep.y); const E = s.sim.dev.spawn(1, 'bogen', ep.x, ep.y, 1); E.hp = 1e5; if (!garrison) s.A._.cd = 1e9; const out = []; let last = s.A.hp; for (let i = 0; i < secs(8); i++) { s.sim.step(); if (s.A.hp < last - 1e-9) { out.push(last - s.A.hp); last = s.A.hp; } } return out; };
+    const gd = dmgs(true), nd = dmgs(false);
+    ok(gd.length >= 3 && gd.every(d => Math.abs(d - 3) < 1e-9), 'Pfeil gegen einen Bogenschützen auf der Mauer: 6 × 0.5 = 3 (' + [...new Set(gd)].join(',') + ')'); ok(nd.length >= 3 && nd.every(d => Math.abs(d - 6) < 1e-9), 'am Boden: 6 (' + [...new Set(nd)].join(',') + ')');
+  }
+  {   // melee: a spearman at the foot of the wall hits the wall, never the archer on it
+    const s = setup(true), P = { x: s.A.x, y: s.wall._.y1 + 0.9 }, sp = stage(s.sim, 1, 'speer', P); sp.hp = 1e5; let tuHit = false, hurt = 0, wallDrops = 0; let lastW = s.wall._.hpAbs;
+    for (let i = 0; i < secs(10); i++) { s.sim.step(); if (sp._.tu === s.A) tuHit = true; if (s.wall._.hpAbs < lastW - 1e-9) { wallDrops++; lastW = s.wall._.hpAbs; } }
+    ok(!tuHit, 'der Nahkämpfer nimmt den Bogenschützen auf der Mauer nie ins Visier'); eq(s.A.hp, 1e5, 'und trifft ihn nie'); ok(wallDrops >= 5, 'er schlägt stattdessen die Mauer (' + wallDrops + ' Schläge)'); ok(sp.hp < 1e5, 'der Bogenschütze von oben trifft ihn (hp ' + (1e5 - sp.hp).toFixed(0) + ' Schaden)'); eq(garrisonOk(s.sim), null, 'stimmig');
+  }
+}
+{
+  // ruin: the garrison drops to free cells with 20 % damage; a weak one dies from the fall; cancel and the destroyer's credit; a kill inside frees the slot for the next archer
+  const fall = (kind) => {
+    const { sim, c, ci, cj } = patch(0), b = kind === 'mauer' ? sim.dev.place(0, 'mauer', ci - 2, cj, 0, 4).b : sim.dev.place(0, 'wachturm', ci - 1, cj - 1, 0).b;
+    sim.banner(0, 1, c.x, c.y + 4); const as = []; for (let i = 0; i < 4; i++) as.push(sim.dev.spawn(0, 'bogen', c.x - 1.5 + i * 0.8, c.y + 4.5, 1)); sim.step(); sim.banner(0, 1, c.x, c.y + (kind === 'mauer' ? 0 : -0.5)); run(sim, secs(12));
+    return { sim, b, as, c };
+  };
+  for (const kind of ['mauer', 'wachturm']) {
+    const f = fall(kind), n0 = f.as.filter(u => u.on === f.b.id).length; eq(n0, kind === 'mauer' ? 4 : 3, kind + ': ' + n0 + ' Mann drin');
+    const ins = f.as.filter(u => u.on === f.b.id); ins[0].hp = 6;   // the first one is weak: 20 % of 40 = 8 kills him
+    const bn = f.sim.dev.lord(0).bn[1]; const lg = (f.sim.dev.damage(f.b, 1e9, 1), run(f.sim, 1)), ge = ofType(lg, 'garrison');
+    eq(ge.filter(e => e.on === false).length, n0, kind + ': alle Abgänge gemeldet'); eq(f.b.garrison, 0, 'garrison 0'); ok(ins.every(u => u.on === null && u.slot === -1), 'on null');
+    eq(ins[0].hp, 0, 'der Schwache stirbt am Sturz'); const dth = ofType(lg, 'death'); ok(dth.length === 1 && dth[0].id === ins[0].id && dth[0].by === 1, 'death-Ereignis, Haus 1 hat die Mauer gebrochen: by 1');
+    for (const u of ins.slice(1)) near(u.hp, 40 - 8, 1e-9, 'Sturz: 20 % von 40 = 8 Schaden'); ok(ins.slice(1).every(u => { const k = W.cellOf(u.x, u.y); return k >= 0 && !f.sim.dev.view(0)[k]; }), 'die Überlebenden stehen auf freien Zellen');
+    ok(bn.members.length === n0 - 1 + 0 || bn.members.length >= n0 - 1, 'der Gefallene verlässt das Banner, die anderen bleiben'); eq(garrisonOk(f.sim), null, 'stimmig'); ok(ofType(lg, 'ruined').length === 1, 'ruined-Ereignis');
+  }
+  { const f = fall('mauer'); const l = (f.sim.cancel(0, f.b.id), run(f.sim, 1)); ok(ofType(l, 'garrison').filter(e => e.on === false).length === 4 && f.as.every(u => u.hp === 40 && u.on === null), 'Mauer abgerissen: die Besatzung steigt unverletzt ab'); eq(garrisonOk(f.sim), null, 'stimmig'); }
+  { const f = fall('mauer'), W5 = f.sim.dev.spawn(0, 'bogen', f.c.x, f.c.y + 3, 1); f.sim.step(); const ins = f.as.filter(u => u.on === f.b.id), killed = ins[1]; const l = (f.sim.dev.kill(killed, 1), run(f.sim, 1));
+    eq(f.b.garrison, 3, 'ein Gefallener auf der Mauer: garrison 3'); ok(killed.on === null || killed.hp <= 0, 'und der Platz ist frei'); eq(garrisonOk(f.sim), null, 'stimmig (ohne den Toten)'); run(f.sim, secs(5)); eq(f.b.garrison, 4, 'ein wartender Bogenschütze nimmt den Platz'); eq(garrisonOk(f.sim), null, 'stimmig'); ok(W5.on === f.b.id || f.as.some(u => u.hp > 0 && u.on === f.b.id && u.id !== killed.id), 'er ist oben'); }
+  { const { sim, c, ci, cj } = patch(0), site = (sim.dev.stock(0, { stein: 30 }), sim.build(0, 'mauer', ci - 2, cj, 0, 4)); sim.banner(0, 1, c.x, c.y + 4); const u = sim.dev.spawn(0, 'bogen', c.x, c.y + 4, 1); sim.step(); const o = sim.banner(0, 1, c.x, c.y); eq(o.garrison, undefined, 'eine Baustelle ist kein Wehrgang: kein Besatzungsbefehl'); run(sim, secs(4)); eq(u.on, null, 'niemand geht hinein'); }
+  { // an enemy house's wall: no garrison order
+    const { sim, c, ci, cj } = patch(0); sim.dev.place(0, 'mauer', ci - 2, cj, 0, 4); sim.banner(1, 1, c.x, c.y + 6); const u = sim.dev.spawn(1, 'bogen', c.x, c.y + 6, 1); sim.step(); const o = sim.banner(1, 1, c.x, c.y); ok(o.garrison === undefined, 'die Mauer eines anderen Hauses: kein Besatzungsbefehl'); run(sim, secs(4)); eq(u.on, null, 'der Feind kommt nicht auf die Mauer'); }
+}
+{
+  // the Burgwache's archers garrison by themselves: free slots within GUARD_R of the keep, the nearest to the gate first
+  const sim = mk({ burgfrieden: 0 }); toFehde(sim); const lp = sim.dev.lord(0), g = { x: lp.gx, y: lp.gy, out: lp.out };
+  const near1 = placeNear(sim, 0, 'wachturm', g.x + 4, g.y + g.out * 4), far1 = placeNear(sim, 0, 'wachturm', g.x - 7, g.y + g.out * 9);
+  ok(near1 && far1 && near1 !== far1, 'zwei Wachtürme stehen vor dem Tor'); const dg = (b) => Math.hypot(b._.cx - g.x, b._.cy - g.y); ok(dg(near1) < dg(far1), 'der eine liegt näher am Tor (' + dg(near1).toFixed(1) + ' / ' + dg(far1).toFixed(1) + ')');
+  ok(dg(far1) <= C.GUARD_R && Math.hypot(far1._.cx - lp.kx, far1._.cy - lp.ky) <= C.GUARD_R, 'beide liegen innerhalb von GUARD_R um den Bergfried');
+  const gs = []; for (let i = 0; i < 4; i++) gs.push(sim.dev.spawn(0, 'bogen', g.x + (i - 1.5) * 0.7, g.y + g.out * 5, 0)); const sg = sim.dev.spawn(0, 'speer', g.x, g.y + g.out * 5.5, 0); run(sim, secs(14));
+  const n1 = near1.garrison, n2 = far1.garrison; ok(n1 + n2 === 4, 'alle vier Bogenschützen der Burgwache sind in Wachtürmen (' + n1 + ' + ' + n2 + ')'); eq(n1, 3, 'der Turm am Tor wird zuerst voll (3)'); eq(n2, 1, 'der vierte geht in den zweiten'); eq(sg.on, null, 'der Speerträger der Burgwache bleibt unten'); eq(garrisonOk(sim), null, 'stimmig');
+  ok(sim.youOf(0).banners.some(b => b.n === 0 && b.count === 5), 'die Burgwache zählt sie weiter (n = 0, 5)'); eq(gs.filter(u => u.on !== null).length, 4, 'units[].on gesetzt');
+  // they shoot from the tower: range 12 from the platform
+  const ex = near1._.cx + (g.x > 0 ? -1 : 1) * 10.5; sim.banner(1, 1, ex, near1._.cy); const E = sim.dev.spawn(1, 'speer', ex, near1._.cy, 1); E.hp = 1e5; E._.cd = 1e9; const sh = run(sim, secs(2)).filter(e => e.t === 'shot' && e.src === 'bogen'); ok(sh.length >= 1 && sh.every(e => Math.hypot(e.from[0] - near1._.cx, e.from[1] - near1._.cy) < 1.1), 'die Besatzung des Turms schießt (aus dem Turm: ' + sh.length + ' Pfeile)');
+  // a banner without a garrison order does not use a tower even next to it
+  const s2 = mk({ burgfrieden: 0 }); toFehde(s2); const t2 = placeNear(s2, 0, 'wachturm', s2.dev.lord(0).gx + 4, s2.dev.lord(0).gy + s2.dev.lord(0).out * 4); s2.banner(0, 1, t2._.cx + 2, t2._.cy + 2); const a2 = s2.dev.spawn(0, 'bogen', t2._.cx + 2, t2._.cy + 2, 1); run(s2, secs(6)); eq(a2.on, null, 'ein Feldbanner ohne Befehl besetzt keinen Turm');
+}
+
+
+// ---- Phase 2: a scripted siege over 4 minutes — walls, gate, garrison, ram, horse archers, torch; invariants every second, and the same run twice gives the same state and events ----
+function siegeRun(seed) {
+  const sim = mk({ seed, burgfrieden: 0 }); toFehde(sim);
+  const c = clearing(sim, 0), q = cellP(c), ray = dryRay(sim, c, 10), dir = ray.d, R = ringOf(sim, 0, q.i, q.j, 'mauer', true), st = sim.state;
+  const tw = placeNear(sim, 0, 'wachturm', c.x - dir * 0, c.y + 5.5);   // a tower below the ring, beyond its wall
+  sim.dev.stock(0, { korn: 40, holz: 40, stein: 40, gold: 40 }); sim.dev.stock(1, { korn: 40, holz: 40, stein: 40, gold: 60 });
+  placeNear(sim, 0, 'markt', c.x - dir * 8, c.y - 6); const mk1 = placeNear(sim, 1, 'soeldnerlager', sim.dev.lord(1).gx - 8, sim.dev.lord(1).gy + sim.dev.lord(1).out * 8), ka1 = placeNear(sim, 1, 'kaserne', sim.dev.lord(1).gx + 8, sim.dev.lord(1).gy + sim.dev.lord(1).out * 8);
+  // house 0: archers of banner 3 garrison the gate towers, the walls and the watchtower
+  sim.banner(0, 3, R.mid.x, R.mid.y); for (let i = 0; i < 6; i++) sim.dev.spawn(0, 'bogen', R.mid.x - 1 + (i % 3) * 0.8, R.mid.y + (i >> 1) * 0.5 - 0.3, 3);
+  sim.step(); sim.banner(0, 3, -71.5 + q.i, -44.5 + q.j - 1.6);
+  // house 1: a banner with a ram, spearmen, horse archers and a torch-bearer marches on the yard; a second wave is ordered at 90 s
+  const sx = c.x + dir * Math.max(ray.n - 1, 4); sim.banner(1, 1, sx, c.y); const us = [];   // (all of them on the dry row: sx − dir · k)
+  us.push(sim.dev.spawn(1, 'ramme', sx, c.y, 1)); for (let i = 0; i < 6; i++) us.push(sim.dev.spawn(1, 'speer', sx - dir * (i % 3) * 0.8, c.y, 1)); for (let i = 0; i < 2; i++) us.push(sim.dev.spawn(1, 'reiterschuetze', sx - dir * (2.8 + i * 0.7), c.y, 1)); us.push(sim.dev.spawn(1, 'fackel', sx - dir * 1.2, c.y, 1));
+  sim.step(); sim.banner(1, 1, R.mid.x, R.mid.y);
+  const evc = {}; let evh = '', bad = '';
+  for (let i = 0; i < secs(240) && st.phase !== 'over'; i++) {
+    const t = st.t;
+    if (i === secs(90)) { for (let k = 0; k < 5; k++) sim.dev.spawn(1, 'speer', sx - dir * (0.5 + k * 0.7), c.y, 1); sim.banner(1, 1, R.mid.x, R.mid.y); }
+    if (i === secs(100)) sim.banner(0, 3, c.x, c.y + 8);           // the archers step down …
+    if (i === secs(110)) sim.banner(0, 3, -71.5 + q.i, -44.5 + q.j + 2.4);   // … and climb the southern wall
+    if (i === secs(120)) { sim.dev.stock(1, { korn: 40, holz: 40, gold: 60 }); sim.recruit(1, 'ramme', 1); sim.recruit(1, 'reiterschuetze', 1); sim.recruit(1, 'fackel', 1); }
+    if (i % 15 === 0) {
+      const g = garrisonOk(sim); if (g && !bad) bad = 't=' + t.toFixed(0) + ' ' + g;
+      for (const u of st.units) { if (!Number.isFinite(u.x) || !Number.isFinite(u.y) || !(u.hp > 0)) { if (!bad) bad = 'Einheit ' + u.id + ' ' + u.x + ',' + u.y + ',' + u.hp; } else if (!u.on && sim.dev.view(u.lord)[W.cellOf(u.x, u.y)] && !bad) { const kk = W.cellOf(u.x, u.y), bb = sim.dev.bAt(kk); bad = 't=' + t.toFixed(0) + ' ' + u.kind + ' von Haus ' + u.lord + ' steht auf einer gesperrten Zelle (' + u.x.toFixed(2) + ',' + u.y.toFixed(2) + ' Zelle ' + kk + ' Gebäude ' + (bb ? bb.kind + (bb.ruined ? ' Ruine' : '') + ' build ' + bb.build.toFixed(2) : 'keins') + ' base ' + sim.dev.blk[kk] + ' rub ' + sim.dev.rub[kk] + ' Wasser/Fels? walk ' + W.walk(sim.world, kk, sim.dev.level()) + ')'; } }
+      for (const b of st.buildings) if (!(b.hp >= 0 && b.hp <= 1 + 1e-9) && !bad) bad = 'hp ' + b.hp;
+    }
+    for (const e of sim.step()) { evc[e.t] = (evc[e.t] || 0) + 1; evh = hashStr(evh + JSON.stringify(e)); }
+  }
+  return { state: JSON.stringify(st), evc, evh, bad, sim, R, tw };
+}
+{
+  const a = siegeRun(1), b = siegeRun(1);
+  eq(a.bad, '', 'Belagerung: alle Invarianten hielten (' + a.bad + ')'); eq(hashStr(a.state), hashStr(b.state), 'Belagerung: gleicher Lauf, gleicher Zustand'); ok(a.state === b.state, 'Zustand Zeichen für Zeichen gleich'); eq(a.evh, b.evh, 'Ereignisfolge gleich');
+  const e = a.evc; ok(e.breach >= 1 && e.ram >= 3 && e.garrison >= 6 && e.ruined >= 1 && e.death >= 1 && e.shot >= 10 && e.trained >= 1, 'die Belagerung zeigt die neuen Regeln: ' + ['breach', 'ram', 'garrison', 'ruined', 'death', 'shot', 'trained'].map(k => k + ' ' + (e[k] || 0)).join(', '));
+  console.log('\n  Belagerung (4 Min, Ring + Torhaus + Turm, Rammbock, Reiterschützen, Fackelträger gegen sechs Bogenschützen im Wehrgang): ' + Object.entries(e).filter(([k]) => ['breach', 'ram', 'garrison', 'ruined', 'death', 'shot', 'hit', 'trained', 'ignite'].includes(k)).map(([k, v]) => k + ' ' + v).join(', ') + ' · Zustands-Hash ' + hashStr(a.state));
+  const c2 = siegeRun(2); eq(c2.bad, '', 'Belagerung auf Karte 2: Invarianten (' + c2.bad + ')'); ok(hashStr(c2.state) !== hashStr(a.state), 'andere Karte: anderer Verlauf');
+}
+
+
+// ---- Phase 2: the ram picks the nearest enemy building within RAM_R, the peasants of a house use its own gate lane, the views come from a cache ----
+{
+  // nearest first: a Brunnen 0.5 away, a hut 1.5 away (both within the ram's reach of 1.6): the Brunnen first, then the hut; nothing of its own house is touched
+  const { sim, ci, cj } = patch(1), br = sim.dev.place(1, 'brunnen', ci + 1, cj, 0).b, hu = sim.dev.place(1, 'huette', ci - 3, cj - 1, 0).b, own = sim.dev.place(0, 'huette', ci - 3, cj + 2, 0);
+  for (const u of unitsOf(sim, 1, 'bauer')) sim.dev.kill(u);
+  const P = { x: -71.5 + ci, y: -44.5 + cj }, R = stage(sim, 0, 'ramme', P); R.hp = 1e5;
+  const rams = []; for (let i = 0; i < secs(30); i++) for (const e of sim.step()) if (e.t === 'ram') rams.push(e.id);
+  const seq = rams.join(','), expect = new Array(Math.ceil(250 / 60)).fill(br.id).concat(new Array(2).fill(hu.id)).join(',');
+  eq(seq, expect, 'Rammbock: erst der nähere Brunnen (250 HP: 5 Stöße), dann die Hütte (120 HP: 2 Stöße)'); ok(br.ruined && hu.ruined, 'beide liegen in Trümmern'); ok(own.ok === false || own.b.hp === 1, 'das eigene Haus bleibt heil');
+  eq(sim.dev.lord(0).by.buildings, 6, 'Ruhm für Zerstörungen: Brunnen +3, Hütte +3'); ok(R.x === P.x || Math.hypot(R.x - P.x, R.y - P.y) < 2, 'der Rammbock blieb auf seinem Platz (nichts weiter in Reichweite 3)');
+}
+{
+  // a peasant inside a closed ring leaves through its own Torhaus lane to build outside; the lane is the only way
+  const { sim, c, ci, cj } = patch(0); sim.dev.stock(0, { korn: 30, holz: 30, stein: 30 });
+  const R = ringOf(sim, 0, ci, cj, 'mauer', true), lane = laneKs(R.th);
+  // a site outside the ring, as near as possible (on the dry side, at least 4 cells from the ring's centre)
+  let spot = null, bd = 1e9; for (let j = cj - 8; j <= cj + 8; j++) for (let i = ci - 8; i <= ci + 8; i++) { const d = Math.hypot(i - ci, j - cj); if (d < 4.5 || d >= bd) continue; if (W.canPlace(sim.world, 'brunnen', i, j, 0, { lord: 0, L: 0, occ: sim.occ }).ok) { bd = d; spot = { i, j }; } }
+  ok(spot, 'ein Bauplatz vor dem Ring ist da (' + (spot ? Math.hypot(spot.i - ci, spot.j - cj).toFixed(1) : '') + ')');
+  const P = sim.dev.spawn(0, 'bauer', R.mid.x, R.mid.y, -1); P.px = P.x; P.py = P.y;
+  const r = sim.build(0, 'brunnen', spot.i, spot.j, 0); eq(r.ok, true, 'Brunnen bestellt'); const site = bld(sim, r.id);
+  let onLane = 0, builder = false; const t0 = sim.state.t; for (let i = 0; i < secs(120) && site.build < 1; i++) { sim.step(); if (lane.indexOf(W.cellOf(P.x, P.y)) >= 0) onLane++; if (P._.site === sim.dev.lord(0).bld.find(b => b.id === site.id)) builder = true; }
+  ok(builder, 'der Bauer im Hof wurde der Baumeister (er ist der nächste)'); ok(onLane > 0, 'und lief durch die Torgasse (' + onLane + ' Schritte)'); ok(site.build >= 1, 'der Brunnen steht (' + (sim.state.t - t0).toFixed(0) + ' s)'); ok(R.pieces.every(b => b.hp === 1) && R.th.hp === 1, 'ohne Schaden am Ring');
+  // the same yard with a closed Torhaus (an enemy's peasants never get the lane): a foreign peasant stays out — the lane is blocked in its house's view
+  const e = sim.dev.spawn(1, 'bauer', -71.5 + ci, -44.5 + cj - 4, -1); ok(sim.dev.view(1)[lane[0]] === 1, 'für Haus 1 ist die Gasse zu'); void e;
+}
+{
+  // views and fields come from a cache: the same masks as long as nothing changes the grid or a pact; a pact or a building rebuilds them; a rebuild is cheap
+  const { sim, ci, cj } = patch(0), R = ringOf(sim, 0, ci, cj, 'mauer', true);
+  const v0 = sim.dev.view(0), v1 = sim.dev.view(1), f1 = sim.dev.fview(1), f0 = sim.dev.fview(0);
+  run(sim, 60); ok(sim.dev.view(0) === v0 && sim.dev.view(1) === v1 && sim.dev.fview(1) === f1 && sim.dev.fview(0) === f0, '60 Schritte ohne Änderung: dieselben Sichten aus dem Zwischenspeicher');
+  sim.pact(0, 1, true); sim.pact(1, 0, true); const f1b = sim.dev.fview(1); ok(f1b !== f1, 'ein Pakt rechnet die Sicht neu'); ok(sim.dev.fview(1) === f1b, '… einmal'); const v1b = sim.dev.view(1); sim.pact(1, 0, false); ok(sim.dev.fview(1) !== f1b, 'und sein Ende auch');
+  const g0 = sim.dev.fview(1), h = sim.dev.place(0, 'huette', ci + 4, cj, 0); if (h.ok) ok(sim.dev.fview(1) !== g0, 'ein neues Gebäude rechnet neu'); void v1b;
+  // 100 wall pieces on the map and a rebuild of every house's views and breach view after each change: well below a millisecond per change
+  const s2 = patch(0); let n = 0; for (let r = 0; r < 9; r++) for (let q = 0; q < 14; q++) { if (placeNear(s2.sim, 0, 'palisade', s2.c.x - 30 + q * 4.5, s2.c.y - 30 + r * 7, (q + r) & 1, 1 + ((q + r) % 4))) n++; }
+  ok(n >= 40, 'viele Wandstücke gesetzt (' + n + ')'); s2.sim.dev.place(0, 'torhaus', s2.ci - 1, s2.cj - 2, 0);
+  let ms = 0, k = 0; for (let i = 0; i < 40; i++) { s2.sim.pact(2, 3, i % 2 === 0); const t0 = process.hrtime.bigint(); for (let l = 0; l < 4; l++) { s2.sim.dev.view(l); s2.sim.dev.fview(l); } ms += Number(process.hrtime.bigint() - t0) / 1e6; k++; }
+  ok(ms / k < 3, 'alle vier Sichten + Bresch-Sichten neu: Ø ' + (ms / k).toFixed(2) + ' ms bei ' + n + ' Wandstücken');
+  const t1 = process.hrtime.bigint(); for (let i = 0; i < 100000; i++) s2.sim.dev.view(1); const per = Number(process.hrtime.bigint() - t1) / 1e6 / 100000; ok(per < 0.001, 'ein Zugriff auf die zwischengespeicherte Sicht kostet nichts (' + (per * 1000).toFixed(2) + ' µs)');
+}
+
 // the scripted "dumb driver": not a bot. Per house a fixed build list via FurtWorld.suggest, recruiting, and an attack on the nearest enemy gate after the truce.
 function makeDriver(sim) {
   const w = sim.world, st = sim.state;
-  const PLAN = ['hof', 'holzfaeller', 'hof', 'huette', 'kornspeicher', 'hof', 'steinbruch', 'huette', 'kaserne', 'hof', 'lager', 'huette', 'wachturm', 'brunnen', 'hof', 'huette', 'hof'];
-  const MIX = ['speer', 'bogen', 'speer', 'ritter', 'speer', 'fackel', 'bogen', 'speer'];
+  // (Phase 2: after the Kaserne a Markt, a Wachturm, walls, a Söldnerlager and a Torhaus, then the rest and a palisade; [kind, len] for the wall lines)
+  const PLAN = ['hof', 'holzfaeller', 'hof', 'huette', 'kornspeicher', 'hof', 'steinbruch', 'huette', 'kaserne', 'markt', 'wachturm', ['mauer', 3], 'soeldnerlager', ['mauer', 3], 'torhaus', 'hof', 'lager', 'huette', 'brunnen', 'hof', 'huette', 'hof', ['palisade', 4], ['mauer', 2]];
+  const MIX = ['speer', 'bogen', 'speer', 'ritter', 'speer', 'fackel', 'bogen', 'reiterschuetze', 'speer', 'ramme'];
   const next = st.lords.map(() => 0), made = st.lords.map(() => 0), peak = st.lords.map(() => [0, 0, 0, 0]);
   const gateOf = (o) => { const s = w.sites[o.site]; return { x: s.x + 0.5, y: s.y + (o.site < 2 ? 3.5 : -3.5) }; };
   let fehdeAt = -1;
@@ -1680,9 +2326,15 @@ function makeDriver(sim) {
     for (const lord of st.lords) {
       const l = lord.i, y = sim.youOf(l);
       if (next[l] < PLAN.length) {   // the next building of the plan; a failure other than 'cost' skips it
-        const kind = PLAN[next[l]], s = W.suggest(w, kind, lord.site, { L: st.level, occ: sim.occ });
+        const e = PLAN[next[l]], kind = Array.isArray(e) ? e[0] : e, len = Array.isArray(e) ? e[1] : 1, s = W.suggest(w, kind, lord.site, { L: st.level, occ: sim.occ, len });
         if (!s) next[l]++;
-        else { const r = sim.build(l, kind, s.i, s.j, s.rot); if (r.ok || r.reason !== 'cost') next[l]++; }
+        else { const r = sim.build(l, kind, s.i, s.j, s.rot, len); if (r.ok || r.reason !== 'cost') next[l]++; }
+      }
+      if (y.stock.holz >= 18) sim.trade(l, 'holz', 'sell', 1); if (y.stock.stein >= 14) sim.trade(l, 'stein', 'sell', 1); if (y.stock.korn >= 26) sim.trade(l, 'korn', 'sell', 1); if (y.hunger && y.stock.gold >= 3) sim.trade(l, 'korn', 'buy', 1);   // (surplus for 💰: mercenaries cost gold)
+      { // a small garrison banner: archers of banner 3 are sent onto the first finished wall or gatehouse
+        const piece = st.buildings.find(b => b.lord === l && (b.kind === 'mauer' || b.kind === 'torhaus') && b.build >= 1 && !b.ruined), g3 = y.banners.find(b => b.n === 3);
+        if (piece && (!g3 || g3.count < 4) && y.queue.length < 3 && y.stock.korn >= 3 && y.stock.holz >= 3 && lord.people - lord.soldiers >= 4) sim.recruit(l, 'bogen', 3);
+        if (piece && g3 && g3.count >= 2) { const f = W.footprintOf(piece.kind, piece.rot, piece.len), cx = -72 + piece.i + f[0] / 2, cy = -45 + piece.j + f[1] / 2; if (Math.hypot(g3.tx - cx, g3.ty - cy) > 2) sim.banner(l, 3, cx, cy); }
       }
       const have = (n) => { const b = y.banners.find(x => x.n === n); return (b ? b.count : 0) + y.queue.filter(q => q.n === n).length; };
       if (y.queue.length < 3 && !y.hunger && y.stock.korn >= 4 && lord.people - lord.soldiers >= 6) {   // the first four soldiers guard the keep, then banners 1 and 2 fill up; try each kind once if one is unaffordable
@@ -1722,17 +2374,20 @@ function makeDriver(sim) {
 }
 
 // the public state keeps exactly the documented keys and value sets
-const UKEYS = 'id,lord,kind,x,y,px,py,h,ph,hp,anim,carry,n', BKEYS_ = 'id,lord,kind,i,j,rot,build,hp,fire,burnt,ruined,growth,workers,paused,full', NBKEYS = 'id,lord,n,x,y,px,py,count,moving,tx,ty';
-const ANIMS = ['idle', 'walk', 'fight', 'work'], CARRIES = [null, 'korn', 'holz', 'stein', 'eimer'], KINDS_U = ['bauer', 'speer', 'bogen', 'ritter', 'fackel'];
-function shapeCheck(st, seed) {
+const UKEYS = 'id,lord,kind,x,y,px,py,h,ph,hp,anim,carry,n,on,slot', BKEYS_ = 'id,lord,kind,i,j,rot,build,hp,fire,burnt,ruined,growth,workers,paused,full,len,garrison', NBKEYS = 'id,lord,n,x,y,px,py,count,moving,tx,ty';
+const ANIMS = ['idle', 'walk', 'fight', 'work'], CARRIES = [null, 'korn', 'holz', 'stein', 'eimer'], KINDS_U = ['bauer', 'speer', 'bogen', 'ritter', 'fackel', 'reiterschuetze', 'ramme'];
+function shapeCheck(st, seed, sim) {
   const T = 'seed ' + seed + ' t=' + st.t.toFixed(0) + ': ';
+  for (const b of st.buildings) { const wall = b.kind === 'mauer' || b.kind === 'palisade'; if (!Number.isInteger(b.len) || b.len < 1 || b.len > (wall ? 4 : 1) || !Number.isInteger(b.garrison) || b.garrison < 0 || b.garrison > W.slotsOf(b.kind, b.len) || (b.garrison > 0 && (b.ruined || b.build < 1))) { ok(false, T + 'len/garrison außerhalb ' + JSON.stringify(b)); return; } }
+  for (const l of st.lords) if (!Number.isInteger(l.gold) || l.gold < 0 || (sim && l.gold !== sim.youOf(l.i).stock.gold)) { ok(false, T + 'gold ' + l.gold); return; }
+  if (sim) { const g = garrisonOk(sim); if (g) { ok(false, T + 'Besatzung: ' + g); return; } }
   for (const u of st.units) {
     if (Object.keys(u).join() !== UKEYS) { ok(false, T + 'Einheiten-Felder ' + Object.keys(u).join()); return; }
     if (!ANIMS.includes(u.anim) || !CARRIES.includes(u.carry) || !KINDS_U.includes(u.kind) || !(u.n >= -1 && u.n <= 3) || (u.kind === 'bauer') !== (u.n === -1) || (u.carry && u.kind !== 'bauer') || !(u.hp > 0)) { ok(false, T + 'Einheit außerhalb der Wertemengen ' + JSON.stringify(u)); return; }
   }
   for (const b of st.buildings) if (Object.keys(b).join() !== BKEYS_ + (b.kind === 'holzfaeller' ? ',noWood' : '') || typeof b.paused !== 'boolean' || typeof b.full !== 'boolean') { ok(false, T + 'Gebäude-Felder ' + Object.keys(b).join()); return; }
   for (const b of st.banners) if (Object.keys(b).join() !== NBKEYS || b.n < 1 || b.n > 3) { ok(false, T + 'Banner-Felder ' + Object.keys(b).join()); return; }
-  for (const l of st.lords) if (Object.keys(l).join() !== 'i,site,emblem,crown,ruhm,people,soldiers,prot,zorn,hunger') { ok(false, T + 'Haus-Felder'); return; }
+  for (const l of st.lords) if (Object.keys(l).join() !== 'i,site,emblem,crown,ruhm,people,soldiers,prot,zorn,hunger,gold') { ok(false, T + 'Haus-Felder'); return; }
   const js = JSON.stringify(st); ok(js.length > 100 && !/_/.test(Object.keys(st.units[0] || {}).join()), T + 'Zustand ist sauber serialisierbar (nichts Privates sichtbar)');
 }
 
@@ -1740,7 +2395,7 @@ function shapeCheck(st, seed) {
 {
   console.log('\n  Spielläufe mit dem Treiber (12 Min, 4 Häuser, Burgfrieden 2 Min)');
   const SITE = ['NW', 'NO', 'SW', 'SO'];
-  let hits = 0, deaths = 0, built = 0, totalMs = 0, totalSteps = 0, maxMs = 0;
+  let hits = 0, deaths = 0, built = 0, totalMs = 0, totalSteps = 0, maxMs = 0; const P2 = {};
   for (const seed of [1, 2, 3]) {
     const sim = Sim.create({ seed, world: worldOf(seed), dauer: 12, burgfrieden: 120 }), st = sim.state, think = makeDriver(sim);
     const evc = {}; let viol = 0, bad = 0, ms = 0, steps = 0, overs = 0;
@@ -1753,10 +2408,10 @@ function shapeCheck(st, seed) {
         if (i % 15 === 0) {
           for (const u of st.units) {
             if (!Number.isFinite(u.x) || !Number.isFinite(u.y) || !Number.isFinite(u.hp) || Math.abs(u.x) > 72 || Math.abs(u.y) > 45) bad++;
-            else if (sim.dev.blk[W.cellOf(u.x, u.y)]) viol++;
+            else if (!u.on && sim.dev.view(u.lord)[W.cellOf(u.x, u.y)]) viol++;   // (in the house's own view: a lane of its own gate is free; archers on a wall stand there on purpose)
           }
           for (const b of st.buildings) if (!(b.hp >= 0 && b.hp <= 1 + 1e-9) || !(b.fire >= 0 && b.fire <= 1) || !(b.build >= 0 && b.build <= 1)) bad++;
-          if (i % 150 === 0) shapeCheck(st, seed);
+          if (i % 150 === 0) shapeCheck(st, seed, sim);
         }
       }
     }, 'Spiellauf seed ' + seed);
@@ -1765,10 +2420,12 @@ function shapeCheck(st, seed) {
     ok(st.ranking.every((r, i) => i === 0 || st.ranking[i - 1].ruhm >= r.ruhm), 'seed ' + seed + ': Rangliste nach Ruhm');
     ok(Object.values(sim.dev.lord(0).by).every(Number.isFinite), 'seed ' + seed + ': Ruhm-Aufschlüsselung endlich');
     const bsum = st.ranking.reduce((a, r) => a + r.buildings, 0); built += bsum; hits += evc.hit || 0; deaths += evc.death || 0; totalMs += ms; totalSteps += steps;
-    console.log('  seed ' + seed + ': Ø Schritt ' + (ms / steps).toFixed(3) + ' ms · ' + (evc.build || 0) + ' Bauten, ' + (evc.trained || 0) + ' Ausbildungen, ' + (evc.hit || 0) + ' Treffer, ' + (evc.death || 0) + ' Tote, ' + (evc.ignite || 0) + ' Brände, ' + (evc.crossingOpen || 0) + ' Übergänge, ' + (evc.hunger || 0) + ' Hungerwechsel');
+    console.log('  seed ' + seed + ': Ø Schritt ' + (ms / steps).toFixed(3) + ' ms · ' + (evc.build || 0) + ' Bauten, ' + (evc.trained || 0) + ' Ausbildungen, ' + (evc.hit || 0) + ' Treffer, ' + (evc.death || 0) + ' Tote, ' + (evc.ignite || 0) + ' Brände, ' + (evc.crossingOpen || 0) + ' Übergänge, ' + (evc.hunger || 0) + ' Hungerwechsel · Phase 2: ' + (evc.trade || 0) + ' Handel, ' + (evc.garrison || 0) + ' Besatzungswechsel, ' + (evc.breach || 0) + ' Breschen, ' + (evc.ram || 0) + ' Rammstöße');
+    for (const k of ['trade', 'garrison', 'breach', 'ram']) P2[k] = (P2[k] || 0) + (evc[k] || 0);
     for (const r of st.ranking) console.log('    Platz ' + r.rank + ' Haus ' + r.lord + ' (' + SITE[st.lords[r.lord].site] + '): Gebäude ' + String(r.buildings).padStart(2) + ' · Soldaten ' + String(r.soldiers).padStart(2) + ' · Leute ' + String(r.people).padStart(2) + ' · Tote ' + String(r.stats.kills).padStart(2) + ' · Plünderungen ' + r.stats.plunders + ' · Ruhm ' + r.ruhm);
   }
   ok(built >= 3 * 4 * 6, 'die Häuser bauen (' + built + ' fertige Gebäude in 3 Spielen)'); ok(hits > 0 && deaths > 0, 'es wird gekämpft (' + hits + ' Treffer, ' + deaths + ' Tote)');
+  ok(P2.trade >= 3 && P2.garrison >= 3, 'die neuen Regeln kommen in ganzen Spielen vor: Handel ' + P2.trade + ', Besatzungswechsel ' + P2.garrison + ' (Breschen ' + (P2.breach || 0) + ', Rammstöße ' + (P2.ram || 0) + ')');
   console.log('  Schrittzeit über alle Spielläufe: Ø ' + (totalMs / totalSteps).toFixed(3) + ' ms, max ' + maxMs.toFixed(1) + ' ms');
 }
 
@@ -1780,6 +2437,12 @@ function battleScene(nSold, nPeas, seed) {
   for (let l = 0; l < 4; l++) {   // peasants in the yards
     const g = gateOf(sim, l);
     for (let i = unitsOf(sim, l, 'bauer').length; i < nPeas; i++) sim.dev.spawn(l, 'bauer', g.x + (i % 7) * 0.3, g.y + g.out * 1, -1);
+  }
+  for (let l = 0; l < 4; l++) {   // Phase 2: a few walls, a gatehouse and a tower with archers in every quarter (the views, lanes and the garrison are part of the cost measured here)
+    const g = gateOf(sim, l);
+    for (const [dx, dy, len] of [[-9, 9, 4], [-4, 9, 4], [1, 9, 4], [6, 9, 3]]) placeNear(sim, l, 'mauer', g.x + dx, g.y + g.out * dy, 0, len);
+    placeNear(sim, l, 'torhaus', g.x + 11, g.y + g.out * 9, 0); placeNear(sim, l, 'wachturm', g.x - 12, g.y + g.out * 9, 0);
+    for (let i = 0; i < 4; i++) sim.dev.spawn(l, 'bogen', g.x - 9 + i, g.y + g.out * 6, 0);   // (the Burgwache's archers climb in)
   }
   const fords = [w.crossings.find(c => c.id === 'westfurt'), w.crossings.find(c => c.id === 'ostfurt')];
   const per = Math.ceil(nSold / 3);
@@ -1801,6 +2464,8 @@ function battleScene(nSold, nPeas, seed) {
 {
   for (const [nS, nP, label] of [[60, 40, '4 × (60 Soldaten + 40 Bauern) = 400 Einheiten'], [100, 60, '4 × (100 Soldaten + 60 Bauern) = 640 Einheiten']]) {
     const sim = battleScene(nS, nP), st = sim.state, u0 = st.units.length;
+    ok(st.buildings.filter(b => b.kind === 'mauer').length >= 12 && st.buildings.filter(b => b.kind === 'torhaus').length >= 3 && st.buildings.filter(b => b.kind === 'wachturm').length >= 3, 'die Szene hat Mauern, Torhäuser und Türme (' + st.buildings.filter(b => b.kind === 'mauer').length + ' / ' + st.buildings.filter(b => b.kind === 'torhaus').length + ' / ' + st.buildings.filter(b => b.kind === 'wachturm').length + ')');
+    ok(st.units.filter(u => u.on !== null).length >= 4, 'und Bogenschützen im Wehrgang (' + st.units.filter(u => u.on !== null).length + ')');
     let ms = 0, n = 0, mx = 0, fights = 0; const samples = [];
     for (let i = 0; i < 600; i++) { const t0 = process.hrtime.bigint(), ev = sim.step(), d = Number(process.hrtime.bigint() - t0) / 1e6; ms += d; n++; mx = Math.max(mx, d); samples.push(d); fights += ev.filter(e => e.t === 'hit').length; }
     samples.sort((a, b) => a - b);
@@ -1822,7 +2487,8 @@ function battleScene(nSold, nPeas, seed) {
     ignite: 'by,id', fireOut: 'id', cropBurnt: 'id', bucket: 'brunnen,id',
     plunder: 'by,loot,lord', protEnd: 'lord', crown: 'lord',
     pactOffer: 'from,to', pactOn: 'a,b,until', pactOff: 'a,b,reason',
-    attack: 'lord,x,y'
+    attack: 'lord,x,y',
+    trade: 'gold,good,lord,n,side', garrison: 'id,lord,on,unit', breach: 'by,id,kind,lord,x,y', ram: 'id,x,y'
   };
   const missing = [], wrong = [];
   for (const [t, keys] of Object.entries(DOC)) {

@@ -1,8 +1,8 @@
 # 🏰 Furt & Fehde — design notes
 
-> **Status:** Phases 0, 1 and 1b are built (2026-10-31 → 2026-11-10). This file is the module
+> **Status:** Phases 0, 1, 1b and 2 are built (2026-10-31 → 2026-11-11). This file is the module
 > contract; the "Implementation notes" at the end record what was really built and win over the
-> older text. Phase 2 is being planned.
+> older text. Phase 2b is next.
 
 A competitive castle-building strategy game for Party Hub on one shared map. 2–4 lords each
 own one quarter of a river valley. They farm, store grain, cut wood, quarry stone, build a
@@ -37,7 +37,7 @@ recruiting troops and dragging banners.
 | **0 Diorama** ✅ | map generator, 3D landscape with river, fords and flood, all Phase 1 models, view v0 with a scripted fake state, phone war-table prototype | 🚦 feedback 1: look on the TV, the map, phone handling, M7 bench |
 | **1 Erste Fehde** ✅ | sim (carrying economy, 10 buildings, 5 unit kinds, banners, combat, fire, flood truce, bounty, pacts), bots, glue, HUD, sound, fx | 🚦 feedback 2: a real match with phones |
 | **1b Nachschliff** ✅ | feedback 2: no dead end, farmers stay on the fields, pause, Burgbrunnen, building info, guide and advisor on the phone, troop sending, calmer Auto quality and TV sound | 🚦 feedback 3: the next test round |
-| **2 Mauern & Söldner** 🔨 | palisades, stone walls and gatehouses with a Wehrgang (garrisoned archers); the Rammbock, and troops that breach walls; a Markt with 💰 gold; the Söldnerlager with torch-bearers and horse archers | playtest |
+| **2 Mauern & Söldner** ✅ | palisades, stone walls and gatehouses with a Wehrgang (garrisoned archers); the Rammbock, and troops that breach walls; a Markt with 💰 gold; the Söldnerlager with torch-bearers and horse archers | playtest |
 | **2b Jahreszeiten & Eroberung** | Eroberung mode with robber knights; seasons (spring flood, harvest, frozen river); burnable bridges; catapult; mill, bakery, smithy; herald voice; music | playtest |
 | **3 Großer Fehdenabend** | alliances and 2v2, lord and marshal roles, more map types, events, coat-of-arms editor, photo mode | — |
 
@@ -1257,7 +1257,7 @@ Kampf-Kamera at a ford. Two problems:
   - if `sim.pause` isn't there yet, C2 reports it, and the main session runs the final check.
 - **🚦 Feedback 3:** the next test round.
 
-## Phase 2 — Mauern & Söldner (contract, draft 2026-11-10)
+## Phase 2 — Mauern & Söldner (contract, 2026-11-10; built 2026-11-11)
 
 ### Phase 2 decisions (user, 2026-11-10)
 
@@ -1485,6 +1485,419 @@ shows the swing with anim 2.
 
 _Filled in by the main session from the agents' reports. Where a note contradicts the text
 above, the note wins._
+
+### Bots — as built (Phase 2, E4)
+
+**Tests:**
+- 76 hard checks (was 58), about 80 s, deterministic;
+- „ritter and kriegsherr attack“ is back to ≥ 97 % (79 of 80);
+- Markt and Söldnerlager in ≥ 90 % (118 and 117 of 120);
+- torch fires in ≥ 80 % of matches, never before `RAID_AFTER_S`;
+- the stranding monitor's longest run is 13 s;
+- the knappe builds no camp and no walls;
+- 4 scripted sieges: a Mauer ring → a ram is ordered, breaches and plunders; a palisade → melee
+  breaks it; no gold → no attack; archers only → no attack;
+- a takeover with walls, Markt, camp and gold works.
+
+**Balance** (20 ritter matches):
+
+| | Phase 1b | Phase 2 |
+|---|---|---|
+| Sites | 30/10/35/25 % | 35/30/20/15 % |
+| Winner/last | Ø 1.52× | Ø 1.54×, max 2.3× |
+| Longest hunger | 25 s | 4 s (kriegsherr 13 s) |
+| First torch fire after the Fehde | 129 s | median 348 s (the camp comes ≈ 420 s) |
+| Mixed kriegsherr vs 3 knappe | 85 % | 90 % (84 % over 320 matches) |
+
+- Plunders are still rare, and no ram is trained in the tournament: the bots' wall lines are
+  open, so rams are only verified by the scripted siege.
+- Four kriegsherr bots are lopsided: Ø 2.44×, 11 of 60 matches over 4×.
+
+**What the bots do:**
+- **Knappe:** a Markt at ≥ 330 s when wood piles up; it sells what full stores would waste and
+  buys food only when hungry. No camp, no walls, no torches; it avoids houses behind stone.
+- **Ritter and kriegsherr:**
+  - **Camp and Markt:** the Söldnerlager comes at ≥ 240 / 230 s and the Markt at ≥ 260 / 250 s,
+    both only from spare wood (`spareW`; median ≈ 420 s).
+  - **Torch squad:** a probe of 1, then squads of 2 (`raid` 2, was 3/4).
+  - **Field mix:** speer .38, bogen .30, ritter .15, reiter .17. It is gold-limited, so about
+    0.3 riders per match.
+  - **Gold:** they sell a good above 78 % of its cap, sell above the reserve when gold is
+    needed, and buy food when hungry or about to be.
+- **Wall line** (ritter and kriegsherr):
+  - planned 30 s before `wallFrom` (240 / 270 s), from the nearest crossing's landing along the
+    route to the gate;
+  - about 14 cells from the keep it runs across that route: a Torhaus on it, up to 9 wall cells
+    per side, open at both ends;
+  - a flood fill from the keep gate must reach every door;
+  - palisade first, Mauer when stone is plentiful; the Torhaus and end towers come from spare
+    stone only;
+  - fallback: up to 3 palisade pieces from `suggest(…, { len: 4 })`; ruins are rebuilt when
+    quiet.
+- **Attacks:**
+  - routes use the sim's weighted field;
+  - stone or a Torhaus on the route → a ram is ordered and the banner waits; a palisade → ≥ 4
+    melee;
+  - archers-only banners never go; torch squads skip walled targets;
+  - a 70-s no-progress watchdog.
+- **Defence:** a banner with ≥ 2 archers garrisons the nearest own tower, Mauer or Torhaus within
+  12 of the enemy. The Burgwache order starts bogen, speer, speer, …, and the torch squad needs
+  the guard on the ground.
+
+**Profiles:**
+- new fields `mix`, `market`, `camp`, `spareW`, `torM`, `foresight`, `walls`, `reserve`,
+  `wallFrom`, `ram`, `garrison`;
+- kriegsherr `hutAhead` 4.
+- New stats `trades`, `goldIn`, `goldOut`, `wallPieces`, `rams`, `garrisons`, `sieges`;
+  `bot.info().walls` shows the plan.
+
+**Known gaps:**
+- no ring or sealing logic, so the walls hardly stop attackers;
+- 8 of 40 wall plans are short;
+- planning costs a one-off hitch of ≈ 26 ms per bot;
+- gold is scarce (≈ 16 per house per match);
+- torch raids start late (≈ 5 min into the Fehde).
+
+### Glue and TV — as built (Phase 2, E5)
+
+**Tests:**
+- flow: 377 checks, including a new scenario 6 (gold, `ffWall`, `ffTrade`, recruit toasts,
+  garrison count, wall-ruin rebuild, heralds, Kampf-Kamera, sound filtering);
+- the strict `ffInfo.rules` equality is restored.
+
+**Bench** (software GL, seed 7, t = 200 s, 1600 × 1000):
+
+| | No walls | `?walls=1` (≈ 90 extra pieces) |
+|---|---|---|
+| Draw calls, high | 181 | 368 |
+| Draw calls, low | 94 | 191 |
+
+- Each piece costs ≈ 2 calls on high (body plus shadow) and ≈ 1 on low; `sim.step` stays at
+  0.30 ms.
+- Instancing finished wall pieces is the fix, still open; the user's PC runs smoothly.
+
+**Glue:**
+- **`ffInfo.rules`:** `{ bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses,
+  tradePack, prices }`.
+- **Rows:** 15 fields.
+- **`ffBuild.len`:** 1–4, walls only, sent as the 6th argument. An invalid `len` drops the
+  message.
+- **`ffWall`:** validated strictly (1–64 pieces). The toasts follow the E3 table; one piece reads
+  „1 Stück wird gebaut“, and a palisade uses 🪵.
+- **`ffTrade`:** silent on full success; the partial, cost, cap and no-Markt toasts are German.
+- **A garrison order** gets no glue toast.
+- **Heralds** (rate-limited):
+  - „🧱 Die Mauer von Haus X ist gebrochen!“ (palisade and gate variants; a burnt palisade reads
+    „… ist abgebrannt!“), at most once per 20 s per house;
+  - the owner gets an attack alert, and the attacker „🧱 Bresche! …“;
+  - „💰 Haus X erbeutet N Gold!“;
+  - „⛺ Haus X heuert Söldner an …“ for each house's first Söldnerlager.
+- **HUD:** the lord panels are 120 units tall, with a 💰 row (grey at 0).
+- **Kampf-Kamera:**
+  - `kk.src` is fight, keep or breach;
+  - a ram blow opens „🧱 Sturm auf die Mauer …“;
+  - a fallen piece opens „Bresche …“, which overrides a fight camera but never a plunder.
+- **Sound routing:**
+  - wall and Torhaus `hit` → no sound (the ram's thud carries it);
+  - a `ruined` that has a `breach` in the same batch → crumble only;
+  - `view.onGate` → a gate creak at 0.5.
+
+**View:**
+- walls built with `len`;
+- `UNIT_CAP` for the rider 240 and the ram 60; their blob shadows are stretched;
+- **Torhaus doors** open for owner and partner units in the lane box (the lane plus the cells
+  outside its mouths): open at 6/s, close at 3.2/s, held 0.7 s; `onGate` fires when they start
+  to open;
+- **garrisoned archers:**
+  - they stand on the art slot of the same index (on a Torhaus they spread over towers and
+    bridge, not the sim's tower cells) and cast no shadow;
+  - they face outwards, aim at targets, and keep that facing for 3.5 s;
+- **ram:**
+  - the swing phase is locked on every `ram` event (the nearest ram within 9, 50 ms lead);
+  - the struck piece shakes for 0.5 s.
+
+**Fx and sound:**
+- dark-grey chips (`STONE_D`) and dust on wall hits, splinters on palisades;
+- a ground burst 60 ms after a ram blow;
+- a rubble cloud, blocks or planks and a ring on `breach`;
+- palisades burn at 0.37–0.73× emission;
+- a second coin fountain for gold;
+- new sounds `thud` (0.25 s gap), `crumble` (0.3 s) and `gate` (2 s); trades are silent.
+
+**Harness (`dev-furtfehde.html`):**
+- `?walls=1`: a village per house (towers, Mauer sides and a palisade back, a Torhaus at the
+  gate, a weak 1-cell piece, a Markt, a Söldnerlager, a fence outside the keep well, gold and
+  garrisons; `?garrison=0` leaves the garrisons out);
+- `?siege=1`, or `?siege=<s>`: a ram, spearmen and archers break house 1 about 15 s into the
+  Fehde;
+- extras: `?gate=`, `?burn=`, `?riders=1`, `?bots=0`, `?settle=`, `?until=`/`?then=`, named
+  `?cam=`;
+- the bench line prints `sim.step` and counts.
+
+**Known gaps:**
+- wall instancing (draw calls);
+- `ram` events carry the target id but not the ram's (a `by` would make the lock exact);
+- the Torhaus slot mapping differs between E1 and E2;
+- shake and swing timing are not checked frame by frame;
+- the sound is unheard;
+- fast-forward sends no events to fx.
+
+### Models — as built (Phase 2, E1)
+
+**Triangles (high / low):**
+
+| Model | High | Low |
+|---|---|---|
+| palisade len 4 | 344 | 200 |
+| mauer len 4 | 318 | 190 |
+| torhaus | 712 | 368 |
+| markt | 989 | 688 |
+| soeldnerlager | 1041 | 718 |
+| reiterschuetze | 445 | 230 |
+| ramme | 536 | 289 |
+
+The demo yard is 12 draw calls. The existing models are geometry- and pixel-identical to Phase 1.
+
+**API:**
+- **Factory:** `FurtArt.building(T, kind, { color, quality, rot, len })`. It returns `len`,
+  `setOpen(0..1)` and `slotWorld(i, outVec3)`, and the group is centred with
+  `rotation.y = −rot·π/2`.
+- **Pass `len: b.len`.**
+- **`anchors.slots`** are plain `{ x, y, z }` in the group's local frame, with y at feet height.
+  Loops over anchors must skip the `slots` key.
+  - mauer: `(−len/2 + i + .5, 2.64, 0)`;
+  - torhaus: left tower `(−1, 3.9, 0)`, right tower `(1, 3.9, 0)`, bridge front
+    `(0, 3.17, .42)`, back `(0, 3.17, −.42)`;
+  - wachturm: `(.5, 5.72, .5)`, `(−.5, 5.72, .5)`, `(−.5, 5.72, −.5)`.
+  - **E1 and E2 number the slots differently** (see the Rules note); the view maps sim slot s
+    to art slot s, and only the height and rough place matter.
+- **Other anchors:**
+  - torhaus `gate` at the lane centre;
+  - soeldnerlager `fire`, `door`, `work`; markt `door`, `work`;
+  - walls have no `door`.
+- **`setOpen`:** the leaves swing about 95° inward. The lane runs along local z, so a rot 1
+  Torhaus has an east–west lane.
+- **Units:**
+  - **reiterschuetze:** 1.8 high. Anim 0 idle, 1 gallop, 2 shoot on the move (period 1.3 s, the
+    arrow leaves at f ≈ 0.66).
+  - **ramme:** about 3.14 × 1.48 × 1.6. Anim 0 idle, 1 roll, 2 swing (period 2 s, log fully
+    forward at f ≈ .68). To land on a `ram` event use `phase = 0.68 − fract(t_hit / 2)`.
+- **Shader:** animation runs in the vertex shader off `uTime`, so `FurtArt.tick` is enough. The
+  material has a new uniform `uOpen`.
+
+**Look additions:**
+- a lord runner along the Mauer walk, a lord ribbon on palisades, and lord crowns on the Torhaus
+  towers;
+- shields every 2 cells, with arrow slits between them;
+- Torhaus banners on both faces;
+- the palisade has its own site (pegs, trench); wall ruins are rubble or charred stakes.
+
+**Known gaps:**
+- a palisade L-corner shows a ≈ 0.2 jog;
+- the rider's arms and bow are simple;
+- the Markt and Söldnerlager ruins are the generic plot ruin.
+
+### Rules — as built (Phase 2, E2)
+
+**Tests:**
+- world 9735 checks; sim 3567 checks; bots 58 hard checks; flow 295.
+- `step()` averages 0.62 ms at 640 units, with walls, a Torhaus and garrisons on the map.
+- A fuzz run (18 seeds × 8 min of random actions) raised no exception and kept every invariant.
+- A scripted siege run twice is deterministic.
+
+**`CONST`:**
+- **Trade:** `TRADE_PACK` 5. `TRADE_PRICE` `{ sell: { korn 1, holz 1, stein 2 }, buy: { korn 3, holz 3, stein 5 } }`.
+- **Breaching:** `BREACH_COST` 60; `BREACH_MUL` `{ palisade .4, mauer 1, torhaus 1 }` (ours; the
+  field prefers wood); `RUBBLE_SLOW` .6.
+- **Damage:**
+  - `VS_WALL` `{ speer .4, ritter .25, ramme 1 }`; `ARROW_WALL` `{ stein 0, holz .15 }`;
+    `ARROW_RAM` .25;
+  - `VS` adds ritter → reiterschuetze 1.5 and reiterschuetze → speer / fackel 1.5;
+  - `VS_BUILDING` adds reiterschuetze .3 and ramme 1.
+- **Garrison:**
+  - `SLOTS` `{ mauer: 1 per cell, torhaus 4, wachturm 3 }`;
+  - `GARRISON_RANGE` 3, `GARRISON_ARMOR` .5, `GARRISON_TOUCH` 1, `GARRISON_NEAR` 4,
+    `GARRISON_FALL` .2;
+  - ours: `GARRISON_ENTER_R` 1.1, `GARRISON_WALK_R` 7, `GARRISON_S` 1, `GARRISON_DROP_R` 4,
+    `GARRISON_RETRY_S` 5.
+- **Units:** `RAM_R` 3, `KITE_R` 3, `KITE_S` .4.
+- **Other:** `WALL_PIECES_MAX` 64, `SLOT_LOS_R` 1.5.
+- Buildings and units are as in the contract. `BUILD[k].perCell` marks walls, `UNIT[u].at` names
+  the training house, and a rebuild costs ⌈½⌉ of the total.
+
+**State and API:**
+- **`buildings[]`:** `…, paused, full, len, garrison[, noWood]`; `garrison` is a count.
+- **`units[]`:** `…, n, on, slot`; `on` is a building id or `null`, `slot` −1 when outside.
+- `lords[].gold`, `youOf().stock.gold`. Occupancy codes: 11 palisade … 15 soeldnerlager.
+- **Slot ground positions (sim):**
+  - Mauer: per cell along the wall;
+  - Torhaus rot 0: 0, 1 west tower (north → south), 2, 3 east;
+  - Torhaus rot 1: 0, 1 north row, 2, 3 south;
+  - Wachturm: centre + (−.45, −.35), (.45, −.35), (0, .5).
+- `W.laneOf(i, j, rot)` → `{ cells, ends }`. The view opens the doors while own units stand in
+  the lane; there is no event.
+- **`sim.build(…, len)`:** a bad `len` gives `'bounds'`; a ruin is rebuilt only with its own
+  `len`.
+- **`sim.buildWall(lord, kind, pieces)` → `{ ok, placed, reason? }`:**
+  - invalid pieces are skipped;
+  - the first `'cost'` ends the line;
+  - `ok` means at least one piece was placed;
+  - failure reasons: `lord`, `kind`, `phase`, `bounds`.
+- **`sim.trade(lord, good, side, packs)` → `{ ok, n, reason? }`:**
+  - a partial trade carries `cost` or `cap`;
+  - other reasons: `markt`, `good`, `side`, `packs`, `lord`, `phase`.
+- `recruit` adds the reason `'lager'`, and `'cost'` includes gold. `banner` answers
+  `garrison: true` for a garrison order.
+- **Events:**
+  - `trade { lord, good, side, n, gold }`;
+  - `garrison { lord, id, unit, on }`;
+  - `breach { id, lord, kind, x, y, by }` (a piece or Torhaus fell; `ruined` is sent too);
+  - `ram { id, x, y }` per blow (`hit` too);
+  - `plunder.loot.gold`.
+- **World:** `canPlace(…, { len })`, `footprintOf(kind, rot, len)`, `suggest(…, { len })`,
+  `field(…, block, extra)` with a Float32Array of extra entry costs, and `isWall`, `slotsOf`,
+  `laneOf`, `keepGate`, `CODE`. The new kinds are appended, so codes stay stable.
+
+**Deviations:**
+- **Ruhm:** wall pieces give no Ruhm and don't count as razed or built. Torhaus and
+  Söldnerlager count as military (+5), the Markt as a normal building (+3).
+- **Placement:**
+  - Torhaus and Wachturm may touch walls;
+  - walls keep 1 cell from a keep gate and from Torhaus lane mouths;
+  - a Torhaus needs both mouths open and walkable.
+- **Breaching** is banner-level. When the field's next step is an enemy piece within `SIEGE_R`,
+  the leader halts and every melee member attacks it. Orders onto enemy walls or into a closed
+  enemy ring are accepted without snapping. Own and partner walls are never breached.
+- **The ram** prefers its banner's breach piece, else the nearest enemy building within 3. Its
+  first blow lands 2 s after arrival. The rider keeps riding with its banner while shooting.
+- **`formation()`** follows the travel field when a wall blocks the straight line to a slot
+  (`SLOT_LOS_R`). This affects all soldiers.
+- **Pacts:** a pact change rebuilds the per-house views, and a unit standing in a lane when a
+  pact ends is moved out.
+- **Garrison:**
+  - only bogen garrison; Burgwache archers fill slots within `GUARD_R`, nearest the gate, and
+    never leave;
+  - inside, archers are invisible to melee, with no separation and no leash;
+  - on a ruin they drop with 20 % of max HP lost (a weak one can die); on a cancel they step
+    down unhurt.
+
+**Bots and tests (minimal):**
+- `affordable` checks gold. The torch squad is recruited only with a Söldnerlager and gold, so
+  today's bots have **no torch raids**.
+- The hard check „ritter and kriegsherr attack“ dropped from ≥ 97 % to ≥ 90 % (77 of 80).
+
+**Balance** (20 ritter matches, Phase 1b → Phase 2 rules with Phase 1b bots):
+
+| | Phase 1b | Phase 2 rules |
+|---|---|---|
+| Sites | 30/10/35/25 % | 35/10/45/10 % |
+| Winner/last | Ø 1.52× | Ø 1.43×, max 2.7× |
+| Plunders | 0 | 1 |
+| First fight | median 125 s | median 228 s |
+| ignite per match | 47 | 0 |
+| Kriegsherr vs 3 knappe | 85 % | 75 % |
+| Bots reaching ≥ 15 soldiers | 120 / 120 | 112 / 120 |
+
+The main cause is the missing torch raids; E4 restores them.
+
+**Known gaps:**
+- torch-bearers still walk straight lines and give up at walls;
+- no ring-connectivity check (a ring without a Torhaus can strand peasants);
+- archer-only banners halt at stone walls for ever;
+- rubble is not weighted in fields;
+- gold comes only from trade and plunder (no start gold);
+- the sim tests rely on seed-1 geometry.
+
+### Phone — as built (Phase 2, E3)
+
+**Tests:** `?autotest=1` passes steps 1–30 at five sizes.
+- Step 30 cross-checks the phone against a real `FurtSim`: 11 trade cases, and a wall line whose
+  red cells `sim.build` refuses and whose green pieces `sim.buildWall` accepts.
+- `?nosim=1` skips that step.
+
+**Glue duties (E5):**
+- **Screen → phone:**
+  - `ffYou.stock.gold`;
+  - `ffInfo.rules.tradePack` and `.prices` (`C.TRADE_PRICE`);
+  - unit costs with gold;
+  - wall costs per cell (the phone multiplies them);
+  - `ffBoard` rows with field 14 `len` and field 15 `garrison`.
+- **Phone → screen:**
+  - **`ffWall { kind, pieces }`:** only valid pieces, 1–64 of them, top-left cell, `rot` 0
+    along +i, a single cell has `rot` 0.
+  - **`ffTrade { good, side, packs }`:** 1–5 packs.
+  - **`ffBuild`** gains an optional `len`, for a wall-ruin rebuild only; pass it as the 6th
+    argument of `sim.build`. The glue's ruin check must compare `len` too.
+  - **`ffRecruit`** also carries ramme, reiterschuetze and fackel.
+  - **`ffBanner`:** a drop within 1 of an own finished Mauer, Torhaus or Wachturm keeps its exact
+    point.
+- **Toasts:** the phone toasts the garrison itself, so the glue must not. The glue toasts the
+  results:
+
+  | Message | Result | Toast |
+  |---|---|---|
+  | `ffWall` | ok | „🧱 Mauer: N Stücke werden gebaut“ |
+  | `ffWall` | ok, partly | „⚠️ N von M Stücken – …“ |
+  | `ffWall` | `cost` | „❌ Zu wenig 🪨/🪵“ |
+  | `ffWall` | a placement reason | the `REASON_BUILD` texts |
+  | `ffWall` | `lord`/`kind`/`phase` | „❌ Das geht gerade nicht“ |
+  | `ffTrade` | ok, partly | „⚖️ Nur n Pakete – …“ |
+  | `ffTrade` | `markt` | „❌ Dafür braucht ihr erst einen Markt“ |
+  | `ffTrade` | `cost` | „❌ Zu wenig <Ware> oder Gold“ |
+  | `ffTrade` | `cap` | „❌ <Ware>-Lager ist voll“ |
+  | `ffRecruit` | `lager` | „❌ Dafür braucht ihr erst ein Söldnerlager“ |
+
+  `missingOf` must know gold.
+
+**Wall tool:**
+- **Line:** straight or an L; the first leg follows the finger's first direction, locked after 2
+  cells. ↻ turns the corner, and the corner cell belongs to the first leg. At most 240 cells and
+  64 pieces.
+- **Checking:** each cell is checked with `canPlace` (len 1). Runs of good cells are cut into
+  balanced pieces of at most 4 (9 → 3 + 3 + 3); refused runs are red, with the reason.
+- **Touch:** start and end are lifted 56 px. Two fingers pan and zoom and undo the line they
+  interrupted. A tap makes a one-cell line. The line can only be redrawn, not edited.
+- **Summary:** „🧱 7 Felder · 🪨 14 · 1 Lücke“, plus „⚠️ Rot geht nicht – ✓ baut den Rest“. Palisades
+  don't count as wooden buildings for the well coverage.
+
+**Gold and Markt:**
+- The 💰 chip opens the Markt. The ❓ moved to the first top-bar row so 💰 fits at 320 px.
+- The Markt is the second page of the 📦 Lager sheet (one overlay, one history entry). Ways in:
+  the 💰 chip, the Markt card, the Lager sheet and advisor tips 11 and 12.
+- ×1/×5 or a 480 ms long press trades 5 packs. The phone pre-applies the trade, and `ffYou` is
+  the truth.
+
+**Advisor:**
+- **Order:** 11 (hungry with gold and a Markt → buy 🌾), 1–5, 12 (full good with a Markt → sell),
+  6, 7–10, 13 (an enemy Mauer or Torhaus in the Fehde and no ram ordered).
+- **Reworded:** tip 6 now reads „🪨 Stein voll – bau ein 📦 Lager oder einen ⚖️ Markt“.
+  `INFO.steinbruch.viele` and the Lager tips no longer advise resting.
+
+**Garrison and Truppen:**
+- A garrison drop wins over the crossing, castle and enemy-building snaps. A banner without men
+  gets the rally-point toast instead.
+- The 🏹 badge shows on own buildings only.
+- The Truppen groups are „⚔️ Kaserne“ (speer, bogen, ritter, ramme) and „⛺ Söldnerlager“ (fackel,
+  reiterschuetze).
+  - A group without its finished house is dimmed, and „🔨 Bau zuerst …“ starts placing that
+    house.
+  - The phone refuses such recruits itself.
+
+**Cards and badges:**
+- The build list is grouped Dorf / Heer & Handel / Verteidigung.
+- A wall card reads „4 Felder lang“; a wall ruin rebuilds for ½ per cell and sends `len`.
+- The 💤 badge is orange for `full`, blue for paused.
+
+**Harness presets:** `wall=1|2` (`&wallkind=palisade`), `markt=1|none`, `truppen=1|2`,
+`garrison=1|2|3|map`, `advice=11|12|13`, `guide=mauern|markt|soeldner|ramme`; dev switches
+`?measure=1` and `?nosim=1`.
+
+**Known gaps:**
+- the long press is tested only synthetically;
+- at 320 × 568 and 844 × 390 the Söldnerlager group needs a scroll;
+- wall strips are about 6 px at the „Mein Land“ zoom;
+- `world.js` `UNITS.fackel.draft.cost` still shows the old cost (matters only without
+  `ffInfo.costs`).
 
 ### Round 2 — as built (Phase 1b, D1)
 

@@ -7,7 +7,10 @@
   const W = (typeof module === 'object' && module.exports) ? require('./world.js') : root.FurtWorld;
   const GW = W.GW, GH = W.GH, N = GW * GH;
   const BKEYS = Object.keys(W.BUILDINGS);   // occupancy code of a building = 1 + its index here (bergfried = 1)
-  const GOODS = ['korn', 'holz', 'stein'];
+  const GOODS = ['korn', 'holz', 'stein'];            // carried, stored and capped
+  const PAY = ['korn', 'holz', 'stein', 'gold'];      // everything a price can name (gold has no store, no cap and is never carried)
+  const WALLS = ['palisade', 'mauer'];                // the wall lines (1 × len); with the Torhaus they are the "wall pieces" a breach attacks
+  const MIL = ['kaserne', 'wachturm', 'soeldnerlager', 'torhaus'];   // razeMil buildings (+5 Ruhm when destroyed)
 
   // ---- tunables (the doc's numbers unless a comment says otherwise; B3 may tune them against the bot tournament) ----
   const CONST = {
@@ -58,18 +61,30 @@
       steinbruch:   { cost: { holz: 6 },            buildS: 12, hp: 200, workers: 2 },
       kaserne:      { cost: { holz: 8, stein: 8 },  buildS: 18, hp: 500 },
       wachturm:     { cost: { holz: 2, stein: 10 }, buildS: 16, hp: 600 },
-      brunnen:      { cost: { stein: 4 },           buildS: 6,  hp: 250 }
+      brunnen:      { cost: { stein: 4 },           buildS: 6,  hp: 250 },
+      // Phase 2 (perCell: cost, build time and hp are per cell of the piece, so a piece of len 4 costs, takes and holds four times as much)
+      palisade:     { cost: { holz: 1 },            buildS: 2,  hp: 150, perCell: true },
+      mauer:        { cost: { stein: 2 },           buildS: 4,  hp: 450, perCell: true },
+      torhaus:      { cost: { holz: 4, stein: 12 }, buildS: 20, hp: 1400 },
+      markt:        { cost: { holz: 10 },           buildS: 14, hp: 300 },
+      soeldnerlager:{ cost: { holz: 12 },           buildS: 16, hp: 350 }
     },
-    // units (train = training time in s; cd = cooldown between blows; range in cell units, centre to centre)
+    // units (train = training time in s; cd = cooldown between blows; range in cell units, centre to centre; at = the building that trains it)
     UNIT: {
       bauer:  {                                       hp: 25,  dmg: 2,  cd: 1.5, range: 1.0, speed: 2.4, r: 0.3 },
-      speer:  { cost: { korn: 2, holz: 2 },  train: 4, hp: 60,  dmg: 8,  cd: 1.0, range: 1.3, speed: 2.6, r: 0.35 },
-      bogen:  { cost: { korn: 2, holz: 3 },  train: 4, hp: 40,  dmg: 6,  cd: 1.4, range: 9,   speed: 2.6, r: 0.35 },
-      ritter: { cost: { korn: 4, stein: 3 }, train: 6, hp: 140, dmg: 14, cd: 1.2, range: 1.5, speed: 4.2, r: 0.6 },
-      fackel: { cost: { korn: 1, holz: 1 },  train: 3, hp: 30,  dmg: 0,  cd: 0,   range: 1.2, speed: 4.0, r: 0.3 }
+      speer:  { cost: { korn: 2, holz: 2 },  train: 4, hp: 60,  dmg: 8,  cd: 1.0, range: 1.3, speed: 2.6, r: 0.35, at: 'kaserne' },
+      bogen:  { cost: { korn: 2, holz: 3 },  train: 4, hp: 40,  dmg: 6,  cd: 1.4, range: 9,   speed: 2.6, r: 0.35, at: 'kaserne' },
+      ritter: { cost: { korn: 4, stein: 3 }, train: 6, hp: 140, dmg: 14, cd: 1.2, range: 1.5, speed: 4.2, r: 0.6,  at: 'kaserne' },
+      // Phase 2: the torch-bearer moved to the Söldnerlager and costs gold; the Reiterschütze (horse archer) is new; the Rammbock (dmg = per blow against buildings, none against people) comes from the Kaserne
+      fackel: { cost: { gold: 2, korn: 1 },  train: 2, hp: 30,  dmg: 0,  cd: 0,   range: 1.2, speed: 4.0, r: 0.3,  at: 'soeldnerlager' },
+      reiterschuetze: { cost: { gold: 6, korn: 2 }, train: 4, hp: 70, dmg: 6, cd: 1.3, range: 8, speed: 4.4, r: 0.6, at: 'soeldnerlager' },
+      ramme:  { cost: { holz: 10, gold: 4 }, train: 10, hp: 400, dmg: 60, cd: 2.0, range: 1.6, speed: 1.6, r: 0.9, at: 'kaserne' }
     },
-    VS: { speer: { ritter: 2 }, bogen: { fackel: 1.5 }, ritter: { bogen: 2 } },   // damage multipliers by matchup
-    VS_BUILDING: { speer: 1, ritter: 0.6, bogen: 0.3 },                            // damage against buildings (bauer and fackel deal none)
+    VS: { speer: { ritter: 2 }, bogen: { fackel: 1.5 }, ritter: { bogen: 2, reiterschuetze: 1.5 }, reiterschuetze: { speer: 1.5, fackel: 1.5 } },   // damage multipliers by matchup
+    VS_BUILDING: { speer: 1, ritter: 0.6, bogen: 0.3, reiterschuetze: 0.3, ramme: 1 },                            // damage against buildings (bauer and fackel deal none)
+    VS_WALL: { speer: 0.4, ritter: 0.25, ramme: 1 },                               // blows against a wall piece or a Torhaus (instead of VS_BUILDING); an arrow does the share below of its damage
+    ARROW_WALL: { stein: 0, holz: 0.15 },                                          // … against a stone wall (Mauer, Torhaus) and a wooden one (Palisade)
+    ARROW_RAM: 0.25,                  // arrows (archers, towers, keeps) deal this share against a Rammbock; melee blows full
     WADE_DEALT: 0.7, WADE_TAKEN: 1.25, ZORN_MUL: 1.25, ZORN_S: 60,
     // banners and fighting
     SCAN_S: 0.5,                      // every soldier looks for an enemy this often
@@ -92,23 +107,44 @@
     SPREAD_AT: 0.6, SPREAD_AFTER_S: 8, SPREAD_FIRE: 0.2, SPREAD_R: 3, SPREAD_R_HOF: 4,   // above 0.6 for 8 s (R8: was 5) ignites buildings within 3 (fields 4) with fire 0.2
     CROP_BURN_AT: 0.3, BURNT_FADE_S: 60, IGNITE: 0.5,   // fire above this burns the crop; scorch fades over 60 s; one torch adds 0.5
     // Ruhm and the crown
-    RUHM: { kill: 1, killRitter: 2, raze: 3, razeMil: 5, crop: 1, plunder: 20, prosperity: 1, betray: -5 },   // razeMil: kaserne, wachturm
+    RUHM: { kill: 1, killRitter: 2, raze: 3, razeMil: 5, crop: 1, plunder: 20, prosperity: 1, betray: -5 },   // razeMil: kaserne, wachturm, soeldnerlager, torhaus; a destroyed palisade or mauer gives nothing
     PROSPER_S: 30, PROSPER_PEOPLE: 8, CROWN_S: 5, CROWN_LEAD: 10, CROWN_MUL: 1.5, CROP_RUHM_AT: 0.3,
     // keep plunder
     LOOT: 0.5, PLUNDER_HP: 0.3, PROT_S: 60, HOME_R: 16,
     // pacts
     PACT_S: 180, OFFER_S: 30,
-    ALERT_S: 10                       // at most one `attack` event per house in this time
+    ALERT_S: 10,                      // at most one `attack` event per house in this time
+    // Phase 2: gold and the Markt (docs/FURTFEHDE.md "Phase 2")
+    TRADE_PACK: 5,                    // a trade moves this many goods per pack
+    TRADE_PRICE: { sell: { korn: 1, holz: 1, stein: 2 }, buy: { korn: 3, holz: 3, stein: 5 } },   // 💰 per pack: what a pack of goods sells for / what a pack costs
+    // walls and gates
+    BREACH_COST: 60,                  // a banner's travel field treats an enemy wall or closed gate cell as passable at this much extra; with no open way the field leads to the cheapest breach
+    BREACH_MUL: { palisade: 0.4, mauer: 1, torhaus: 1 },   // (ours) × BREACH_COST by kind: a wooden wall is cheaper to break than a stone one
+    RUBBLE_SLOW: 0.6,                 // a ruined wall piece or gate is passable rubble at this share of the ground speed
+    // Wehrgang
+    SLOTS: { mauer: 1, torhaus: 4, wachturm: 3 },   // archer slots: a Mauer has this many per cell
+    GARRISON_RANGE: 3,                // a garrisoned archer shoots this much farther
+    GARRISON_ARMOR: 0.5,              // arrows deal this share against a garrisoned archer; melee cannot reach him at all
+    GARRISON_TOUCH: 1, GARRISON_NEAR: 4,   // an order within TOUCH of an own garrisonable building sends the banner's archers into the free slots of such buildings within NEAR of the order
+    GARRISON_FALL: 0.2,               // archers drop out of a ruined building with this share of their hit points lost
+    GARRISON_ENTER_R: 1.1, GARRISON_WALK_R: 7, GARRISON_S: 1,   // (ours) an archer climbs in when within ENTER_R of the footprint; farther than WALK_R he travels with the banner; free slots are handed out every GARRISON_S
+    GARRISON_DROP_R: 4, GARRISON_RETRY_S: 5,   // (ours) an archer leaving a wall looks for a free cell within DROP_R; one who finds no way in gives his slot up for RETRY_S
+    // Rammbock and Reiterschütze
+    WALL_PIECES_MAX: 64,              // (ours) buildWall takes at most this many pieces per call
+    SLOT_LOS_R: 1.5,                  // (ours) a soldier within FOLLOW_R of its slot walks straight to it, unless a wall or building is in the way and it is farther than this: then it follows the field around
+    RAM_R: 3,                         // the ram attacks the nearest enemy wall, gate or building within this
+    KITE_R: 3, KITE_S: 0.4            // a Reiterschütze backs away from a melee enemy within KITE_R while reloading; (ours) it keeps its direction this long
   };
 
   const C = CONST, UN = C.UNIT;
   const J = { IDLE: 0, TOWORK: 1, WORK: 2, CARRY: 3, RETURN: 4, FETCH: 5, BUILD: 6, RECRUIT: 7, BUCKET: 8, FLEE: 9, LEAVE: 10 };   // peasant jobs
   const DX = [1, -1, 0, 0, 1, 1, -1, -1], DY = [0, 0, 1, -1, 1, -1, 1, -1];
-  const RANK = { ritter: 0, speer: 1, fackel: 2, bogen: 3 };   // formation order: riders in front, archers at the back
+  const RANK = { ramme: -1, ritter: 0, speer: 1, fackel: 2, bogen: 3, reiterschuetze: 3 };   // formation order: the ram in front, riders next, archers (horse archers too) at the back
   const GOOD_OF = { hof: 'korn', holzfaeller: 'holz', steinbruch: 'stein' };   // R11: the good a workplace makes, i.e. the store whose cap can rest it
   const HC = 4, HW = 36, HH = 23;                              // spatial hash: 4 × 4 cells
   const FOOD_WIN = 60;                                         // R9: youOf().food.prod is the 🌾 delivered over a rolling window of this many one-second buckets
   const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);   // (a kind name from outside may be 'constructor')
   const num = (v) => typeof v === 'number' && isFinite(v);
   const int = (v) => typeof v === 'number' && isFinite(v) && v === Math.floor(v);
   const cellAt = (x, y) => { const i = Math.floor(x + 72), j = Math.floor(y + 45); return i < 0 || j < 0 || i >= GW || j >= GH ? -1 : j * GW + i; };
@@ -127,7 +163,8 @@
       this.calm = 0; this.foe = null; this.tb = null; this.tu = null;       // flee calm timer, nearest enemy soldier, building / unit target
       this.bn = null; this.slot = 0; this.scan = 0; this.cd = 0; this.noEng = 0; this.animT = 0;   // soldier: banner, slot index, scan countdown, cooldowns
       this.lastAtt = null; this.lastD = 0; this.progT = 0; this.wx = 0; this.wy = 0; this.wT = 0; this.mode = 0;   // retaliation target, chase progress, field waypoint
-      this.dead = false; this.sub = 0; this.tw = 0; this.mat = null; this.rep = 0; this.ax = 0; this.ay = 0; this.dodgeT = 0;   // walk purpose, timer length, builder's material, replans, torch dodge
+      this.dead = false; this.sub = 0; this.tw = 0; this.mat = null; this.rep = 0; this.ax = 0; this.ay = 0; this.dodgeT = 0;   // walk purpose, timer length, builder's material, replans, torch dodge / kite direction
+      this.on = null; this.si = -1; this.gb = null; this.gs = -1; this.gT = 0; this.swing = 0;   // Wehrgang: building and slot he stands in, building and slot reserved for him, "do not look for a slot before"; the ram's swing timer
     }
   }
 
@@ -161,52 +198,106 @@
 
     // ---- grids at the current water level (bucketed, so the flood rule is exact between two thresholds) ----
     const sp = new Float32Array(N), wet = new Uint8Array(N), blk = new Uint8Array(N), occ = new Uint8Array(N), lab = new Int32Array(N), stack = new Int32Array(N);
+    const bAt = new Array(N).fill(null);   // the building on a cell (a ruin as well); null = none
+    const rub = new Uint8Array(N);         // 1 = passable rubble: a ruined wall piece or gatehouse
     const hq = world.hq;
     let gridKey = -99, Lq = 1, gridVer = 0, labVer = -1;
     const pathCache = new Map();
     let routeBudget = 0;   // A* routes still allowed in this step
     const bucketOf = (L) => L >= 1 ? 25 : L <= 0 ? -1 : Math.floor(L * 24);
     function markFieldsDirty() { pathCache.clear(); for (const bn of allBanners) bn.fDirty = true; }
+    // anything that changes what a unit can walk on (a building, a ruin, the water, a pact that opens or closes a gate lane): views, labels, routes and fields are rebuilt lazily
+    function gridChanged() { gridVer++; markFieldsDirty(); }
     function refreshGrids() {
       const b = bucketOf(st.level);
       if (b === gridKey) return;
       gridKey = b; Lq = b >= 25 ? 1 : b < 0 ? 0 : (b + 0.5) / 24;
-      for (let k = 0; k < N; k++) { const s = W.walk(world, k, Lq); sp[k] = s; wet[k] = 12 * Lq - hq[k] > 1e-9 ? 1 : 0; blk[k] = s === 0 || occ[k] ? 1 : 0; }
-      gridVer++; markFieldsDirty();
+      for (let k = 0; k < N; k++) { const s = W.walk(world, k, Lq) * (rub[k] ? C.RUBBLE_SLOW : 1); sp[k] = s; wet[k] = 12 * Lq - hq[k] > 1e-9 ? 1 : 0; blk[k] = s === 0 || (occ[k] && !rub[k]) ? 1 : 0; }
+      gridChanged();
+    }
+    // ---- who can walk where: the base mask `blk` (water, rock, every building; a Torhaus lane is a wall for everybody) and, per house, its VIEW: the lane
+    // cells of its own and its pact partners' finished gatehouses opened. A house's peasants and banners move by its view. A travel field (`fviewOf`) also counts
+    // an enemy wall piece or gatehouse as passable at BREACH_COST, so a banner with no open way is led to the cheapest breach. Rebuilt only after a grid or pact change.
+    const friendly = (lp, m) => m === lp.i || PM[lp.i * M + m] > 0;
+    function laneCells(b) { const ln = W.laneOf(b.i, b.j, b.rot).cells; return [ln[0][1] * GW + ln[0][0], ln[1][1] * GW + ln[1][0]]; }
+    function viewOf(lp) {
+      if (lp.vVer === gridVer) return lp.V;
+      lp.vVer = gridVer;
+      let any = false;
+      for (const b of bldgs) if (b._.gate && b.build >= 1 && !b.ruined && friendly(lp, b.lord)) { any = true; break; }
+      if (!any) return (lp.V = blk);
+      const V = lp.Vbuf || (lp.Vbuf = new Uint8Array(N));
+      V.set(blk);
+      for (const b of bldgs) if (b._.gate && b.build >= 1 && !b.ruined && friendly(lp, b.lord)) for (const k of laneCells(b)) if (sp[k] > 0) V[k] = 0;
+      return (lp.V = V);
+    }
+    const breachable = (lp, b) => b._.piece && !b.ruined && b.lord !== lp.i && hostile(lp.i, b.lord);   // an enemy wall piece or gatehouse
+    function fviewOf(lp) {   // { B: block mask, X: extra costs or null } for travel fields and orders
+      if (lp.fVer === gridVer) return lp.F;
+      lp.fVer = gridVer;
+      const V = viewOf(lp);
+      let any = false;
+      for (const b of bldgs) if (breachable(lp, b)) { any = true; break; }
+      if (!any) return (lp.F = { B: V, X: null });
+      const B = lp.FB || (lp.FB = new Uint8Array(N)), X = lp.FX || (lp.FX = new Float32Array(N));
+      B.set(V); X.fill(0);
+      for (const b of bldgs) {
+        if (!breachable(lp, b)) continue;
+        const bp = b._, c = C.BREACH_COST * (C.BREACH_MUL[b.kind] || 1);
+        for (let dj = 0; dj < bp.h; dj++) for (let di = 0; di < bp.w; di++) { const k = (b.j + dj) * GW + b.i + di; if (sp[k] > 0) { B[k] = 0; X[k] = c; } }
+      }
+      return (lp.F = { B, X });
     }
     // connected free areas of the walkable, unoccupied cells (8 neighbours, no corner cutting); recomputed lazily
-    function labels() {
-      if (labVer === gridVer) return lab;
-      labVer = gridVer; lab.fill(-1);
+    function computeLabels(Bm, out) {
+      out.fill(-1);
       let n = 0;
       for (let s = 0; s < N; s++) {
-        if (blk[s] || lab[s] >= 0) continue;
-        let top = 0; lab[s] = n; stack[top++] = s;
+        if (Bm[s] || out[s] >= 0) continue;
+        let top = 0; out[s] = n; stack[top++] = s;
         while (top) {
           const k = stack[--top], i = k % GW, j = (k - i) / GW;
           for (let d = 0; d < 8; d++) {
             const ni = i + DX[d], nj = j + DY[d];
             if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
             const nk = nj * GW + ni;
-            if (blk[nk] || lab[nk] >= 0) continue;
-            if (d >= 4 && (blk[j * GW + ni] || blk[nj * GW + i])) continue;
-            lab[nk] = n; stack[top++] = nk;
+            if (Bm[nk] || out[nk] >= 0) continue;
+            if (d >= 4 && (Bm[j * GW + ni] || Bm[nj * GW + i])) continue;
+            out[nk] = n; stack[top++] = nk;
           }
         }
         n++;
       }
-      return lab;
+      return out;
     }
-    // the free cell nearest to (x, y) within r that lies in the same area as cell `ref`; -1 if none
-    function snapCell(x, y, r, ref) {
-      const L = labels(), rl = ref >= 0 ? L[ref] : -2, k0 = cellAt(x, y);
+    function labels() {   // the base mask's areas (what tests and house-less code see)
+      if (labVer === gridVer) return lab;
+      labVer = gridVer;
+      return computeLabels(blk, lab);
+    }
+    function labelsOf(lp) {   // the areas as house lp's units can walk them
+      const V = viewOf(lp);
+      if (V === blk) return labels();
+      if (lp.labVer !== gridVer) { lp.labVer = gridVer; computeLabels(V, lp.lab || (lp.lab = new Int32Array(N))); }
+      return lp.lab;
+    }
+    function labelsB(lp) {    // … counting enemy walls and gates as passable (where a banner may be sent)
+      const F = fviewOf(lp);
+      if (F.B === blk) return labels();
+      if (F.B === viewOf(lp)) return labelsOf(lp);
+      if (lp.labBVer !== gridVer) { lp.labBVer = gridVer; computeLabels(F.B, lp.labB || (lp.labB = new Int32Array(N))); }
+      return lp.labB;
+    }
+    // the free cell nearest to (x, y) within r that lies in the same area as cell `ref` (for house lp, as its units walk: or with `breach`, as its banners may be sent); -1 if none
+    function snapCell(x, y, r, ref, lp, breach) {
+      const B = breach ? fviewOf(lp).B : viewOf(lp), L = breach ? labelsB(lp) : labelsOf(lp), rl = ref >= 0 ? L[ref] : -2, k0 = cellAt(x, y);
       if (rl < 0) return -1;
-      if (k0 >= 0 && !blk[k0] && L[k0] === rl) return k0;
+      if (k0 >= 0 && !B[k0] && L[k0] === rl) return k0;
       const i0 = Math.floor(x + 72), j0 = Math.floor(y + 45), R = Math.ceil(r);
       let best = -1, bd = Infinity;
       for (let j = Math.max(0, j0 - R); j <= Math.min(GH - 1, j0 + R); j++) for (let i = Math.max(0, i0 - R); i <= Math.min(GW - 1, i0 + R); i++) {
         const k = j * GW + i;
-        if (blk[k] || L[k] !== rl) continue;
+        if (B[k] || L[k] !== rl) continue;
         const d = Math.hypot(i + 0.5 - 72 - x, j + 0.5 - 45 - y);
         if (d <= r + 1e-9 && d < bd - 1e-9) { bd = d; best = k; }
       }
@@ -238,10 +329,10 @@
     }
 
     // ---- line of sight, movement ----
-    function losClear(x0, y0, x1, y1) {   // true if the straight segment touches no blocked cell
+    function losClear(x0, y0, x1, y1, B) {   // true if the straight segment touches no blocked cell (of mask B: a house's view)
       let cx = Math.floor(x0 + 72), cy = Math.floor(y0 + 45);
       const ex = Math.floor(x1 + 72), ey = Math.floor(y1 + 45);
-      if (cx < 0 || cy < 0 || cx >= GW || cy >= GH || blk[cy * GW + cx]) return false;
+      if (cx < 0 || cy < 0 || cx >= GW || cy >= GH || B[cy * GW + cx]) return false;
       if (cx === ex && cy === ey) return true;
       const dx = x1 - x0, dy = y1 - y0, sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
       const tdx = dx !== 0 ? Math.abs(1 / dx) : Infinity, tdy = dy !== 0 ? Math.abs(1 / dy) : Infinity, px = x0 + 72, py = y0 + 45;
@@ -249,31 +340,31 @@
       let ty = dy > 0 ? (cy + 1 - py) * tdy : dy < 0 ? (py - cy) * tdy : Infinity;
       for (let g = 0; g < 400; g++) {
         if (tx < ty) { cx += sx; tx += tdx; } else if (ty < tx) { cy += sy; ty += tdy; } else { cx += sx; cy += sy; tx += tdx; ty += tdy; }
-        if (cx < 0 || cy < 0 || cx >= GW || cy >= GH || blk[cy * GW + cx]) return false;
+        if (cx < 0 || cy < 0 || cx >= GW || cy >= GH || B[cy * GW + cx]) return false;
         if (cx === ex && cy === ey) return true;
       }
       return false;
     }
     // move by (dx, dy), sliding along blocked cells; true only if the unit really moved
     // (a zero-length slide must not count, or a walker pressed against a wall never notices it is stuck)
-    function nudge(u, dx, dy) {
+    function nudge(u, dx, dy, B) {   // B = the view of the mover's house
       const ox = u.x, oy = u.y;
       const nx = clamp(u.x + dx, -71.9, 71.9), ny = clamp(u.y + dy, -44.9, 44.9);
       let k = cellAt(nx, ny);
-      if (k >= 0 && !blk[k]) { u.x = nx; u.y = ny; }
-      else if (nx !== ox && (k = cellAt(nx, u.y)) >= 0 && !blk[k]) u.x = nx;
-      else if (ny !== oy && (k = cellAt(u.x, ny)) >= 0 && !blk[k]) u.y = ny;
+      if (k >= 0 && !B[k]) { u.x = nx; u.y = ny; }
+      else if (nx !== ox && (k = cellAt(nx, u.y)) >= 0 && !B[k]) u.x = nx;
+      else if (ny !== oy && (k = cellAt(u.x, ny)) >= 0 && !B[k]) u.y = ny;
       const mx = u.x - ox, my = u.y - oy;
       return mx * mx + my * my > 1e-12;
     }
-    function unstick(u) {   // a unit on a blocked cell (a building went up under it) steps to the nearest free one
+    function unstick(u, B) {   // a unit on a blocked cell (a building went up under it) steps to the nearest free one
       const i0 = Math.floor(u.x + 72), j0 = Math.floor(u.y + 45);
       for (let r = 1; r <= 10; r++) {
         let best = -1, bd = 1e9;
         for (let j = j0 - r; j <= j0 + r; j++) for (let i = i0 - r; i <= i0 + r; i++) {
           if (Math.max(Math.abs(i - i0), Math.abs(j - j0)) !== r || i < 0 || j < 0 || i >= GW || j >= GH) continue;
           const k = j * GW + i;
-          if (blk[k]) continue;
+          if (B[k]) continue;
           const d = (i + 0.5 - 72 - u.x) * (i + 0.5 - 72 - u.x) + (j + 0.5 - 45 - u.y) * (j + 0.5 - 45 - u.y);
           if (d < bd) { bd = d; best = k; }
         }
@@ -284,20 +375,20 @@
       const dx = tx - u.x, dy = ty - u.y, d = Math.sqrt(dx * dx + dy * dy);
       if (d < 1e-6) { p.moved = false; return; }
       const k = cellAt(u.x, u.y), f = k >= 0 && sp[k] > 0 ? sp[k] : 0.5, step = Math.min(d, speed * f * DT);
-      p.moved = nudge(u, dx / d * step, dy / d * step);
+      p.moved = nudge(u, dx / d * step, dy / d * step, viewOf(LA[u.lord]));
       if (p.moved) u.h = Math.atan2(dy, dx);
     }
     // route for a peasant, cached per (from cell, to cell) until the water level or a building changes;
     // null = no way, undefined = not planned yet (this step's budget is spent)
-    function routeFor(x0, y0, x1, y1) {
+    function routeFor(x0, y0, x1, y1, lp) {   // by the walker's house view (its own gate lanes are open)
       const a = cellAt(x0, y0), b = cellAt(x1, y1);
       if (a < 0 || b < 0) return null;
-      const key = a * 16384 + b, hit = pathCache.get(key);
+      const key = (a * 16384 + b) * 16 + lp.k, hit = pathCache.get(key);
       if (hit !== undefined) return hit;
       if (routeBudget <= 0) return undefined;
       routeBudget--;
       if (pathCache.size > 4000) pathCache.clear();   // a long quiet game never invalidates the cache: keep it bounded
-      const r = W.path(world, { x: x0, y: y0 }, { x: x1, y: y1 }, Lq, { block: occ }), out = r ? r.slice(1) : null;
+      const r = W.path(world, { x: x0, y: y0 }, { x: x1, y: y1 }, Lq, { block: viewOf(lp) }), out = r ? r.slice(1) : null;
       pathCache.set(key, out);
       return out;
     }
@@ -308,9 +399,9 @@
       if (fx * fx + fy * fy < 0.0625) { p.moved = false; return 1; }
       if (p.pl !== undefined && p.gv !== gridVer) p.pl = undefined;   // a building or the water changed the grid: replan
       if (p.pl === undefined) {
-        if (losClear(u.x, u.y, p.dx, p.dy)) { p.pl = null; p.gv = gridVer; }
+        if (losClear(u.x, u.y, p.dx, p.dy, viewOf(LA[u.lord]))) { p.pl = null; p.gv = gridVer; }
         else {
-          const r = routeFor(u.x, u.y, p.dx, p.dy);
+          const r = routeFor(u.x, u.y, p.dx, p.dy, LA[u.lord]);
           if (r === null) return -1;
           if (r === undefined) { moveToward(u, p, p.dx, p.dy, speed); return 0; }   // no route yet: head straight on, plan next step
           p.pl = r; p.pi = 0; p.gv = gridVer;
@@ -328,7 +419,7 @@
       else if ((p.stuck += DT) > 1.2) {   // blocked: replan once through the A* route, then give up
         p.stuck = 0;
         if (p.rep > 0) return -1;
-        const r = routeFor(u.x, u.y, p.dx, p.dy);
+        const r = routeFor(u.x, u.y, p.dx, p.dy, LA[u.lord]);
         if (r === null) return -1;
         if (r === undefined) { p.stuck = 1.2; return 0; }   // budget spent: try again next step
         p.rep++; p.pl = r; p.pi = 0; p.gv = gridVer;
@@ -355,13 +446,16 @@
     const rectDist = (bp, x, y) => Math.hypot(Math.max(bp.x0 - x, 0, x - bp.x1), Math.max(bp.y0 - y, 0, y - bp.y1));
     // hp follows construction (10 % at the start, in proportion to the work) minus the damage taken; public hp is 0..1
     const refreshHp = (b) => { const bp = b._; bp.hpAbs = Math.max(0, (C.SITE_HP_MIN + (1 - C.SITE_HP_MIN) * b.build) * bp.maxHp - bp.dmg); b.hp = bp.hpAbs / bp.maxHp; };
+    // paint a building's cells: code, building, rubble (a ruined wall piece or gatehouse is passable rubble at RUBBLE_SLOW, every other ruin still blocks), blocked
     function stampOcc(b, on) {
-      const bp = b._;
+      const bp = b._, rubble = on && b.ruined && bp.piece;
       for (let dj = 0; dj < bp.h; dj++) for (let di = 0; di < bp.w; di++) {
         const k = (b.j + dj) * GW + b.i + di;
-        occ[k] = on ? bp.code : 0; blk[k] = occ[k] || sp[k] === 0 ? 1 : 0;
+        occ[k] = on ? bp.code : 0; bAt[k] = on ? b : null; rub[k] = rubble ? 1 : 0;
+        sp[k] = W.walk(world, k, Lq) * (rubble ? C.RUBBLE_SLOW : 1);
+        blk[k] = sp[k] === 0 || (occ[k] && !rub[k]) ? 1 : 0;
       }
-      gridVer++; markFieldsDirty();
+      gridChanged();
     }
     function capOf(lp, g) {   // store cap of a good: keep 30, Kornspeicher +60 🌾, Lagerplatz +60 🪵 and 🪨
       let c = C.CAP_KEEP;
@@ -377,6 +471,7 @@
       return c;
     }
     const finished = (lp, kind) => { for (const b of lp.bld) if (b.kind === kind && b.build >= 1 && !b.ruined) return true; return false; };
+    const syncGold = (lp) => { lp.pub.gold = lp.stock.gold; };   // state.lords[].gold follows the stock
     // R11: a finished workplace whose good is at its store cap rests of itself (`full`; not one that rests by order, that is `paused`). The job assignment and
     // the work cycles go by this flag, which stepLord refreshes at the start of every step (pause() refreshes it at once)
     const SFULL = { korn: -1, holz: -1, stein: -1 };   // scratch: 1 = at the cap, 0 = room left, -1 = not looked at yet
@@ -392,11 +487,11 @@
       }
     }
     // the cell a worker stands on to use a building: the documented door, else the closest free cell around it in the gate's area
-    function findDoor(lp, kind, i, j, rot) {
-      const fp = W.footprintOf(kind, rot), fw = fp[0], fh = fp[1], L = labels(), rl = lp.gateCell >= 0 ? L[lp.gateCell] : -1;
+    function findDoor(lp, kind, i, j, rot, len) {
+      const fp = W.footprintOf(kind, rot, len), fw = fp[0], fh = fp[1], L = labelsOf(lp), V = viewOf(lp), rl = lp.gateCell >= 0 ? L[lp.gateCell] : -1;
       if (rl < 0) return -1;
       const di = rot ? i - 1 : i + (fw >> 1), dj = rot ? j + (fh >> 1) : j + fh;
-      const ok = (ci, cj) => ci >= 0 && cj >= 0 && ci < GW && cj < GH && !blk[cj * GW + ci] && L[cj * GW + ci] === rl;
+      const ok = (ci, cj) => ci >= 0 && cj >= 0 && ci < GW && cj < GH && !V[cj * GW + ci] && L[cj * GW + ci] === rl;
       if (ok(di, dj)) return dj * GW + di;
       for (let r = 1; r <= 2; r++) {
         let best = -1, bd = 1e9;
@@ -410,20 +505,24 @@
       }
       return -1;
     }
-    function costOf(kind, rebuild) {
-      const c = C.BUILD[kind].cost || {}, out = { korn: 0, holz: 0, stein: 0 };
-      for (const g of GOODS) out[g] = rebuild ? Math.ceil((c[g] || 0) * C.REBUILD_COST) : (c[g] || 0);
+    function costOf(kind, rebuild, len) {   // a wall piece costs per cell (len cells); a rebuilt ruin half of that, rounded up
+      const B = C.BUILD[kind], c = B.cost || {}, out = { korn: 0, holz: 0, stein: 0 }, m = B.perCell ? len || 1 : 1;
+      for (const g of GOODS) out[g] = rebuild ? Math.ceil((c[g] || 0) * m * C.REBUILD_COST) : (c[g] || 0) * m;
       return out;
     }
-    function mkBuilding(lp, kind, i, j, rot, build, doorK) {
-      const B = C.BUILD[kind], fp = W.footprintOf(kind, rot), x0 = -72 + i, y0 = -45 + j;
-      const b = { id: nextId++, lord: lp.i, kind, i, j, rot, build, hp: 1, fire: 0, burnt: 0, ruined: false, growth: kind === 'hof' ? 0 : 1, workers: 0, paused: false, full: false };
+    function mkBuilding(lp, kind, i, j, rot, build, doorK, len) {
+      len = len || 1;
+      const B = C.BUILD[kind], fp = W.footprintOf(kind, rot, len), x0 = -72 + i, y0 = -45 + j, hp = B.hp * (B.perCell ? len : 1), slots = (C.SLOTS[kind] || 0) * (kind === 'mauer' ? len : 1);
+      const b = { id: nextId++, lord: lp.i, kind, i, j, rot, build, hp: 1, fire: 0, burnt: 0, ruined: false, growth: kind === 'hof' ? 0 : 1, workers: 0, paused: false, full: false, len, garrison: 0 };
       if (kind === 'holzfaeller') b.noWood = false;
       const bp = {
         lp, w: fp[0], h: fp[1], x0, y0, x1: x0 + fp[0], y1: y0 + fp[1], cx: x0 + fp[0] / 2, cy: y0 + fp[1] / 2, code: 1 + BKEYS.indexOf(kind),
-        maxHp: B.hp, hpAbs: B.hp, dmg: 0, paid: null, door: doorK, dx: ckx(doorK), dy: cky(doorK), workers: [], builder: null, max: B.workers || 0,
-        wood: W.BUILDINGS[kind].mat === 'holz', fireBy: -1, spreadT: 0, yieldN: 0, cands: null, cd: 0, torchBy: null, lastBy: -1, dead: false
+        maxHp: hp, hpAbs: hp, dmg: 0, paid: null, door: doorK, dx: ckx(doorK), dy: cky(doorK), workers: [], builder: null, max: B.workers || 0,
+        wood: W.BUILDINGS[kind].mat === 'holz', fireBy: -1, spreadT: 0, yieldN: 0, cands: null, cd: 0, torchBy: null, lastBy: -1, dead: false,
+        wall: WALLS.indexOf(kind) >= 0, gate: kind === 'torhaus', len,                       // wall line / gatehouse: the "pieces" a breach attacks
+        cap: slots, gs: slots ? new Array(slots).fill(null) : null, gres: slots ? new Array(slots).fill(null) : null   // Wehrgang: archer slots, the archers standing in them, slots reserved for archers on their way
       };
+      bp.piece = bp.wall || bp.gate;
       hid(b, bp);
       refreshHp(b);
       if (kind === 'hof') {
@@ -456,8 +555,9 @@
     function completeBuilding(b) {
       const bp = b._;
       b.build = 1; refreshHp(b);
+      if (bp.gate) gridChanged();   // a finished gatehouse opens its lane for its owner and pact partners
       if (b.kind === 'holzfaeller') gatherTrees(b);
-      bp.lp.stats.built++;
+      if (!bp.wall) bp.lp.stats.built++;
       emit({ t: 'buildDone', id: b.id });
     }
     function removeBuilding(b) {
@@ -468,6 +568,7 @@
       stampOcc(b, false);
       lp.bld.splice(lp.bld.indexOf(b), 1); bldgs.splice(bldgs.indexOf(b), 1);
       bp.dead = true;
+      evacuate(b, 0, -1);   // (the archers step down unhurt)
     }
 
     // ---- damage, ruins, plunder ----
@@ -487,17 +588,21 @@
       if (b.fire > 0) { b.fire = 0; emit({ t: 'fireOut', id: b.id }); }
       for (const u of bp.workers.slice()) releaseJob(u, u._);
       if (bp.builder) releaseJob(bp.builder, bp.builder._);
+      if (bp.piece) stampOcc(b, true);   // a ruined wall piece or gatehouse is passable rubble (every other ruin keeps blocking)
       emit({ t: 'ruined', id: b.id, by: by >= 0 ? by : null });
+      evacuate(b, C.GARRISON_FALL, by);   // the archers on it drop to the nearest free cell, a fifth of their hit points lost
+      if (bp.piece) emit({ t: 'breach', id: b.id, lord: lp.i, kind: b.kind, x: bp.cx, y: bp.cy, by: by >= 0 ? by : null });
       const k = by >= 0 && by !== lp.i ? LA[by] : null;
-      if (k) { addRuhm(k, b.kind === 'kaserne' || b.kind === 'wachturm' ? C.RUHM.razeMil : C.RUHM.raze, 'buildings', lp); k.stats.razed++; }
+      if (k && !bp.wall) { addRuhm(k, MIL.indexOf(b.kind) >= 0 ? C.RUHM.razeMil : C.RUHM.raze, 'buildings', lp); k.stats.razed++; }   // (a wall line gives no Ruhm: a cheap palisade must not be a Ruhm farm)
     }
     function plunder(dl, al) {   // the keep of `dl` fell to `al`: loot, the Burgwache dies, the keep stands again under protection
-      const keep = dl.keepB, loot = { korn: 0, holz: 0, stein: 0 };
+      const keep = dl.keepB, loot = { korn: 0, holz: 0, stein: 0, gold: 0 };
       if (al && al !== dl) {
         for (const g of GOODS) {
           const take = Math.floor(dl.stock[g] * C.LOOT), got = Math.min(take, Math.max(0, capOf(al, g) - al.stock[g]));
           dl.stock[g] -= take; al.stock[g] += got; loot[g] = got;
         }
+        { const take = Math.floor(dl.stock.gold * C.LOOT); dl.stock.gold -= take; al.stock.gold += take; loot.gold = take; syncGold(dl); syncGold(al); }   // gold has no cap: the attacker gets all of the half
         addRuhm(al, C.RUHM.plunder, 'plunder', dl); al.stats.plunders++;
       }
       for (const u of units.slice()) if (u.hp > 0 && u.lord === dl.i && u.n === 0 && u.kind !== 'bauer') killUnit(u, al ? al.i : -1, true);
@@ -559,17 +664,108 @@
       }
     }
 
+    // ---- Wehrgang: archers (bogen only) stand in the slots of a finished Mauer (one per cell), Torhaus (4) and Wachturm (3). Inside they shoot GARRISON_RANGE
+    // farther, arrows deal GARRISON_ARMOR against them and melee cannot reach them; they keep their banner. units[].on / .slot and buildings[].garrison show it. ----
+    let GX = 0, GY = 0;   // scratch result of slotXY()
+    const garrisonable = (b) => b._.cap > 0 && b.build >= 1 && !b.ruined && !b._.dead;
+    function slotXY(b, s) {   // the ground position of slot s: along the wall top (Mauer), on the four tower cells (Torhaus), three places on the platform (Wachturm)
+      const bp = b._;
+      if (b.kind === 'mauer') { GX = bp.x0 + (b.rot ? 0.5 : s + 0.5); GY = bp.y0 + (b.rot ? s + 0.5 : 0.5); }
+      else if (b.kind === 'torhaus') { GX = bp.x0 + 0.5 + (b.rot ? s & 1 : (s >> 1) * 2); GY = bp.y0 + 0.5 + (b.rot ? (s >> 1) * 2 : s & 1); }
+      else { GX = bp.cx + (s === 0 ? -0.45 : s === 1 ? 0.45 : 0); GY = bp.cy + (s === 2 ? 0.5 : -0.35); }
+    }
+    function unreserve(u, p) { if (p.gb) { if (p.gb._.gres && p.gb._.gres[p.gs] === u) p.gb._.gres[p.gs] = null; p.gb = null; p.gs = -1; } }
+    function enterGarrison(u, p, b, s) {
+      const bp = b._;
+      unreserve(u, p);
+      p.on = b; p.si = s; bp.gs[s] = u; b.garrison++;
+      slotXY(b, s); u.x = GX; u.y = GY; u.on = b.id; u.slot = s;
+      p.tu = null; p.tb = null; p.noEng = 0; p.scan = 1;
+      emit({ t: 'garrison', lord: u.lord, id: b.id, unit: u.id, on: true });
+    }
+    // out of the Wehrgang: onto the nearest free cell of his house's area; `hurt` = share of his hit points lost (a collapsing wall), by = who brought it down
+    function leaveGarrison(u, p, hurt, by) {
+      const b = p.on;
+      if (!b) return;
+      const bp = b._;
+      if (bp.gs[p.si] === u) bp.gs[p.si] = null;
+      b.garrison--; p.on = null; p.si = -1; u.on = null; u.slot = -1; p.tu = null; p.scan = 1;
+      const lp = LA[u.lord], c = snapCell(u.x, u.y, C.GARRISON_DROP_R, lp.gateCell, lp);
+      if (c >= 0) { u.x = ckx(c); u.y = cky(c); }
+      emit({ t: 'garrison', lord: u.lord, id: b.id, unit: u.id, on: false });
+      if (hurt > 0) damageUnit(u, hurt * UN[u.kind].hp, by);
+    }
+    function dropSlot(u, p) {   // he died or left the game: free his slot and his reservation without moving him
+      if (p.on) { const bp = p.on._; if (bp.gs[p.si] === u) bp.gs[p.si] = null; p.on.garrison--; p.on = null; p.si = -1; u.on = null; u.slot = -1; }
+      unreserve(u, p);
+    }
+    function evacuate(b, hurt, by) {   // everybody out (a ruin, or the building was torn down), and every reservation void
+      const bp = b._;
+      if (!bp.cap) return;
+      for (const u of bp.gs.slice()) if (u) leaveGarrison(u, u._, hurt, by);
+      bp.gres.fill(null);
+      for (const u of units) if (u._.gb === b) { u._.gb = null; u._.gs = -1; }
+    }
+    // an order on or within GARRISON_TOUCH of an own garrisonable building is a garrison order, anchored there
+    function garrisonAt(lp, x, y) {
+      for (const b of lp.bld) if (garrisonable(b) && rectDist(b._, x, y) <= C.GARRISON_TOUCH) return true;
+      return false;
+    }
+    // after a new order: archers inside or on their way to a building that no longer fits the order (not near the new anchor, or no garrison order at all) leave / lose their slot
+    function retargetGarrison(bn) {
+      if (bn.n === 0) return;
+      for (const u of bn.members) {
+        const p = u._, b = p.on || p.gb;
+        if (!b) continue;
+        if (bn.gar && garrisonable(b) && rectDist(b._, bn.gx, bn.gy) <= C.GARRISON_NEAR) continue;
+        if (p.on) leaveGarrison(u, p, 0, -1); else unreserve(u, p);
+      }
+    }
+    // every GARRISON_S: hand the free slots to archers without one — a banner with a garrison order uses the buildings within GARRISON_NEAR of its anchor, nearest slot first;
+    // the Burgwache uses every free slot within GUARD_R of the keep, nearest the gate first. Each slot goes to the nearest archer still waiting.
+    const GSL = [];
+    function planGarrison(lp) {
+      for (const bn of lp.bn) {
+        if (bn.n !== 0 && !bn.gar) continue;
+        let archers = null;
+        for (const u of bn.members) { const p = u._; if (u.kind === 'bogen' && u.hp > 0 && !p.on && !p.gb && p.gT <= st.t) (archers || (archers = [])).push(u); }
+        if (!archers) continue;
+        const guard = bn.n === 0, ax = guard ? lp.gx : bn.gx, ay = guard ? lp.gy : bn.gy;
+        GSL.length = 0;
+        for (const b of lp.bld) {
+          if (!garrisonable(b)) continue;
+          const bp = b._;
+          if (!guard && rectDist(bp, ax, ay) > C.GARRISON_NEAR) continue;
+          for (let sl = 0; sl < bp.cap; sl++) {
+            if (bp.gs[sl] || bp.gres[sl]) continue;
+            slotXY(b, sl);
+            if (guard && Math.hypot(GX - lp.kx, GY - lp.ky) > C.GUARD_R) continue;
+            GSL.push({ b, s: sl, d: Math.hypot(GX - ax, GY - ay) });
+          }
+        }
+        GSL.sort((a, c) => a.d - c.d || a.b.id - c.b.id || a.s - c.s);
+        for (const q of GSL) {
+          if (!archers.length) break;
+          slotXY(q.b, q.s);
+          let bi = 0, bd = Infinity;
+          for (let n = 0; n < archers.length; n++) { const v = archers[n], d = (v.x - GX) * (v.x - GX) + (v.y - GY) * (v.y - GY); if (d < bd) { bd = d; bi = n; } }
+          const u = archers.splice(bi, 1)[0], p = u._;
+          p.gb = q.b; p.gs = q.s; q.b._.gres[q.s] = u; p.progT = 0; p.lastD = 1e9;
+        }
+      }
+    }
+
     // ---- people: creation, death, jobs ----
     function yardSpot(lp, id, p) {   // an idle peasant waits within YARD_R of the gate, on the outward side
       for (let t = 0; t < 6; t++) {
         const R = C.YARD_R, x = lp.gx + (ihash(id, 21 + t) - 0.5) * 1.3 * R, y = lp.gy + lp.out * (0.15 + ihash(id, 41 + t) * 0.6) * R, k = cellAt(x, y);
-        if (k >= 0 && !blk[k]) { p.yx = x; p.yy = y; return; }
+        if (k >= 0 && !viewOf(lp)[k]) { p.yx = x; p.yy = y; return; }
       }
       p.yx = lp.gx; p.yy = lp.gy;
     }
     function mkUnit(lp, kind, x, y, n) {
       const un = UN[kind], h = lp.out * Math.PI / 2;
-      const u = { id: nextId++, lord: lp.i, kind, x, y, px: x, py: y, h, ph: h, hp: un.hp, anim: 'idle', carry: null, n };
+      const u = { id: nextId++, lord: lp.i, kind, x, y, px: x, py: y, h, ph: h, hp: un.hp, anim: 'idle', carry: null, n, on: null, slot: -1 };
       const p = new UP();
       hid(u, p);
       p.scan = 1 + (u.id % 8); p.cd = rCom() * 0.5;
@@ -602,6 +798,7 @@
       if (p.dead) return;   // (hp alone cannot tell: the blow that kills has already taken it to 0)
       p.dead = true; v.hp = 0;
       emit({ t: 'death', id: v.id, lord: v.lord, kind: v.kind, x: v.x, y: v.y, by: by >= 0 ? by : null });
+      dropSlot(v, p);
       releaseJob(v, p);
       if (p.bn) leaveBanner(v, p);
       lp.stats.lost++;
@@ -655,7 +852,7 @@
       releaseJob(u, p);
       p.job = J.LEAVE; p.t = 0;
       const a = (rEco() - 0.5) * 1.6, x = lp.gx + Math.sin(a) * C.LEAVE_WALK, y = lp.gy + lp.out * Math.cos(a) * C.LEAVE_WALK;
-      const k = snapCell(x, y, 8, lp.gateCell);
+      const k = snapCell(x, y, 8, lp.gateCell, lp);
       if (k >= 0) walkTo(p, ckx(k), cky(k)); else walkTo(p, lp.gx, lp.gy);
     }
     function startCarry(u, p) {   // the load in p.res / p.load goes to the nearest store
@@ -696,11 +893,11 @@
       return best;
     }
     const wellR = (br) => br.kind === 'bergfried' ? C.KEEP_WELL_R : C.BUCKET_R;   // reach of a well: the keep's own (R6) or a Brunnen's
-    // R12: the finished Kaserne nearest to (x, y) that has a free place, i.e. fewer than TRAIN_PAR recruits other than `self` are on their way to it or in training there
-    function freeKaserne(lp, x, y, self) {
+    // R12: the finished training house of this kind (Kaserne or Söldnerlager) nearest to (x, y) that has a free place, i.e. fewer than TRAIN_PAR recruits other than `self` are on their way to it or in training there
+    function freeTrainer(lp, at, x, y, self) {
       let best = null, bd = Infinity;
       for (const b of lp.bld) {
-        if (b.kind !== 'kaserne' || b.build < 1 || b.ruined) continue;
+        if (b.kind !== at || b.build < 1 || b.ruined) continue;
         let n = 0;
         for (const q of lp.queue) if (q.u && q.u !== self && q.u._.store === b) n++;
         if (n >= C.TRAIN_PAR) continue;
@@ -748,22 +945,24 @@
           while (bp.workers.length < bp.max) { const u = nearest(bp.dx, bp.dy); if (!u) break; startWorker(u, b); }
         }
       }
-      // 2. queued recruits walk to the nearest finished Kaserne with a free place (R12: TRAIN_PAR recruits per Kaserne are on their way or in training, so two Kasernen train twice as fast)
-      const kas = [];   // finished Kasernen, each with the recruits already assigned to it
-      for (const b of lp.bld) if (b.kind === 'kaserne' && b.build >= 1 && !b.ruined) kas.push({ b, n: 0 });
+      // 2. queued recruits walk to the nearest finished training house of their kind (Kaserne, or Söldnerlager for torch-bearers and horse archers) with a free place
+      //    (R12: TRAIN_PAR recruits per house are on their way or in training, so two Kasernen train twice as fast)
+      const kas = [];   // finished training houses, each with the recruits already assigned to it
+      for (const b of lp.bld) if ((b.kind === 'kaserne' || b.kind === 'soeldnerlager') && b.build >= 1 && !b.ruined) kas.push({ b, n: 0 });
       if (kas.length) {
         for (const q of lp.queue) if (q.u) { const s = q.u._.store; for (const k of kas) if (k.b === s) { k.n++; break; } }
         for (const qe of lp.queue) {
           if (qe.u) continue;
+          const at = UN[qe.unit].at;
           let pk = null, pi = -1, pd = Infinity, gk = null, gd = Infinity;
           for (const k of kas) {
-            if (k.n >= C.TRAIN_PAR) continue;
+            if (k.b.kind !== at || k.n >= C.TRAIN_PAR) continue;
             const i = nearestIx(k.b._.dx, k.b._.dy);
             if (i >= 0 && nd < pd - 1e-9) { pd = nd; pk = k; pi = i; }   // the idle peasant and the Kaserne with room that are nearest to each other
             const g = (k.b._.dx - lp.gx) * (k.b._.dx - lp.gx) + (k.b._.dy - lp.gy) * (k.b._.dy - lp.gy);
             if (g < gd - 1e-9) { gd = g; gk = k; }                        // (for a worker who has to be pulled off his job: the Kaserne with room nearest to the gate)
           }
-          if (!gk) break;   // every Kaserne is full: the rest of the queue waits for a place
+          if (!gk) continue;   // every house of this kind is full (or gone): this order waits for a place, the others may go on
           let u = null, k = pk;
           if (pk) u = idle.splice(pi, 1)[0];
           else { qe.wait = (qe.wait || 0) + C.ASSIGN_S; if (qe.wait >= C.PULL_WAIT_S) { k = gk; u = takeWorker(lp, k.b._.dx, k.b._.dy); } }
@@ -791,12 +990,12 @@
 
     // ---- the peasant state machine ----
     function pickTree(b, bp) {   // nearest standing, free tree of the hut that can be walked to
-      const L = labels(), rl = L[bp.door];
+      const L = labelsOf(bp.lp), V = viewOf(bp.lp), rl = L[bp.door];
       let best = -1, bd = Infinity;
       for (const id of bp.cands) {
         if (trees[id] < C.STAND_AT || tlock[id] || tres[id]) continue;
         const t = world.trees[id];
-        if (blk[t.k] || L[t.k] !== rl) continue;
+        if (V[t.k] || L[t.k] !== rl) continue;
         const d = (t.x - bp.cx) * (t.x - bp.cx) + (t.y - bp.cy) * (t.y - bp.cy);
         if (d < bd) { bd = d; best = id; }
       }
@@ -812,7 +1011,7 @@
         const t = world.trees[id], d = Math.hypot(bp.dx - t.x, bp.dy - t.y) || 1;
         let sx = t.x + (bp.dx - t.x) / d * 0.9, sy = t.y + (bp.dy - t.y) / d * 0.9;
         const k = cellAt(sx, sy);
-        if (k < 0 || blk[k]) { sx = t.x; sy = t.y; }
+        if (k < 0 || viewOf(LA[u.lord])[k]) { sx = t.x; sy = t.y; }
         walkTo(p, sx, sy); p.job = J.TOWORK; p.sub = 1;
         return 'walk';
       }
@@ -994,7 +1193,7 @@
             else if (r < 0) { failWalk(u, p); carry = null; }
             anim = p.moved ? 'walk' : 'idle';
           } else if (s.fire <= C.WORK_FIRE) {   // building
-            const sp0 = s._, dp = DT * wf / C.BUILD[s.kind].buildS;
+            const sp0 = s._, bd = C.BUILD[s.kind], dp = DT * wf / (bd.buildS * (bd.perCell ? s.len : 1));   // (a wall piece takes buildS per cell)
             s.build = Math.min(1, s.build + dp); refreshHp(s);
             u.h = Math.atan2(sp0.cy - u.y, sp0.cx - u.x);
             anim = 'work';
@@ -1006,8 +1205,8 @@
           const qe = p.qe;
           if (!qe || lp.queue.indexOf(qe) < 0) { releaseJob(u, p); break; }
           let k = p.store;
-          if (!k || k.ruined || k._.dead) {   // the Kaserne is gone: the nearest other one with a free place (R12), or back to the yard
-            k = freeKaserne(lp, u.x, u.y, u);
+          if (!k || k.ruined || k._.dead) {   // the training house is gone: the nearest other one of its kind with a free place (R12), or back to the yard
+            k = freeTrainer(lp, UN[qe.unit].at, u.x, u.y, u);
             if (!k) { releaseJob(u, p); break; }
             p.store = k; p.ws = 0; p.t = 0; qe.p = 0; walkTo(p, k._.dx, k._.dy);
           }
@@ -1075,19 +1274,20 @@
 
     // ---- banners: leader point, formation slots, travel field ----
     let SX = 0, SY = 0, SC = false, WPX = 0, WPY = 0;   // scratch results of slotPos() (SC: the slot collapsed onto the leader) and fieldWaypoint()
-    const SCAN_STEPS = Math.max(1, Math.round(C.SCAN_S * TPS));
+    const SCAN_STEPS = Math.max(1, Math.round(C.SCAN_S * TPS)), GAR_STEPS = Math.max(1, Math.round(C.GARRISON_S * TPS));
     function homeOf(lp, n) {   // default post of banner n (0 = Burgwache): in front of the gate, on free ground of the keep's area
-      const x = lp.gx + (n === 0 ? 0 : (n - 2) * 7), y = lp.gy + lp.out * (n === 0 ? 6 : 8), k = snapCell(x, y, C.SNAP_R, lp.gateCell);
+      const x = lp.gx + (n === 0 ? 0 : (n - 2) * 7), y = lp.gy + lp.out * (n === 0 ? 6 : 8), k = snapCell(x, y, C.SNAP_R, lp.gateCell, lp);
       if (k < 0) return { x: lp.gx, y: lp.gy };
       return k === cellAt(x, y) ? { x, y } : { x: ckx(k), y: cky(k) };
     }
     function resetBanner(bn) {
       const h = homeOf(bn.lp, bn.n);
-      bn.tx = bn.x = h.x; bn.ty = bn.y = h.y; bn.arrived = true; bn.fDirty = true; bn.fx = 0; bn.fy = bn.lp.out; bn.lk = cellAt(h.x, h.y);
+      bn.tx = bn.x = h.x; bn.ty = bn.y = h.y; bn.arrived = true; bn.fDirty = true; bn.fx = 0; bn.fy = bn.lp.out; bn.lk = cellAt(h.x, h.y); bn.gar = false; bn.breach = null;
     }
     function mkBanner(lp, n) {
       const bn = { lp, n, id: lp.i * 4 + n, members: [], queued: 0, x: 0, y: 0, tx: 0, ty: 0, fx: 0, fy: lp.out, field: null, fDirty: true, fNeed: false, fCool: 0,
-        march: 2.6, rosterV: 0, slotV: -1, engaged: 0, lagSum: 0, lagN: 0, lag: 0, sieges: [], siegeT: 0, pub: null, arrived: true, stuckT: 0, lk: -1, nearT: false };
+        march: 2.6, rosterV: 0, slotV: -1, engaged: 0, lagSum: 0, lagN: 0, lag: 0, sieges: [], siegeT: 0, pub: null, arrived: true, stuckT: 0, lk: -1, nearT: false,
+        breach: null, gar: false, gx: 0, gy: 0 };   // breach: the enemy wall piece the halted banner is attacking; gar/gx/gy: garrison order and its anchor
       resetBanner(bn);
       allBanners.push(bn);
       return bn;
@@ -1124,20 +1324,24 @@
       const m = bn.members.length, row = (p.slot / C.SLOT_ROW) | 0, col = p.slot - row * C.SLOT_ROW, cols = Math.min(C.SLOT_ROW, m - row * C.SLOT_ROW);
       const off = (col - (cols - 1) / 2) * C.SLOT_GAP, back = row * C.SLOT_GAP;
       const x = bn.x - bn.fx * back - bn.fy * off, y = bn.y - bn.fy * back + bn.fx * off, k = cellAt(x, y);
-      if (k < 0 || blk[k] || (bn.lk >= 0 && labels()[k] !== labels()[bn.lk])) { SX = bn.x; SY = bn.y; SC = true; } else { SX = x; SY = y; SC = false; }
+      const V = viewOf(bn.lp), L = labelsOf(bn.lp);
+      if (k < 0 || V[k] || (bn.lk >= 0 && L[k] !== L[bn.lk])) { SX = bn.x; SY = bn.y; SC = true; } else { SX = x; SY = y; SC = false; }
     }
     function ensureField(bn) {
       const t = cellAt(bn.tx, bn.ty);
       if (t < 0) return false;
       if (!bn.field) bn.field = new Float32Array(N);
-      W.field(world, [t], Lq, bn.field, occ);
+      const F = fviewOf(bn.lp);   // the house's view, with enemy walls and gates passable at BREACH_COST
+      W.field(world, [t], Lq, bn.field, F.B, F.X);
       bn.fDirty = false; bn.fCool = 1;   // a dirty field is recomputed at most once a second (new orders always recompute at once)
       return true;
     }
-    // a point a few cells down the banner's travel field from (x, y), as far as line of sight reaches
+    // a point a few cells down the banner's travel field from (x, y), as far as line of sight reaches. WM = which step of the descent it is (0 = the very next cell: nothing
+    // farther is in sight), WK = that cell; the caller looks at WK to see whether the way leads into an enemy wall
     const DESC = new Int32Array(8);
+    let WM = 0, WK = -1;
     function fieldWaypoint(bn, x, y) {
-      const f = bn.field;
+      const f = bn.field, FB = fviewOf(bn.lp).B, V = viewOf(bn.lp);
       let k = cellAt(x, y);
       if (!f || k < 0 || f[k] === Infinity) return false;
       let v = f[k], ci = k % GW, cj = (k - ci) / GW, n = 0;
@@ -1147,7 +1351,7 @@
           const ni = ci + DX[d], nj = cj + DY[d];
           if (ni < 0 || nj < 0 || ni >= GW || nj >= GH) continue;
           const nk = nj * GW + ni, nv = f[nk];
-          if (nv < bv && !(d >= 4 && (blk[cj * GW + ni] || blk[nj * GW + ci]))) { bv = nv; best = nk; }
+          if (nv < bv && !(d >= 4 && (FB[cj * GW + ni] || FB[nj * GW + ci]))) { bv = nv; best = nk; }
         }
         if (best < 0) break;
         DESC[n++] = best; k = best; v = bv; ci = k % GW; cj = (k - ci) / GW;
@@ -1156,7 +1360,7 @@
       if (n === 0) return false;
       for (let m = n - 1; m >= 0; m--) {
         const c = DESC[m], last = f[c] === 0, px = last ? bn.tx : ckx(c), py = last ? bn.ty : cky(c);
-        if (m === 0 || losClear(x, y, px, py)) { WPX = px; WPY = py; return true; }
+        if (m === 0 || losClear(x, y, px, py, V)) { WPX = px; WPY = py; WM = m; WK = c; return true; }
       }
       return false;
     }
@@ -1166,31 +1370,44 @@
       if (d < 0.4) { bn.arrived = true; return; }
       bn.arrived = false;
       if (eng > 0 && eng >= Math.ceil(n * C.HOLD_FRAC)) return;   // a fight: the banner halts
+      if (bn.breach) {   // standing at an enemy wall: the banner halts until the piece falls (or the way no longer leads through it, e.g. a neighbour fell first)
+        const t = bn.breach;
+        let hold = !(t.ruined || t._.dead || !hostile(bn.lp.i, t.lord));
+        if (hold && bn.field && fieldWaypoint(bn, bn.x, bn.y)) hold = WM === 0 && bAt[WK] === t;
+        if (hold) { bn.stuckT = 0; return; }
+        bn.breach = null; bn.fDirty = true; bn.fCool = 0;
+      }
       if (!bn.field) ensureField(bn);
       let wx = bn.tx, wy = bn.ty;
-      if (bn.field && fieldWaypoint(bn, bn.x, bn.y)) { wx = WPX; wy = WPY; }
-      else if (!losClear(bn.x, bn.y, wx, wy)) {   // no route known yet: wait for a fresh field, give up after a while
+      const V = viewOf(bn.lp);
+      if (bn.field && fieldWaypoint(bn, bn.x, bn.y)) {
+        wx = WPX; wy = WPY;
+        const wb = WM === 0 ? bAt[WK] : null;
+        if (wb && breachable(bn.lp, wb) && rectDist(wb._, bn.x, bn.y) <= C.SIEGE_R) { bn.breach = wb; bn.siegeT = 0; bn.stuckT = 0; return; }   // the way leads through an enemy wall or gate: attack that piece
+      } else if (!losClear(bn.x, bn.y, wx, wy, V)) {   // no route known yet: wait for a fresh field, give up after a while
         bn.fDirty = true;
         if ((bn.stuckT += DT) > 9) { bn.tx = bn.x; bn.ty = bn.y; bn.arrived = true; bn.stuckT = 0; }
         return;
       }
       const k = bn.lk, f = k >= 0 && sp[k] > 0 ? sp[k] : 0.5, coh = clamp(1 - (bn.lag - C.COH_LAG) / C.COH_SPAN, C.COH_MIN, 1);
       const ex = wx - bn.x, ey = wy - bn.y, el = Math.hypot(ex, ey) || 1, step = Math.min(el, bn.march * f * coh * DT);
-      if (nudge(bn, ex / el * step, ey / el * step)) {
+      if (nudge(bn, ex / el * step, ey / el * step, V)) {
         bn.stuckT = 0;
         bn.fx += (ex / el - bn.fx) * 0.15; bn.fy += (ey / el - bn.fy) * 0.15;
         const l = Math.hypot(bn.fx, bn.fy) || 1; bn.fx /= l; bn.fy /= l;
         bn.lk = cellAt(bn.x, bn.y);
       } else if ((bn.stuckT += DT) > 3) bn.fDirty = true;
     }
-    function pickSieges(bn) {   // enemy buildings the standing banner is on or within SIEGE_R of
+    function pickSieges(bn) {   // enemy buildings the standing banner is on or within SIEGE_R of, and the wall piece a halted banner is breaking
       const out = bn.sieges;
       out.length = 0;
-      if (bn.n === 0 || !bn.arrived || !bn.members.length) return;
+      if (bn.n === 0 || !bn.members.length) return;
+      if (bn.breach && !bn.breach.ruined) out.push(bn.breach);
+      if (!bn.arrived) return;
       for (const o of LP) {
         if (o === bn.lp || !hostile(bn.lp.i, o.i)) continue;
         for (const b of o.bld) {
-          if (b.ruined || (b.kind === 'bergfried' && o.pub.prot > 0)) continue;
+          if (b.ruined || b === bn.breach || (b.kind === 'bergfried' && o.pub.prot > 0)) continue;
           if (rectDist(b._, bn.x, bn.y) <= C.SIEGE_R) out.push(b);
         }
       }
@@ -1203,8 +1420,8 @@
         bn.lag = bn.lagN ? bn.lagSum / bn.lagN : 0; bn.lagSum = 0; bn.lagN = 0;
         if (bn.slotV !== bn.rosterV) sortRoster(bn);
         if (bn.fCool > 0) bn.fCool -= DT;
-        const lk = cellAt(bn.x, bn.y);
-        if (lk < 0 || blk[lk]) { unstick(bn); bn.lk = cellAt(bn.x, bn.y); bn.fDirty = true; }   // a building went up under the leader point
+        const lk = cellAt(bn.x, bn.y), V = viewOf(bn.lp);
+        if (lk < 0 || V[lk]) { unstick(bn, V); bn.lk = cellAt(bn.x, bn.y); bn.fDirty = true; }   // a building went up under the leader point
         if (bn.fDirty && bn.fCool <= 0 && !recomputed && (bn.fNeed || !bn.arrived) && ensureField(bn)) recomputed = true;
         bn.fNeed = false;
         moveLeader(bn, eng);
@@ -1212,20 +1429,22 @@
         if ((bn.siegeT -= DT) <= 0) { bn.siegeT = C.SCAN_S; pickSieges(bn); }
       }
     }
-    function setTarget(bn, x, y) {   // a new order: the travel field is recomputed at once
-      bn.tx = x; bn.ty = y; bn.arrived = false; bn.stuckT = 0;
+    function setTarget(bn, x, y, ga) {   // a new order: the travel field is recomputed at once. ga = { x, y }: a garrison order anchored at that point
+      bn.tx = x; bn.ty = y; bn.arrived = false; bn.stuckT = 0; bn.breach = null;
+      bn.gar = !!ga; if (ga) { bn.gx = ga.x; bn.gy = ga.y; }
       if (!(bn.members.length || bn.queued)) { bn.x = x; bn.y = y; bn.lk = cellAt(x, y); bn.arrived = true; }   // nobody to lead yet: a rally point
       else ensureField(bn);
       if (bn.pub) { bn.pub.tx = x; bn.pub.ty = y; }
       for (const u of bn.members) u._.wT = 0;
+      retargetGarrison(bn);
       emit({ t: 'order', lord: bn.lp.i, n: bn.n, x, y });
     }
     function sendHome(bn) { const h = homeOf(bn.lp, bn.n); setTarget(bn, h.x, h.y); }
-    function retargetBlocked() {   // a new building may stand on a banner's target: the target moves to the nearest free cell
+    function retargetBlocked() {   // a new building may stand on a banner's target: the target moves to the nearest free cell (an enemy wall piece is a fine target: it will be attacked)
       for (const bn of allBanners) {
         const k = cellAt(bn.tx, bn.ty);
-        if (k >= 0 && !blk[k]) continue;
-        const ref = bn.members.length && bn.lk >= 0 && !blk[bn.lk] ? bn.lk : bn.lp.gateCell, c = snapCell(bn.tx, bn.ty, C.SNAP_R, ref);
+        if (k >= 0 && !fviewOf(bn.lp).B[k]) continue;
+        const ref = bn.members.length && bn.lk >= 0 && !viewOf(bn.lp)[bn.lk] ? bn.lk : bn.lp.gateCell, c = snapCell(bn.tx, bn.ty, C.SNAP_R, ref, bn.lp, true);
         if (c < 0) { const h = homeOf(bn.lp, bn.n); bn.tx = h.x; bn.ty = h.y; } else { bn.tx = ckx(c); bn.ty = cky(c); }
         bn.fDirty = true; bn.fCool = 0; bn.arrived = false;
         if (bn.pub) { bn.pub.tx = bn.tx; bn.pub.ty = bn.ty; }
@@ -1255,20 +1474,21 @@
       if (st.t - clashAt[b] > C.CLASH_S) { clashAt[b] = st.t; emit({ t: 'clash', x: (u.x + t.x) / 2, y: (u.y + t.y) / 2 }); }
     }
     function flightOf(d, range) { return clamp(C.FLIGHT_MIN + (C.FLIGHT_MAX - C.FLIGHT_MIN) * (d / range) + (rCom() - 0.5) * 0.06, C.FLIGHT_MIN, C.FLIGHT_MAX); }
-    function shoot(u, un, t) {   // an archer's arrow: damage comes on arrival
-      const flight = flightOf(Math.hypot(t.x - u.x, t.y - u.y), un.range);
+    function shoot(u, un, t, rng) {   // an archer's arrow: damage comes on arrival (rng = his reach, longer from a wall)
+      const flight = flightOf(Math.hypot(t.x - u.x, t.y - u.y), rng || un.range);
       arrows.push({ at: tick + Math.max(1, Math.round(flight * TPS)), tu: t, tb: null, dmg: dmgVs(u, un, t), by: u.lord, src: u });
       emit({ t: 'shot', from: [u.x, u.y], to: [t.x, t.y], flight, src: 'bogen' });
     }
-    function dmgBuilding(u, un) {
-      let m = un.dmg * (C.VS_BUILDING[u.kind] || 0);
+    function dmgBuilding(u, un, b) {   // a wall piece or gatehouse takes VS_WALL from blows and ARROW_WALL (stone 0, wood 0.15) from arrows, every other building VS_BUILDING
+      const bp = b._;
+      let m = un.dmg * (bp.piece ? (un.range > 3 ? (bp.wood ? C.ARROW_WALL.holz : C.ARROW_WALL.stein) : (C.VS_WALL[u.kind] || 0)) : (C.VS_BUILDING[u.kind] || 0));
       const k = cellAt(u.x, u.y);
       if (k >= 0 && wet[k]) m *= C.WADE_DEALT;
       if (LA[u.lord].pub.zorn > 0) m *= C.ZORN_MUL;
       return m;
     }
     function strikeBuilding(u, un, b) {
-      const bp = b._, d = dmgBuilding(u, un);
+      const bp = b._, d = dmgBuilding(u, un, b);
       if (d <= 0) return;
       if (un.range > 3) {
         const flight = flightOf(rectDist(bp, u.x, u.y), un.range);
@@ -1285,7 +1505,7 @@
       for (let i = 0; i < arrows.length; i++) {
         const a = arrows[i];
         if (a.at > tick) { arrows[w++] = a; continue; }
-        if (a.tu) { if (a.tu.hp > 0) { damageUnit(a.tu, a.dmg, a.by, a.src); emit({ t: 'hit', id: a.tu.id, x: a.tu.x, y: a.tu.y }); } }
+        if (a.tu) { if (a.tu.hp > 0) { damageUnit(a.tu, a.dmg * (a.tu._.on ? C.GARRISON_ARMOR : 1) * (a.tu.kind === 'ramme' ? C.ARROW_RAM : 1), a.by, a.src); emit({ t: 'hit', id: a.tu.id, x: a.tu.x, y: a.tu.y }); } }
         else if (a.tb && !a.tb.ruined && !a.tb._.dead) { damageBuilding(a.tb, a.dmg, a.by); emit({ t: 'hit', id: a.tb.id, x: a.tb._.cx, y: a.tb._.cy }); }
       }
       arrows.length = w;
@@ -1341,24 +1561,25 @@
       const R = un.range > 3 ? C.AGGRO_BOGEN : C.AGGRO_MELEE, Rg = guard ? Math.max(R, C.GUARD_SELF_R) : R;
       near(u.x, u.y, Rg);
       let best = null, bd = Rg * Rg + 1e-9;
+      const melee = un.range <= 3;   // (a melee soldier cannot reach an archer on a wall)
       for (let q = 0; q < QN; q++) {
         const v = units[QB[q]];
-        if (v.hp <= 0 || v.lord === u.lord || !hostile(u.lord, v.lord)) continue;
+        if (v.hp <= 0 || v.lord === u.lord || !hostile(u.lord, v.lord) || (melee && v._.on)) continue;
         const d = (v.x - u.x) * (v.x - u.x) + (v.y - u.y) * (v.y - u.y);
         if (d < bd) { bd = d; best = v; }
       }
-      if (guard && lp.alarm && lp.alarm.hp > 0) {
+      if (guard && lp.alarm && lp.alarm.hp > 0 && !(melee && lp.alarm._.on)) {
         const a = lp.alarm, d = (a.x - u.x) * (a.x - u.x) + (a.y - u.y) * (a.y - u.y);
         if (!best || d < bd) { best = a; bd = d; }
       }
       const la = p.lastAtt;   // whoever hit me from beyond my own reach is fought too
-      if (!best && la && la.hp > 0 && hostile(u.lord, la.lord) && (la.x - u.x) * (la.x - u.x) + (la.y - u.y) * (la.y - u.y) <= C.RETALIATE_R * C.RETALIATE_R) best = la;
+      if (!best && la && la.hp > 0 && hostile(u.lord, la.lord) && !(melee && la._.on) && (la.x - u.x) * (la.x - u.x) + (la.y - u.y) * (la.y - u.y) <= C.RETALIATE_R * C.RETALIATE_R) best = la;
       if (best) {
         if (!p.tu || best === p.tu || Math.sqrt(bd) + 1 < Math.hypot(p.tu.x - u.x, p.tu.y - u.y)) { if (p.tu !== best) { p.progT = 0; p.lastD = 1e9; } p.tu = best; }
         p.tb = null;
       } else if (!p.tu && bn.sieges.length && un.dmg > 0) {
         let bb = null, bbd = Infinity;
-        for (const b of bn.sieges) { if (b.ruined) continue; const d = rectDist(b._, u.x, u.y); if (d < bbd) { bbd = d; bb = b; } }
+        for (const b of bn.sieges) { if (b.ruined || dmgBuilding(u, un, b) <= 0) continue; const d = rectDist(b._, u.x, u.y); if (d < bbd) { bbd = d; bb = b; } }   // (an arrow that cannot scratch a stone wall is no reason to stand at it)
         if (bb !== p.tb) { p.progT = 0; p.lastD = 1e9; }
         p.tb = bb;
       }
@@ -1400,7 +1621,7 @@
       if (d < 12) { bn.lagSum += d; bn.lagN++; }
       if (d < (SC ? 2.2 : 0.25)) { u.h = Math.atan2(bn.fy, bn.fx); return 'idle'; }   // (a collapsed slot is a crowd around the leader: no shuffling)
       let tx = SX, ty = SY;
-      if (d > C.FOLLOW_R) {
+      if (d > C.FOLLOW_R || (d > C.SLOT_LOS_R && !losClear(u.x, u.y, SX, SY, viewOf(bn.lp)))) {   // far from the slot, or a wall or building in between: follow the field around it
         bn.fNeed = true;
         if (bn.field) {
           if (--p.wT <= 0 || (p.wx - u.x) * (p.wx - u.x) + (p.wy - u.y) * (p.wy - u.y) < 0.5) {
@@ -1463,16 +1684,129 @@
       bp.torchBy = null; p.tb = null; p.scan = 1;
       return 'work';
     }
+    // The Rammbock deals no damage to people. It attacks the nearest enemy wall, gate or building within RAM_R; the blow lands at the end of its swing (cd 2 s, shown as 'fight').
+    // With nothing near it keeps its place at the front of the banner.
+    function updateRam(u, p, un, bn, lp) {
+      if (!p.tb && p.noEng <= 0 && --p.scan <= 0) {
+        p.scan = SCAN_STEPS;
+        let best = bn.breach && !bn.breach.ruined && rectDist(bn.breach._, u.x, u.y) <= C.RAM_R ? bn.breach : null, bd = C.RAM_R + 1e-9;   // (the piece its banner is breaking comes first)
+        if (!best) for (const o of LP) {
+          if (o === lp || !hostile(lp.i, o.i)) continue;
+          for (const b of o.bld) {
+            if (b.ruined || (b.kind === 'bergfried' && o.pub.prot > 0)) continue;
+            const d = rectDist(b._, u.x, u.y);
+            if (d < bd) { bd = d; best = b; }
+          }
+        }
+        if (best) { p.tb = best; p.swing = 0; p.progT = 0; p.lastD = 1e9; }
+      }
+      const b = p.tb;
+      if (!b) { p.swing = 0; return formation(u, p, un, bn); }
+      const bp = b._, d = rectDist(bp, u.x, u.y);
+      u.h = Math.atan2(bp.cy - u.y, bp.cx - u.x);
+      if (d > un.range) {   // up to the target (a chase that gains nothing is dropped, as for every soldier)
+        p.swing = 0;
+        approach(u, p, clamp(u.x, bp.x0, bp.x1), clamp(u.y, bp.y0, bp.y1), d, un.speed);
+        return p.moved ? 'walk' : 'idle';
+      }
+      p.progT = 0; p.lastD = 1e9;
+      if (p.swing <= 0) p.swing = un.cd;   // begin the swing
+      if ((p.swing -= DT) <= 0) {   // … and the blow lands at its end; the next swing begins at once
+        p.swing = un.cd;
+        const dm = dmgBuilding(u, un, b);
+        if (dm > 0) {
+          damageBuilding(b, dm, u.lord);
+          emit({ t: 'hit', id: b.id, x: clamp(u.x, bp.x0, bp.x1), y: clamp(u.y, bp.y0, bp.y1) });
+          emit({ t: 'ram', id: b.id, x: clamp(u.x, bp.x0, bp.x1), y: clamp(u.y, bp.y0, bp.y1) });
+        }
+      }
+      return 'fight';
+    }
+    // The Reiterschütze shoots on the move (it keeps following its banner while a target is within reach) and backs away from a melee enemy within KITE_R while it reloads.
+    function updateRider(u, p, un, bn, lp) {
+      if (p.dodgeT > 0) p.dodgeT -= DT;
+      if (((tick + u.id) % 3) === 0) {
+        near(u.x, u.y, C.KITE_R);
+        let ax = 0, ay = 0;
+        for (let q = 0; q < QN; q++) {
+          const v = units[QB[q]];
+          if (v.hp <= 0 || v.lord === u.lord || !hostile(u.lord, v.lord) || v._.on || v.kind === 'bauer') continue;
+          const uv = UN[v.kind];
+          if (uv.dmg <= 0 || uv.range > 3) continue;   // melee soldiers only
+          const dx = u.x - v.x, dy = u.y - v.y, d2 = dx * dx + dy * dy;
+          if (d2 < C.KITE_R * C.KITE_R && d2 > 1e-6) { const d = Math.sqrt(d2); ax += dx / d; ay += dy / d; }
+        }
+        if ((ax !== 0 || ay !== 0) && p.cd > 0) { const l = Math.hypot(ax, ay); p.ax = ax / l; p.ay = ay / l; p.dodgeT = C.KITE_S; }
+      }
+      if (--p.scan <= 0) { p.scan = SCAN_STEPS; scanSoldier(u, p, un, bn, lp); }
+      let anim;
+      const t = p.tu;
+      if (p.dodgeT > 0) { moveToward(u, p, u.x + p.ax * 3, u.y + p.ay * 3, un.speed); anim = p.moved ? 'walk' : 'idle'; }
+      else if (t) {
+        const dx = t.x - u.x, dy = t.y - u.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d > un.range) { bn.engaged++; approach(u, p, t.x, t.y, d, un.speed); anim = p.moved ? 'walk' : 'idle'; }
+        else { p.progT = 0; p.lastD = 1e9; anim = formation(u, p, un, bn); }   // in reach: keep riding with the banner and shoot on the way
+      } else anim = p.tb ? fightBuilding(u, p, un, bn) : formation(u, p, un, bn);
+      if (t && t.hp > 0 && p.cd <= 0) {
+        const dx = t.x - u.x, dy = t.y - u.y;
+        if (dx * dx + dy * dy <= un.range * un.range) { p.cd = un.cd; p.animT = C.STRIKE_ANIM_S; if (!p.moved) u.h = Math.atan2(dy, dx); shoot(u, un, t); }
+      }
+      return anim;
+    }
+    // an archer on a wall: he stays, shoots the nearest enemy within his raised reach and is no target for melee
+    function updateGarrisoned(u, p, un, bn, lp) {
+      const b = p.on;
+      if (b.ruined || b._.dead || b.build < 1) { leaveGarrison(u, p, 0, -1); return 'idle'; }
+      const R = un.range + C.GARRISON_RANGE;
+      if (--p.scan <= 0) {
+        p.scan = SCAN_STEPS;
+        near(u.x, u.y, R);
+        let best = null, bd = R * R + 1e-9;
+        for (let q = 0; q < QN; q++) {
+          const v = units[QB[q]];
+          if (v.hp <= 0 || v.lord === u.lord || !hostile(u.lord, v.lord)) continue;
+          const d = (v.x - u.x) * (v.x - u.x) + (v.y - u.y) * (v.y - u.y);
+          if (d < bd) { bd = d; best = v; }
+        }
+        p.tu = best;
+      }
+      const t = p.tu;
+      if (!t) return 'idle';
+      const dx = t.x - u.x, dy = t.y - u.y;
+      if (t.hp <= 0 || !hostile(u.lord, t.lord) || dx * dx + dy * dy > R * R) { p.tu = null; return 'idle'; }
+      u.h = Math.atan2(dy, dx);
+      if (p.cd <= 0) { p.cd = un.cd; p.animT = C.STRIKE_ANIM_S; shoot(u, un, t, R); }
+      return 'idle';
+    }
+    // an archer with a reserved slot: close to the building he walks straight to it and climbs in; null = not yet near (the normal banner logic moves him)
+    function walkToGarrison(u, p, un) {
+      const b = p.gb, bp = b._;
+      if (!garrisonable(b) || bp.gres[p.gs] !== u) { unreserve(u, p); return null; }
+      const d = rectDist(bp, u.x, u.y);
+      if (d <= C.GARRISON_ENTER_R) { enterGarrison(u, p, b, p.gs); return 'idle'; }
+      if (d > C.GARRISON_WALK_R) return null;
+      u.h = Math.atan2(bp.cy - u.y, bp.cx - u.x);
+      moveToward(u, p, clamp(u.x, bp.x0, bp.x1), clamp(u.y, bp.y0, bp.y1), un.speed);
+      if ((p.progT += DT) >= C.CHASE_S) {   // no way in (something is in the way): give the slot up for a while
+        if (d > p.lastD - C.CHASE_GAIN) { unreserve(u, p); p.gT = st.t + C.GARRISON_RETRY_S; return 'idle'; }
+        p.lastD = d; p.progT = 0;
+      }
+      return p.moved ? 'walk' : 'idle';
+    }
     function updateSoldier(u, p, lp) {
       const un = UN[u.kind], bn = p.bn;
       p.moved = false; p.cd -= DT;
       if (p.noEng > 0) p.noEng -= DT;
       if (p.animT > 0) p.animT -= DT;
-      if (p.tu && (p.tu.hp <= 0 || !hostile(u.lord, p.tu.lord))) p.tu = null;
+      if (p.tu && (p.tu.hp <= 0 || !hostile(u.lord, p.tu.lord) || (p.tu._.on && !p.on && un.range <= 3))) p.tu = null;
       if (p.tb && u.kind !== 'fackel' && (p.tb.ruined || p.tb._.dead || !hostile(u.lord, p.tb.lord) || (p.tb.kind === 'bergfried' && LA[p.tb.lord].pub.prot > 0))) p.tb = null;
-      let anim;
-      if (u.kind === 'fackel') anim = updateTorch(u, p, un, bn, lp);
-      else {
+      let anim = null;
+      if (p.on) anim = updateGarrisoned(u, p, un, bn, lp);
+      else if (u.kind === 'fackel') anim = updateTorch(u, p, un, bn, lp);
+      else if (u.kind === 'ramme') anim = updateRam(u, p, un, bn, lp);
+      else if (u.kind === 'reiterschuetze') anim = updateRider(u, p, un, bn, lp);
+      else if (p.gb) anim = walkToGarrison(u, p, un);   // on his way into a wall or tower (null while he is still far away: he travels with his banner)
+      if (anim === null) {
         if (--p.scan <= 0) { p.scan = SCAN_STEPS; scanSoldier(u, p, un, bn, lp); }
         anim = p.tu ? fightUnit(u, p, un, bn) : p.tb ? fightBuilding(u, p, un, bn) : formation(u, p, un, bn);
       }
@@ -1482,14 +1816,14 @@
     function separate() {   // people push each other apart by their radii; workers stand firm
       for (let i = 0; i < units.length; i++) {
         const u = units[i];
-        if (u.hp <= 0) continue;
+        if (u.hp <= 0 || u._.on) continue;
         const ru = UN[u.kind].r;
         near(u.x, u.y, 1.4);
         for (let q = 0; q < QN; q++) {
           const j = QB[q];
           if (j <= i) continue;
           const v = units[j];
-          if (v.hp <= 0) continue;
+          if (v.hp <= 0 || v._.on) continue;
           const rv = UN[v.kind].r, rr = ru + rv, dx = v.x - u.x, dy = v.y - u.y, d2 = dx * dx + dy * dy;
           if (d2 >= rr * rr) continue;
           let nx, ny, d = Math.sqrt(d2);
@@ -1497,8 +1831,8 @@
           const push = (rr - d) * C.SEP;
           let wu = rv / rr, wv = ru / rr;
           if (u.anim === 'work') { wu = 0; wv = 1; } else if (v.anim === 'work') { wu = 1; wv = 0; }
-          if (wu > 0) nudge(u, -nx * push * wu, -ny * push * wu);
-          if (wv > 0) nudge(v, nx * push * wv, ny * push * wv);
+          if (wu > 0) nudge(u, -nx * push * wu, -ny * push * wu, viewOf(LA[u.lord]));
+          if (wv > 0) nudge(v, nx * push * wv, ny * push * wv, viewOf(LA[v.lord]));
         }
       }
     }
@@ -1581,19 +1915,20 @@
       for (const o of out) st.pacts.push(o);
     }
     function stepPacts() {
-      let changed = false;
+      let changed = false, gate = false;
       for (const a of LP) for (const b of LP) {
         if (a === b) continue;
         const ab = a.i * M + b.i, ba = b.i * M + a.i;
         if (OF[ab] > 0 && OF[ab] <= st.t + 1e-9) { OF[ab] = 0; changed = true; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired' }); }
-        if (a.i < b.i && PM[ab] > 0 && PM[ab] <= st.t + 1e-9) { PM[ab] = PM[ba] = 0; changed = true; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired' }); }
+        if (a.i < b.i && PM[ab] > 0 && PM[ab] <= st.t + 1e-9) { PM[ab] = PM[ba] = 0; changed = true; gate = true; emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'expired' }); }
       }
       if (changed) syncPacts();
+      if (gate) gridChanged();
     }
     function makeRanking() {
       const rows = LP.map(lp => {
         let buildings = 0;
-        for (const b of lp.bld) if (b.kind !== 'bergfried' && b.build >= 1 && !b.ruined) buildings++;
+        for (const b of lp.bld) if (b.kind !== 'bergfried' && !b._.wall && b.build >= 1 && !b.ruined) buildings++;
         return { rank: 0, lord: lp.i, ruhm: lp.pub.ruhm, people: lp.pub.people, soldiers: lp.pub.soldiers, buildings, stats: Object.assign({}, lp.stats), by: Object.assign({}, lp.by) };
       });
       rows.sort((a, b) => b.ruhm - a.ruhm || b.people - a.people || b.buildings - a.buildings || a.lord - b.lord);
@@ -1631,13 +1966,14 @@
       hashBuild();
       if (tick % SCAN_STEPS === 0) scanAlarms();
       for (const lp of LP) if ((tick + lp.k * 5) % TPS === 0) assignJobs(lp);
+      for (const lp of LP) if ((tick + lp.k * 5 + 2) % GAR_STEPS === 0) planGarrison(lp);
       stepRegrow();
       stepBanners();
       for (let i = 0; i < units.length; i++) {
         const u = units[i];
         if (u.hp <= 0) continue;
         const k = cellAt(u.x, u.y);
-        if (k < 0 || blk[k]) unstick(u);
+        if (!u._.on) { const V = viewOf(LA[u.lord]); if (k < 0 || V[k]) unstick(u, V); }   // (a garrisoned archer stands on a wall: that cell is blocked on purpose)
         if (u.kind === 'bauer') updatePeasant(u, u._, LA[u.lord]); else updateSoldier(u, u._, LA[u.lord]);
       }
       stepFire();
@@ -1668,6 +2004,7 @@
         pb.count = m.length; pb.moving = !bn.arrived && bn.engaged === 0; pb.tx = bn.tx; pb.ty = bn.ty;
       }
       if ((crownT -= DT) <= 0) { crownT = C.CROWN_S; updateCrown(); }
+      for (const lp of LP) lp.pub.gold = lp.stock.gold;
       stepPacts();
       if (tick >= tEnd) {
         st.phase = 'over';
@@ -1681,36 +2018,82 @@
 
     // ---- public API ----
     const bad = (reason) => ({ ok: false, reason });
-    function build(lord, kind, i, j, rot) {
+    // `len` is for the wall lines only (palisade, mauer: 1..4 cells, default 1; anything else is 'bounds'); a ruin is rebuilt only with its own len
+    function build(lord, kind, i, j, rot, len) {
       const lp = lordOf(lord);
       if (!lp) return bad('lord');
-      if (typeof kind !== 'string' || !C.BUILD[kind] || kind === 'bergfried' || !W.BUILDINGS[kind]) return bad('kind');
+      if (typeof kind !== 'string' || !own(C.BUILD, kind) || kind === 'bergfried' || !own(W.BUILDINGS, kind)) return bad('kind');
       if (st.phase === 'over') return bad('phase');
       if (rot === undefined || rot === null || rot === false) rot = 0; else if (rot === true) rot = 1;
       if (!int(i) || !int(j) || (rot !== 0 && rot !== 1)) return bad('bounds');
+      if (W.isWall(kind)) { if (len === undefined || len === null) len = 1; if (!int(len) || len < 1 || len > W.BUILDINGS[kind].maxLen) return bad('bounds'); } else len = 1;
       let ruin = null;   // a ruin of the same kind on exactly this footprint is rebuilt for half the cost and keeps its id
-      for (const b of lp.bld) if (b.ruined && b.kind === kind && b.i === i && b.j === j && b.rot === rot) { ruin = b; break; }
+      for (const b of lp.bld) if (b.ruined && b.kind === kind && b.i === i && b.j === j && b.rot === rot && b.len === len) { ruin = b; break; }
       if (!ruin) {
-        const r = W.canPlace(world, kind, i, j, rot, { lord: lp.site, L: st.level, occ });
+        const r = W.canPlace(world, kind, i, j, rot, { lord: lp.site, L: st.level, occ, len });
         if (!r.ok) return bad(r.reason);
       }
-      const door = ruin ? ruin._.door : findDoor(lp, kind, i, j, rot);
+      const door = ruin ? ruin._.door : findDoor(lp, kind, i, j, rot, len);
       if (door < 0) return bad('wet');   // no dry way from the keep to its door
-      const cost = costOf(kind, !!ruin);
+      const cost = costOf(kind, !!ruin, len);
       for (const g of GOODS) if (cost[g] > lp.stock[g]) return bad('cost');
       for (const g of GOODS) lp.stock[g] -= cost[g];
       if (ruin) {
         const bp = ruin._;
         ruin.ruined = false; ruin.build = 0; ruin.fire = 0; ruin.burnt = 0; ruin.growth = kind === 'hof' ? 0 : 1;
         bp.dmg = 0; refreshHp(ruin); bp.paid = cost; bp.builder = null; bp.fireBy = -1; bp.spreadT = 0; bp.wait = 0; bp.unreachT = 0;
+        if (bp.piece) stampOcc(ruin, true);
         emit({ t: 'rebuild', id: ruin.id });
         return { ok: true, id: ruin.id };
       }
-      const b = mkBuilding(lp, kind, i, j, rot, 0, door);
+      const b = mkBuilding(lp, kind, i, j, rot, 0, door, len);
       b._.paid = cost;
       stampOcc(b, true); fellFootprint(b); retargetBlocked();
       emit({ t: 'build', lord: lp.i, id: b.id, kind });
       return { ok: true, id: b.id };
+    }
+    // A line of wall pieces [[i, j, rot, len], …] placed in order while the stock lasts. Answers { ok, placed, reason? }: ok = at least one piece stands;
+    // `reason` (when not every piece was placed) is why the first one failed. A piece that cannot be placed is skipped, but an empty stock ends the line ('cost').
+    function buildWall(lord, kind, pieces) {
+      const lp = lordOf(lord);
+      if (!lp) return { ok: false, placed: 0, reason: 'lord' };
+      if (typeof kind !== 'string' || !WALLS.includes(kind)) return { ok: false, placed: 0, reason: 'kind' };
+      if (st.phase === 'over') return { ok: false, placed: 0, reason: 'phase' };
+      if (!Array.isArray(pieces) || pieces.length === 0 || pieces.length > C.WALL_PIECES_MAX) return { ok: false, placed: 0, reason: 'bounds' };
+      let placed = 0, why;
+      for (const pc of pieces) {
+        const r = Array.isArray(pc) ? build(lord, kind, pc[0], pc[1], pc[2], pc[3]) : bad('bounds');
+        if (r.ok) { placed++; continue; }
+        if (!why) why = r.reason;
+        if (r.reason === 'cost') break;
+      }
+      return placed ? (why ? { ok: true, placed, reason: why } : { ok: true, placed }) : { ok: false, placed: 0, reason: why || 'bounds' };
+    }
+    // The Markt: sell packs of TRADE_PACK goods for 💰 or buy them. Answers { ok, n, reason? } with n = packs traded; a trade that stops short
+    // (not enough goods or gold: 'cost', store full: 'cap') still gives ok with the reason; n = 0 is ok: false.
+    function trade(lord, good, side, packs) {
+      const lp = lordOf(lord), no = (reason) => ({ ok: false, n: 0, reason });
+      if (!lp) return no('lord');
+      if (side !== 'sell' && side !== 'buy') return no('side');
+      if (GOODS.indexOf(good) < 0) return no('good');
+      if (!int(packs) || packs < 1) return no('packs');
+      if (st.phase === 'over') return no('phase');
+      if (!finished(lp, 'markt')) return no('markt');
+      const P = C.TRADE_PACK, price = C.TRADE_PRICE[side][good];
+      let n = packs, why;
+      if (side === 'sell') {
+        const have = Math.floor(lp.stock[good] / P);
+        if (have < n) { n = have; why = 'cost'; }
+      } else {
+        const afford = Math.floor(lp.stock.gold / price), room = Math.max(0, Math.floor((capOf(lp, good) - lp.stock[good]) / P));
+        if (afford < n) { n = afford; why = 'cost'; }
+        if (room < n) { n = room; why = 'cap'; }
+      }
+      if (n < 1) return no(why);
+      if (side === 'sell') { lp.stock[good] -= n * P; lp.stock.gold += n * price; } else { lp.stock.gold -= n * price; lp.stock[good] += n * P; }
+      syncGold(lp);
+      emit({ t: 'trade', lord: lp.i, good, side, n, gold: n * price });
+      return why ? { ok: true, n, reason: why } : { ok: true, n };
     }
     function cancel(lord, id) {
       const lp = lordOf(lord);
@@ -1745,15 +2128,17 @@
     function recruit(lord, unit, n) {
       const lp = lordOf(lord);
       if (!lp) return bad('lord');
-      if (typeof unit !== 'string' || !UN[unit] || unit === 'bauer') return bad('unit');
+      if (typeof unit !== 'string' || !own(UN, unit) || unit === 'bauer') return bad('unit');
       if (!(n === 0 || n === 1 || n === 2 || n === 3)) return bad('banner');
       if (st.phase === 'over') return bad('phase');
-      if (!finished(lp, 'kaserne')) return bad('kaserne');
+      const at = UN[unit].at;   // the house that trains it: 'kaserne', or 'lager' (the Söldnerlager) for torch-bearers and horse archers
+      if (!finished(lp, at)) return bad(at === 'kaserne' ? 'kaserne' : 'lager');
       const peasants = lp.pub.people - lp.pub.soldiers;
       if (lp.queue.length >= C.QUEUE_MAX || peasants - lp.queue.length - 1 < C.PEASANT_MIN) return bad('pop');
       const cost = UN[unit].cost;
-      for (const g of GOODS) if ((cost[g] || 0) > lp.stock[g]) return bad('cost');
-      for (const g of GOODS) lp.stock[g] -= cost[g] || 0;
+      for (const g of PAY) if ((cost[g] || 0) > lp.stock[g]) return bad('cost');
+      for (const g of PAY) lp.stock[g] -= cost[g] || 0;
+      syncGold(lp);
       const bn = lp.bn[n];
       lp.queue.push({ unit, n, p: 0, u: null, wait: 0 });
       bn.queued++; syncBanner(bn);
@@ -1775,15 +2160,18 @@
       const bn = lp.bn[n];
       x = clamp(x, -71.9, 71.9); y = clamp(y, -44.9, 44.9);
       if (inPactZone(lp, x, y)) return { ok: false, reason: 'pact', x: bn.tx, y: bn.ty };
-      const L = labels(), from = bn.members.length && bn.lk >= 0 && !blk[bn.lk] ? bn.lk : lp.gateCell, rl = from >= 0 ? L[from] : -1, k0 = cellAt(x, y);
+      const L = labelsB(lp), FB = fviewOf(lp).B, from = bn.members.length && bn.lk >= 0 && !viewOf(lp)[bn.lk] ? bn.lk : lp.gateCell, rl = from >= 0 ? L[from] : -1, k0 = cellAt(x, y);
       let tx = x, ty = y, reason;
-      if (!(k0 >= 0 && !blk[k0] && rl >= 0 && L[k0] === rl)) {
-        const k = snapCell(x, y, C.SNAP_R, from);
+      if (!(k0 >= 0 && !FB[k0] && rl >= 0 && L[k0] === rl)) {   // (an enemy wall piece or gate counts as reachable: the banner breaks it)
+        const k = snapCell(x, y, C.SNAP_R, from, lp, true);
         if (k >= 0) { tx = ckx(k); ty = cky(k); reason = 'snapped'; } else { tx = lp.gx; ty = lp.gy; reason = 'unreachable'; }
       }
       if (reason && inPactZone(lp, tx, ty)) return { ok: false, reason: 'pact', x: bn.tx, y: bn.ty };
-      setTarget(bn, tx, ty);
-      return reason ? { ok: true, x: tx, y: ty, reason } : { ok: true, x: tx, y: ty };
+      const ga = garrisonAt(lp, x, y);   // the order point itself (before snapping) lies on or within 1 of an own garrisonable building
+      setTarget(bn, tx, ty, ga ? { x, y } : null);
+      const r = reason ? { ok: true, x: tx, y: ty, reason } : { ok: true, x: tx, y: ty };
+      if (ga) r.garrison = true;   // (the archers of this banner will take the free slots near the order)
+      return r;
     }
     function home(lord) {
       const lp = lordOf(lord);
@@ -1804,7 +2192,7 @@
           OF[ba] = 0; OF[ab] = 0; PM[ab] = PM[ba] = st.t + C.PACT_S;
           a.stats.pacts++; b.stats.pacts++;
           emit({ t: 'pactOn', a: b.i, b: a.i, until: PM[ab] });
-          syncPacts();
+          syncPacts(); gridChanged();   // (partners walk through each other's gates now)
           return { ok: true, state: 'active' };
         }
         if (OF[ab] <= 0) emit({ t: 'pactOffer', from: a.i, to: b.i });
@@ -1819,7 +2207,7 @@
         addRuhm(a, C.RUHM.betray, 'betrayal'); a.stats.betrayals++;
         b.pub.zorn = C.ZORN_S;
         emit({ t: 'pactOff', a: a.i, b: b.i, reason: 'broken', by: a.i });
-        syncPacts();
+        syncPacts(); gridChanged();
         return { ok: true, state: 'none' };
       }
       return { ok: false, reason: 'none', state: 'none' };
@@ -1846,7 +2234,7 @@
         else pacts.push({ with: o.i, state: 'none', until: 0 });
       }
       return {
-        stock: { korn: lp.stock.korn, holz: lp.stock.holz, stein: lp.stock.stein },
+        stock: { korn: lp.stock.korn, holz: lp.stock.holz, stein: lp.stock.stein, gold: lp.stock.gold },
         cap: { korn: capOf(lp, 'korn'), holz: capOf(lp, 'holz'), stein: capOf(lp, 'stein') },
         pop: pub.people, popCap: popCap(lp), idle, hunger: lp.hungry,
         queue: lp.queue.map(q => ({ unit: q.unit, n: q.n, p: q.p, wait: !q.u })),   // wait: no peasant has been sent to the Kaserne for this recruit (yet)
@@ -1858,17 +2246,17 @@
     // ---- test hooks (not part of the game API) ----
     const dev = {
       lord: (i) => lordOf(i),                                   // private record of a house: stock, bld, queue, bn, stats …
-      stock: (i, goods) => { const lp = lordOf(i); if (goods) Object.assign(lp.stock, goods); return lp.stock; },
+      stock: (i, goods) => { const lp = lordOf(i); if (goods) Object.assign(lp.stock, goods); syncGold(lp); return lp.stock; },
       spawn(i, kind, x, y, n) {                                 // a ready soldier (n = banner 0..3) or, for 'bauer', a peasant
         const lp = lordOf(i), u = mkUnit(lp, kind, x, y, kind === 'bauer' ? -1 : n);
         if (kind !== 'bauer') joinBanner(u, u._, lp.bn[n]);
         u.px = x; u.py = y;
         return u;
       },
-      place(i, kind, ci, cj, rot) {                             // a finished building, free of charge
+      place(i, kind, ci, cj, rot, len) {                        // a finished building, free of charge
         const lp = lordOf(i), keep = Object.assign({}, lp.stock);
         for (const g of GOODS) lp.stock[g] += 999;
-        const r = build(i, kind, ci, cj, rot);
+        const r = build(i, kind, ci, cj, rot, len);
         for (const g of GOODS) lp.stock[g] = keep[g];
         if (!r.ok) return r;
         const b = lp.bld.find(x => x.id === r.id);
@@ -1880,6 +2268,9 @@
       fire: (b, level, by) => setFire(b, level, by === undefined ? -1 : by),
       kill: (u, by) => killUnit(u, by === undefined ? -1 : by),
       occ, blk, labels, field: (bn) => { ensureField(bn); return bn.field; },
+      view: (i) => viewOf(lordOf(i)),                           // the cells house i's units cannot enter (its own and its partners' gate lanes open)
+      fview: (i) => fviewOf(lordOf(i)),                         // { B, X }: the same with enemy wall pieces passable, and what entering them costs
+      bAt: (k) => bAt[k], rub,                                  // the building on a cell, the rubble flags
       level: () => Lq, tick: () => tick, units: () => units
     };
 
@@ -1897,11 +2288,12 @@
       refreshGrids();
       for (const spec of specs) {
         const site = world.sites[spec.site], out = spec.site < 2 ? 1 : -1;
-        const pub = { i: spec.i, site: spec.site, emblem: spec.i, crown: false, ruhm: 0, people: 0, soldiers: 0, prot: 0, zorn: 0, hunger: false };
+        const pub = { i: spec.i, site: spec.site, emblem: spec.i, crown: false, ruhm: 0, people: 0, soldiers: 0, prot: 0, zorn: 0, hunger: false, gold: 0 };
         const lp = {
           i: spec.i, k: LP.length, site: spec.site, out, kx: site.x, ky: site.y, gx: site.x + 0.5, gy: site.y + 3.5 * out, gateCell: cellAt(site.x + 0.5, site.y + 3.5 * out),
-          pub, stock: { korn: C.START.korn, holz: C.START.holz, stein: C.START.stein }, bld: [], queue: [], bn: [], keepB: null,
+          pub, stock: { korn: C.START.korn, holz: C.START.holz, stein: C.START.stein, gold: 0 }, bld: [], queue: [], bn: [], keepB: null,
           arriveT: 0, eatAcc: 0, hungry: false, leaveT: 0, prosT: 0, alertT: -99, alarm: null, fw: new Int32Array(FOOD_WIN), fwI: 0,
+          vVer: -1, V: null, fVer: -1, F: null, labVer: -1, labBVer: -1, garT: 0,   // cached view of the house (see viewOf), its breach view and areas, next Wehrgang slot hand-out
           by: { kills: 0, buildings: 0, crops: 0, plunder: 0, prosperity: 0, betrayal: 0 },
           stats: { kills: 0, lost: 0, razed: 0, crops: 0, plunders: 0, built: 0, ignites: 0, pacts: 0, betrayals: 0 }
         };
@@ -1926,7 +2318,7 @@
       }
     }
 
-    return { dt: DT, state: st, world, seed, occ, build, cancel, pause, recruit, banner, home, pact, step, youOf, dev };
+    return { dt: DT, state: st, world, seed, occ, build, buildWall, cancel, pause, recruit, trade, banner, home, pact, step, youOf, dev };
   }
 
   const api = { create, CONST };

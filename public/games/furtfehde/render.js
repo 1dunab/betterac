@@ -11,6 +11,9 @@
 //   view.render(state, alpha, { now (ms), dt (s), snap, draw: false })   draw:false = update only (fast-forward in harnesses)
 //   view.inset(rect, focus) -> the Kampf-Kamera (picture-in-picture close-up, high only), view.insetRect / insetCalls / insetTris / insetMs (see below)
 //   view.event(ev, state) -> window.FurtFx (fx.js, created by setWorld): every sim event; the fx hook also gets pass(camera, viewportHeight) per scene pass
+//   Phase 2 (docs "Phase 2 — Mauern & Söldner", TV): wall pieces are built with their `len`; a Torhaus opens its doors (eased setOpen) while an own or a partner unit stands in its lane
+//   (FurtWorld.laneOf) and calls view.onGate({ id, lord, x, z }) when it starts to open (the glue plays the creak); garrisoned units (u.on) stand on the slot anchor of their building
+//   (art slot = sim slot), facing outwards until they aim; the Rammbock swing is locked to the `ram` events (the log hits when the blow lands) and the struck piece shakes.
 // Coordinates: world (x, y) -> three (X = x, Z = y, Y = up); heading h: 0 = +x, counter-clockwise towards +y; yaw = -h.
 (function () {
   'use strict';
@@ -29,8 +32,13 @@
   const INSET_FOV = 34, INSET_EL = 40;   // the Kampf-Kamera: a closer, lower camera, also looking north
   const FRAME_OUT = '#241a10', FRAME_IN = '#d9b45a';   // its picture frame (2 px dark outside, 2 px gold inside), drawn with scissored clears
   const ANIM = { idle: 0, walk: 1, fight: 2, work: 3 }, CARRY = { korn: 1, holz: 2, stein: 3, eimer: 4 };
-  const UNIT_CAP = { bauer: 460, speer: 340, bogen: 300, ritter: 160, fackel: 120 };
-  const BLOB_R = { bauer: 0.52, speer: 0.55, bogen: 0.55, ritter: 1.15, fackel: 0.5 };
+  const UNIT_CAP = { bauer: 460, speer: 340, bogen: 300, ritter: 160, fackel: 120, reiterschuetze: 240, ramme: 60 };
+  const BLOB_R = { bauer: 0.52, speer: 0.55, bogen: 0.55, ritter: 1.15, fackel: 0.5, reiterschuetze: 0.95, ramme: 0.8 };
+  const BLOB_LONG = { ritter: 1.35, reiterschuetze: 1.3, ramme: 1.9 };   // blob shadows of the long units (horses, the ram) are stretched along the heading
+  const RAM_CD = 2.0, RAM_F = 0.68, RAM_LEAD = 0.05;                 // the ram's swing: period (the sim's cd), the phase at which the log is fully forward (art.js), the lag between a sim event and its picture (s)
+  const GATE_HOLD = 0.7, GATE_OPEN_K = 6, GATE_CLOSE_K = 3.2;        // Torhaus: how long the doors stay open after the last friend left (s), easing rates of opening / closing
+  const GARRISON_TURN = 5, GARRISON_AIM_S = 3.5;                     // garrisoned archers: turn rate; how long they keep facing their last target before they look outwards again (s)
+  const SHAKE_S = 0.5;                                               // a struck wall piece shakes for this long
 
   // ---- day keyframes: dayT 0 morning sun from the east . .45 noon . .8 warm afternoon . 1 golden dusk from the west ----
   // az = sun azimuth in degrees (0 = east, 90 = south, 180 = west; below 0 or above 180 = north side, so low suns glint on the
@@ -71,6 +79,7 @@
       this._sunCol = new T.Color(); this._amb = new T.Color(); this._haze = new T.Vector3();
       this._v = new T.Vector3(); this._v2 = new T.Vector3(); this._m = new T.Matrix4(); this._q = new T.Quaternion(); this._s = new T.Vector3();
       this.keeps = new Map(); this.ruinKeeps = []; this.bld = new Map(); this.banners = new Map(); this.uk = {};
+      this.gates = []; this.gar = new Map(); this.ramT = new Map(); this.pactSet = new Set(); this.onGate = null; this.dt = 0.016;   // Phase 2: gatehouses this frame, garrisoned units' facing, rams' blow times, active pacts (a * 16 + b), the gate hook
       this.blockSig = ''; this.treeV = -1;
       this.capW = 0; this.capH = 0;               // 0 = the quality's default cap (see applySize)
       this.insetReq = null; this.insetRect = null; this.insetCam = null; this.insetCur = null; this.insetOn = false;
@@ -215,6 +224,7 @@
       for (const [, r] of this.banners) { this.actors.remove(r.art.group); r.art.dispose(); }
       for (const k in this.uk) { this.actors.remove(this.uk[k].mesh); this.uk[k].dispose(); }
       this.keeps.clear(); this.ruinKeeps = []; this.bld.clear(); this.banners.clear(); this.uk = {};
+      this.gates.length = 0; this.gar.clear(); this.ramT.clear(); this.pactSet.clear();
       if (this.land) { this.scene.remove(this.land.group); this.land.dispose(); this.land = null; }
     }
     // keep rects always block trees; buildings add theirs
@@ -327,7 +337,10 @@
       catch (e) { console.warn('[FurtView] fx init failed', e); this.fx = null; }
     }
     safeFx(fn) { try { fn(); } catch (e) { this._fxErr = (this._fxErr | 0) + 1; if (this._fxErr < 4) console.warn('[FurtView] fx error', e); } }
-    event(ev, state) { if (this.fx && this.fx.event) this.safeFx(() => this.fx.event(ev, state)); }
+    event(ev, state) {
+      if (this.fx && this.fx.event) this.safeFx(() => this.fx.event(ev, state));
+      if (ev && ev.t === 'ram') this.safeFx(() => this.onRam(ev, state));   // Phase 2: the swing of the ram that struck, the shake of the piece
+    }
     buildingObj(id) { const r = this.bld.get(id); return r ? r.obj : null; }
     keepObj(lord) { const r = this.keeps.get(lord); return r ? r.art : null; }
     bannerObj(id) { const r = this.banners.get(id); return r ? r.art : null; }
@@ -339,6 +352,7 @@
     updateBuildings(state, t) {
       const T = this.T, land = this.land, q = this.quality, seen = new Set();
       let sig = '';
+      this.gates.length = 0;
       for (const b of state.buildings || []) {
         if (b.kind === 'bergfried') {   // the keep is built in setWorld; this entry only drives its state
           const k = this.keeps.get(b.lord);
@@ -351,19 +365,22 @@
           continue;
         }
         seen.add(b.id);
-        const key = b.kind + ':' + b.lord + ':' + (b.rot | 0) + ':' + b.i + ':' + b.j;
+        const len = b.len > 1 ? b.len | 0 : 1;   // Phase 2: wall pieces (palisade, mauer) are 1 × len cells; part of the key, so a rebuilt line of another length is a new model
+        const key = b.kind + ':' + b.lord + ':' + (b.rot | 0) + ':' + b.i + ':' + b.j + ':' + len;
         sig += key + ';';
         let r = this.bld.get(b.id);
         if (r && r.key !== key) { this.removeBuilding(b.id, r); r = null; }
         if (!r) {
-          const obj = FA.building(T, b.kind, { color: this.colorOf(b.lord), quality: q, rot: b.rot | 0 });
-          const fp = FW.footprintOf(b.kind, b.rot | 0), x0 = -PX + b.i, y0 = -PY + b.j, cx = x0 + fp[0] / 2, cy = y0 + fp[1] / 2;
+          const obj = FA.building(T, b.kind, { color: this.colorOf(b.lord), quality: q, rot: b.rot | 0, len });
+          const fp = FW.footprintOf(b.kind, b.rot | 0, len), x0 = -PX + b.i, y0 = -PY + b.j, cx = x0 + fp[0] / 2, cy = y0 + fp[1] / 2;
           const h = (land.heightAt(cx, cy) * 2 + land.heightAt(x0, y0) + land.heightAt(x0 + fp[0], y0) + land.heightAt(x0, y0 + fp[1]) + land.heightAt(x0 + fp[0], y0 + fp[1])) / 6;
           obj.group.position.set(cx, h - 0.02, cy); obj.group.rotation.y = -(b.rot | 0) * Math.PI / 2;
           this.actors.add(obj.group);
           const cells = [];
           for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) cells.push((b.j + dj) * FW.GW + b.i + di);
-          r = { key, obj, kind: b.kind, fire: 0, cells, rect: { x0, y0, x1: x0 + fp[0], y1: y0 + fp[1] }, build: -1, hp: -1, burnt: -1, ruined: null, growth: -1, plot: -1, scorch: -1 };
+          r = { key, obj, kind: b.kind, lord: b.lord, rot: b.rot | 0, len, fire: 0, cells, rect: { x0, y0, x1: x0 + fp[0], y1: y0 + fp[1] }, build: -1, hp: -1, burnt: -1, ruined: null, growth: -1, plot: -1, scorch: -1,
+            base: { x: cx, y: h - 0.02, z: cy }, shake: null, slots: obj.anchors && obj.anchors.slots ? obj.anchors.slots.length : 0, slotCache: null, outH: null, gate: null };
+          if (b.kind === 'torhaus') r.gate = { r, id: b.id, lord: b.lord, box: this.laneBox(b), open: 0, set: -1, hold: -1, want: false, ok: false, up: false };
           this.bld.set(b.id, r);
         }
         const o = r.obj, build = b.build == null ? 1 : b.build;
@@ -374,6 +391,8 @@
         if (Math.abs(bn - r.burnt) > 0.005) { r.burnt = bn; o.setBurnt(bn); }
         if (r.ruined !== !!b.ruined) { r.ruined = !!b.ruined; o.setRuined(r.ruined); }
         if (b.growth != null && Math.abs(b.growth - r.growth) > 0.002) { r.growth = b.growth; o.setGrowth(b.growth); }
+        if (r.shake) this.shakePiece(r, t);
+        if (r.gate) { const G = r.gate; G.want = false; G.ok = build >= 1 && !b.ruined; this.gates.push(G); }   // the units loop decides whether a friend stands in its lane
         o.animate(t, { working: build >= 1 && !b.ruined && !(b.fire > 0.05) });
         if (q === 'low' && build < 1) { if (!r.crane) r.crane = o.group.getObjectByName('crane'); if (r.crane) r.crane.visible = false; }   // low: no crane (a draw call less)
         // ground under the building: construction dirt while it is being built, scorched earth once burnt
@@ -390,6 +409,93 @@
         this.setBlockers(rects);
       }
     }
+    // Torhaus: the lane (its two cells and the two cells outside its mouths) as a box in world units; a unit of the owner or of a pact partner inside it opens the doors
+    laneBox(b) {
+      const L = FW.laneOf(b.i, b.j, b.rot | 0), cs = L.cells.concat(L.ends);
+      let i0 = 1e9, i1 = -1e9, j0 = 1e9, j1 = -1e9;
+      for (const c of cs) { i0 = Math.min(i0, c[0]); i1 = Math.max(i1, c[0]); j0 = Math.min(j0, c[1]); j1 = Math.max(j1, c[1]); }
+      return { x0: -PX + i0, x1: -PX + i1 + 1, z0: -PY + j0, z1: -PY + j1 + 1 };
+    }
+    // the doors follow the lane: open at once when a friend steps in (and the creak plays), shut a moment after the last one has left; both eased
+    updateGates(dt, t) {
+      for (const G of this.gates) {
+        const want = G.ok && G.want;
+        if (want) G.hold = t + GATE_HOLD;
+        const target = G.ok && (want || t < G.hold) ? 1 : 0;
+        if (target === 1 && !G.up) {
+          G.up = true;
+          if (G.open < 0.25 && !this.snap && this.onGate) { const r = G.r; try { this.onGate({ id: G.id, lord: G.lord, x: r.base.x, z: r.base.z }); } catch (e) { /* a hook must not stop the picture */ } }
+        } else if (target === 0) G.up = false;
+        if (this.snap) G.open = target; else G.open += (target - G.open) * (1 - Math.exp(-(target > G.open ? GATE_OPEN_K : GATE_CLOSE_K) * dt));
+        if (Math.abs(G.open - target) < 0.004) G.open = target;
+        if (Math.abs(G.open - G.set) > 0.002) { G.set = G.open; G.r.obj.setOpen(G.open); }
+      }
+    }
+    // a struck piece trembles along the blow (its own model moves, the camera does not): a damped oscillation for SHAKE_S; the archers on it ride along (slot anchors follow the group)
+    shakePiece(r, t) {
+      const sk = r.shake, age = t - sk.t0, g = r.obj.group;
+      if (age >= SHAKE_S) { r.shake = null; g.position.set(r.base.x, r.base.y, r.base.z); r.slotCache = null; return; }
+      if (age < 0) return;
+      const a = sk.amp * Math.exp(-age * 9) * Math.sin(age * 42);
+      g.position.set(r.base.x + sk.dx * a, r.base.y + Math.abs(a) * 0.12, r.base.z + sk.dz * a);
+    }
+    // the direction an archer on this building looks when nothing draws his eye: away from the keep of his house (the normal of a wall, the way out of a gatehouse)
+    outHeading(r) {
+      if (r.outH != null) return r.outH;
+      const k = this.keeps.get(r.lord), ru = r.rect, cx = (ru.x0 + ru.x1) / 2, cz = (ru.y0 + ru.y1) / 2;
+      let ox = k ? cx - k.site.x : 0, oz = k ? cz - k.site.y : 1;
+      if (Math.abs(ox) + Math.abs(oz) < 1e-3) oz = 1;
+      if (r.kind === 'mauer' || r.kind === 'palisade' || r.kind === 'torhaus') { if (r.rot) { ox = ox >= 0 ? 1 : -1; oz = 0; } else { oz = oz >= 0 ? 1 : -1; ox = 0; } }
+      return (r.outH = Math.atan2(oz, ox));
+    }
+    // where a garrisoned unit stands: the art slot of its building with the same index (the sim and the model number the slots of a Torhaus differently; the view maps s to s),
+    // and which way he faces. → the scratch object { x, y, z, h } or null (the building is not in the scene (yet))
+    garrisonPlace(u, t, dt) {
+      const r = this.bld.get(u.on); if (!r || !r.slots) return null;
+      const n = r.slots, s = u.slot | 0, idx = s >= 0 && s < n ? s : ((s % n) + n) % n;
+      let p;
+      if (r.shake) p = r.obj.slotWorld(idx, this._v);
+      else {
+        const c = r.slotCache || (r.slotCache = []);
+        if (!c[idx]) { const v = r.obj.slotWorld(idx, this._v); if (v) c[idx] = { x: v.x, y: v.y, z: v.z }; }
+        p = c[idx];
+      }
+      if (!p) return null;
+      const out = this.outHeading(r), h = u.h == null ? out : u.h;
+      let G = this.gar.get(u.id);
+      if (!G) { G = { h: out, last: h, aim: -1e9, seen: 0 }; this.gar.set(u.id, G); }
+      G.seen = this.frame;
+      if (u.anim === 'fight' || Math.abs(lerpAngle(0, h - G.last, 1)) > 0.002) G.aim = t;   // he shot, or the sim turned him towards a target
+      G.last = h;
+      G.h = lerpAngle(G.h, t - G.aim < GARRISON_AIM_S ? h : out, 1 - Math.exp(-GARRISON_TURN * dt));
+      const o = this._gp || (this._gp = { x: 0, y: 0, z: 0, h: 0 });
+      o.x = p.x; o.y = p.y; o.z = p.z; o.h = G.h;
+      return o;
+    }
+    // the blow's picture: the nearest ram swings so that its log is fully forward when the blow lands (art.js: f = fract(uTime / 2 + phase), forward at f = .68), and the struck piece shakes
+    onRam(ev, state) {
+      const t = this.now / 1000 + RAM_LEAD;
+      let best = null, bd = 9;
+      for (const u of (state && state.units) || []) { if (u.kind !== 'ramme') continue; const d = Math.hypot(u.x - ev.x, u.y - ev.y); if (d < bd) { bd = d; best = u; } }
+      if (best) { let R = this.ramT.get(best.id); if (!R) { R = { hit: t, ph: NaN, seen: this.frame }; this.ramT.set(best.id, R); } R.hit = t; }
+      const r = this.bld.get(ev.id);
+      if (r && !r.ruined) {
+        let dx = best ? ev.x - best.x : r.base.x - ev.x, dz = best ? ev.y - best.y : r.base.z - ev.y;
+        const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+        r.shake = { t0: t, dx, dz, amp: r.kind === 'palisade' ? 0.085 : r.kind === 'torhaus' ? 0.04 : r.kind === 'mauer' ? 0.05 : 0.06 };
+        r.slotCache = null;
+      }
+    }
+    ramPhase(u, t, dt) {
+      if (u.anim !== 'fight') { this.ramT.delete(u.id); return hash1(u.id * 0.731); }
+      let R = this.ramT.get(u.id);
+      if (!R) { R = { hit: t + RAM_CD, ph: NaN, seen: 0 }; this.ramT.set(u.id, R); }   // a swing that begins now ends with its blow one period later
+      R.seen = this.frame;
+      const want = fract(RAM_F - fract(R.hit / RAM_CD));
+      if (R.ph !== R.ph) R.ph = want;
+      else { let d = want - R.ph; d -= Math.round(d); R.ph = fract(R.ph + d * (1 - Math.exp(-8 * dt))); }
+      return R.ph;
+    }
     removeBuilding(id, r) {
       this.actors.remove(r.obj.group); r.obj.dispose(); this.bld.delete(id);
       if (this.land) for (const k of r.cells) this.land.setGround(k, { plot: 0, burnt: 0 });
@@ -397,23 +503,37 @@
     }
 
     updateUnits(state, alpha, t) {
-      const land = this.land, cnt = {}, sc = this.sunDir;
+      const land = this.land, cnt = {}, sc = this.sunDir, dt = this.dt, gates = this.gates, ng = gates.length, pacts = this.pactSet;
       for (const k in this.uk) cnt[k] = 0;
       const ox = -sc.x * 0.35, oz = -sc.z * 0.35, bm = this.blob.instanceMatrix.array;
-      let nb = 0;
+      let nb = 0, garN = 0, ramN = 0;
+      pacts.clear();
+      if (ng) for (const p of state.pacts || []) if (p.until > 0) { pacts.add(p.a * 16 + p.b); pacts.add(p.b * 16 + p.a); }   // active pacts only (an offer has `offerUntil`): partners may use each other's gates
       for (const u of state.units || []) {
         const U = this.uk[u.kind]; if (!U) continue;
         const i = cnt[u.kind]; if (i >= U.max) continue;
         cnt[u.kind] = i + 1;
+        if (u.on != null) {   // Wehrgang: an archer on a wall, gatehouse or tower stands on the slot anchor (no blob shadow: he is up there)
+          const gp = this.garrisonPlace(u, t, dt);
+          if (gp) { U.set(i, gp.x, gp.y, gp.z, -gp.h, ANIM[u.anim] | 0, hash1(u.id * 0.731), this.colorOf(u.lord), 0); garN++; continue; }
+        }
         const x = lerp(u.px == null ? u.x : u.px, u.x, alpha), y = lerp(u.py == null ? u.y : u.py, u.y, alpha), h = u.ph == null ? u.h : lerpAngle(u.ph, u.h, alpha);
         const gy = land.standY(x, y);
-        U.set(i, x, gy, y, -h, ANIM[u.anim] | 0, hash1(u.id * 0.731), this.colorOf(u.lord), CARRY[u.carry] | 0);
+        let phase = hash1(u.id * 0.731);
+        if (u.kind === 'ramme') { phase = this.ramPhase(u, t, dt); ramN++; }
+        U.set(i, x, gy, y, -h, ANIM[u.anim] | 0, phase, this.colorOf(u.lord), CARRY[u.carry] | 0);
+        for (let g = 0; g < ng; g++) {   // a friend (own or pact partner) in a Torhaus lane: its doors open
+          const G = gates[g], b = G.box;
+          if (!G.want && G.ok && x >= b.x0 && x <= b.x1 && y >= b.z0 && y <= b.z1 && (u.lord === G.lord || pacts.has(u.lord * 16 + G.lord))) G.want = true;
+        }
         if (nb < BLOB_MAX) {
-          const r = (BLOB_R[u.kind] || 0.5) * 2, c = Math.cos(-h), s = Math.sin(-h), sx = u.kind === 'ritter' ? r * 1.35 : r, o = nb * 16;
+          const r = (BLOB_R[u.kind] || 0.5) * 2, c = Math.cos(-h), s = Math.sin(-h), sx = r * (BLOB_LONG[u.kind] || 1), o = nb * 16;
           bm[o] = c * sx; bm[o + 1] = 0; bm[o + 2] = -s * sx; bm[o + 3] = 0; bm[o + 4] = 0; bm[o + 5] = 1; bm[o + 6] = 0; bm[o + 7] = 0;
           bm[o + 8] = s * r; bm[o + 9] = 0; bm[o + 10] = c * r; bm[o + 11] = 0; bm[o + 12] = x + ox; bm[o + 13] = gy + 0.07; bm[o + 14] = y + oz; bm[o + 15] = 1; nb++;
         }
       }
+      if (this.gar.size > garN + 16) for (const [id, G] of this.gar) if (G.seen !== this.frame) this.gar.delete(id);   // archers that left a wall or died
+      if (this.ramT.size > ramN + 8) for (const [id, R] of this.ramT) if (R.seen !== this.frame) this.ramT.delete(id);
       for (const k in this.uk) { this.uk[k].count(cnt[k]); this.uk[k].commit(); }
       this.blob.count = nb; this.blob.instanceMatrix.needsUpdate = true;
     }
@@ -443,7 +563,7 @@
       const now = opts.now != null ? opts.now : this.now + 16.7;
       let dt = opts.dt != null ? opts.dt : (this.lastNow == null ? 0.016 : (now - this.lastNow) / 1000);
       dt = clamp(dt, 0, 0.1);
-      this.lastNow = now; this.now = now; this.frame++; this.snap = !!opts.snap;
+      this.lastNow = now; this.now = now; this.frame++; this.snap = !!opts.snap; this.dt = dt;
       alpha = clamp(alpha == null ? 1 : alpha, 0, 1);
       const t = now / 1000, rd = this.renderer, hi = this.quality === 'high', land = this.land;
       rd.info.reset();
@@ -456,6 +576,7 @@
       if (state.trees && state.treeV !== this.treeV) { this.treeV = state.treeV; land.setTrees(state.trees); }
       this.updateBuildings(state, t);
       this.updateUnits(state, alpha, t);
+      this.updateGates(dt, t);
       this.updateBanners(state, alpha, t);
       this.updateFire(t);
       if (opts.snap) land.resetWet();

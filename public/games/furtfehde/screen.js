@@ -1,6 +1,6 @@
 // ===== Modul: FURT & FEHDE (competitive castle-building RTS on a river map) — TV glue =====
 // Connects sim.js (rules), bots.js (bot lords), render.js / fx.js / sound.js (picture and sound) and the phones (controller.js).
-// Contract: docs/FURTFEHDE.md ("Glue", "Houses and seats", "Match flow", "Phone protocol (Phase 1, binding)" and the Implementation notes).
+// Contract: docs/FURTFEHDE.md ("Glue", "Houses and seats", "Match flow", "Phone protocol (Phase 1, binding)", Phase 2 "State and protocol" and the Implementation notes).
 // The view owns its WebGL canvas; like Skyfarers it sits with a transparent HUD canvas in a wrapper that replaces `cv` while the game runs,
 // but here the wrapper FILLS THE WINDOW (internal size = window × DPR, capped per quality; setting `aufloesung: nativ` lifts the cap).
 // For "Mitschauen" the glue mirrors view + HUD into `cv` every 125 ms; `?blit=1` (dev harness) shows `cv` instead of the wrapper.
@@ -21,12 +21,15 @@ registerGame({ key: 'furtfehde', screen: function () {
   const SITES = { 2: [0, 3], 3: [0, 1, 3], 4: [0, 1, 2, 3] };
   const PALETTE = ['#e0453a', '#3a7be0', '#e6b830', '#9a4ad8', '#e8812a', '#d85fa0'];       // bot house colours (no green: the meadows are green)
   const HUE_GAP = 35, SPEC_COLOR = '#c9a45a', MAX_PER_HOUSE = 2;
-  const FEED_MS = 9000, FEED_SHOW = 3, HUNGER_HOLD_MS = 4000, ATTACK_HOLD_S = 8;
+  const FEED_MS = 9000, FEED_SHOW = 3, HUNGER_HOLD_MS = 4000, ATTACK_HOLD_S = 8, PANEL_H = 120;   // PANEL_H: the lord panels' height in HUD units (U)
   const FIGHT_WIN = 2, FIGHT_R = 8, FIGHT_MIN = 8, KK_SHOW_MS = 7000, KK_COOL_MS = 12000, KK_W = 0.30;   // Kampf-Kamera
   const FAMILY = 'system-ui,"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
   const FONT = (px) => 'bold ' + Math.round(px) + 'px ' + FAMILY;
   const SERIF = (px) => 'bold italic ' + Math.round(px) + 'px Georgia,"Palatino Linotype",Palatino,"Noto Serif",serif';
-  const NEED = { korn: 'Korn', holz: 'Holz', stein: 'Stein' };
+  const NEED = { korn: 'Korn', holz: 'Holz', stein: 'Stein', gold: 'Gold' };
+  const GOOD_ICON = { korn: '🌾', holz: '🪵', stein: '🪨', gold: '💰' };
+  const WALLISH = { palisade: 1, mauer: 1, torhaus: 1 };   // wall pieces and the gatehouse: what a ram or a breach is about
+  const WALL_ALERT_S = 10, WALL_HERALD_S = 20, WALL_TOAST_S = 6;   // sim seconds between two breach alerts / herald lines / "ruined" toasts of one house
   const ART = { furt: 'Die', bruecke: 'Die', steg: 'Der' };                               // article of a crossing's name (Westfurt, Steinbrücke, Nordsteg)
   const CROSS_AT = { furt: 'an der', bruecke: 'an der', steg: 'am' };
   const clampN = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -49,7 +52,7 @@ registerGame({ key: 'furtfehde', screen: function () {
   let samples = [], autoDone = false, curQuality = 'high', glitches = [], glitchUntil = 0, autoFrom = 0, autoEval = 0, capDropped = false;
   let gestureAt = -1e9, gestureFn = null;     // the last click or key on the TV page (the sound hint)
   let hudCache = { at: -1e9, lords: [] }, fightSeen = new Map(), fighters = 0, cluster = null, battle = 0;
-  let kk = { on: false, until: 0, cool: 0, x: 0, y: 0, dist: 28, label: '' };
+  let kk = { on: false, until: 0, cool: 0, x: 0, y: 0, dist: 28, label: '', src: '' };
   let hctx = null, HW = 960, HH = 600, sized = '';
 
   // ---------- helpers ----------
@@ -180,10 +183,12 @@ registerGame({ key: 'furtfehde', screen: function () {
     for (const u of Object.keys(C.UNIT)) if (C.UNIT[u].cost) out.units[u] = Object.assign({}, C.UNIT[u].cost);
     return out;
   }
-  // the numbers the phone's well coverage and storage overview need (docs "Phase 1b addendum"): straight from the sim's tunables
+  // the numbers the phone's well coverage, storage overview and Markt need (docs "Phase 1b addendum", Phase 2 "State and protocol"): straight from the sim's tunables;
+  // the key order is the one the phone's own defaults have (so the phone's copy compares equal); prices = 💰 per pack of `tradePack` goods
   function rulesOf() {
-    const C = Sim.CONST;
-    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES };
+    const C = Sim.CONST, P = C.TRADE_PRICE || {}, side = (k) => ({ korn: (P[k] || {}).korn, holz: (P[k] || {}).holz, stein: (P[k] || {}).stein });
+    return { bucketR: C.BUCKET_R, keepWellR: C.KEEP_WELL_R, capKeep: C.CAP_KEEP, capKorn: C.CAP_KORN, capLager: C.CAP_LAGER, keepHouses: C.KEEP_HOUSES, hutHouses: C.HUT_HOUSES,
+      tradePack: C.TRADE_PACK, prices: { sell: side('sell'), buy: side('buy') } };
   }
   function lordsOf() {
     return houses.map((h) => ({ i: h.i, site: h.site, color: h.color, name: displayOf(h), emblem: h.i, bot: !!h.bot }));
@@ -214,7 +219,8 @@ registerGame({ key: 'furtfehde', screen: function () {
     const st = sim.state, b = [];
     for (const x of st.buildings) {
       if (x.kind === 'bergfried') continue;                    // the phone draws the keeps from `sites`
-      b.push([x.id, x.lord, x.kind, x.i, x.j, x.rot, r2(x.build, 100), r2(x.hp, 100), r2(x.fire, 100), x.ruined ? 1 : 0, x.noWood ? 1 : 0, x.workers | 0, x.paused ? 1 : x.full ? 2 : 0]);   // the 13th field: 0 works · 1 rests by order (💤) · 2 rests because its store is full
+      // the 13th field: 0 works · 1 rests by order (💤) · 2 rests because its store is full; Phase 2: the 14th is `len` (1 for everything but wall pieces), the 15th the archers inside (Wehrgang)
+      b.push([x.id, x.lord, x.kind, x.i, x.j, x.rot, r2(x.build, 100), r2(x.hp, 100), r2(x.fire, 100), x.ruined ? 1 : 0, x.noWood ? 1 : 0, x.workers | 0, x.paused ? 1 : x.full ? 2 : 0, x.len > 1 ? x.len | 0 : 1, x.garrison | 0]);
     }
     return { t: 'ffBoard', b, banners: st.banners.map((x) => [x.lord, x.n, r2(x.x, 10), r2(x.y, 10), x.count]) };
   }
@@ -294,10 +300,21 @@ registerGame({ key: 'furtfehde', screen: function () {
     if (cb && cd < 24) return '⚔️ Schlacht ' + (CROSS_AT[cb.kind] || 'an der') + ' ' + cb.name;
     return best ? best.text : '⚔️ Schlacht im Tal';
   }
-  function kkStart(x, y, dist, label, now, force) {
+  function kkStart(x, y, dist, label, now, force, src) {
     if (kk.on || curQuality !== 'high' || phase !== 'live' || fast) return;
     if (!force && now < kk.cool) return;
-    kk = { on: true, until: now + KK_SHOW_MS, cool: 0, x, y, dist, label };
+    kk = { on: true, until: now + KK_SHOW_MS, cool: 0, x, y, dist, label, src: src || 'keep' };
+  }
+  // a breach in progress (Phase 2): a ram blow or a fallen wall piece is worth a close-up. A blow opens the camera like a fight does (cooldown respected) and, while it
+  // already shows a breach, follows the ram; a fallen piece (`fell`) shows it even through the cooldown and takes over from a fight camera (never from a plundered keep)
+  function kkBreach(x, y, label, now, fell) {
+    if (curQuality !== 'high' || phase !== 'live' || fast) return;
+    if (kk.on) {
+      if (kk.src === 'breach' && Math.hypot(kk.x - x, kk.y - y) < 20) { kk.x = x; kk.y = y; if (fell) { kk.label = label; kk.until = Math.max(kk.until, now + KK_SHOW_MS * 0.6); } }
+      else if (fell && kk.src === 'fight') kk = { on: true, until: now + KK_SHOW_MS, cool: 0, x, y, dist: 24, label, src: 'breach' };
+      return;
+    }
+    if (fell || now >= kk.cool) kkStart(x, y, 24, label, now, true, 'breach');
   }
   // soldiers that struck within the last FIGHT_WIN s; the densest group of ≥ FIGHT_MIN within FIGHT_R opens the Kampf-Kamera
   function scanFights(now) {
@@ -317,7 +334,7 @@ registerGame({ key: 'furtfehde', screen: function () {
     }
     cluster = bn >= FIGHT_MIN ? best : null;
     if (cluster) {
-      if (!kk.on) kkStart(cluster.x, cluster.y, clampN(25 + Math.sqrt(cluster.n) * 3.2, 30, 46), nearestLabel(cluster.x, cluster.y), now);
+      if (!kk.on) kkStart(cluster.x, cluster.y, clampN(25 + Math.sqrt(cluster.n) * 3.2, 30, 46), nearestLabel(cluster.x, cluster.y), now, false, 'fight');
       else if (Math.hypot(cluster.x - kk.x, cluster.y - kk.y) < 18) { kk.x = cluster.x; kk.y = cluster.y; }
     }
     battle += (clampN(fighters / 30, 0, 1) - battle) * 0.3;
@@ -350,7 +367,7 @@ registerGame({ key: 'furtfehde', screen: function () {
     costs = costsOf(); rules = rulesOf(); mapMsg = null; lordsMsg = null;
     youAt = {}; boardSig = ''; boardAt = -1e9; levelSent = null; levelAt = -1e9; phaseSentFor = null; phaseSentAt = -1e9;
     feed = []; heraldLog = []; banners = []; endInfo = null; reported = false; alertAt = {}; activePacts = {}; hungerAt = {}; attackedAt = {};
-    samples = []; firstFrame = true; fightSeen = new Map(); fighters = 0; cluster = null; battle = 0; kk = { on: false, until: 0, cool: 0, x: 0, y: 0, dist: 28, label: '' };
+    samples = []; firstFrame = true; fightSeen = new Map(); fighters = 0; cluster = null; battle = 0; kk = { on: false, until: 0, cool: 0, x: 0, y: 0, dist: 28, label: '', src: '' };
     hudCache = { at: -1e9, lords: [] };
     safe('inset', () => view.inset(null));
     fit(true);
@@ -408,11 +425,26 @@ registerGame({ key: 'furtfehde', screen: function () {
   // ---------- events: view/fx, sound, phones, herald ----------
   const WHAT = { kaserne: 'die Kaserne', wachturm: 'den Wachturm' };
   const BNAME = (k) => (World.BUILDINGS[k] && World.BUILDINGS[k].name) || k;
+  const buildingOf = (id) => sim.state.buildings.find((x) => x.id === id) || null;
   function handleEvents(events) {
+    // Phase 2 sound: a wall that falls is one `breach` (the crumble), so its `ruined` (the generic collapse) stays silent; a blow on a wall piece is a `ram` (the thud), so the clash
+    // of its `hit` and the hits of soldiers on walls stay silent, too. View and fx get every event.
+    let fell = null;
+    for (const ev of events) if (ev.t === 'breach') (fell || (fell = new Set())).add(ev.id);
     for (const ev of events) {
-      if (!fast) { safe('view.event', () => view.event(ev, sim.state)); if (ev.t !== 'buildDone') snd((S) => S.event(ev)); }   // buildDone: no sound on the TV (T2), the phone's toast says it
+      if (!fast) {
+        safe('view.event', () => view.event(ev, sim.state));
+        let quiet = ev.t === 'buildDone';   // buildDone: no sound on the TV (T2), the phone's toast says it
+        if (!quiet && fell && ev.t === 'ruined' && fell.has(ev.id)) quiet = true;
+        if (!quiet && ev.t === 'hit') { const b = buildingOf(ev.id); if (b && WALLISH[b.kind]) quiet = true; }
+        if (!quiet) snd((S) => S.event(ev));
+      }
       safe('event ' + ev.t, () => handleEvent(ev));
     }
+  }
+  // what a breach or a ram blow is about, for the herald and the Kampf-Kamera: the piece's kind and the house it belongs to
+  function wallWords(kind) {
+    return kind === 'torhaus' ? { icon: '🏯', the: 'Das Tor', of: 'das Tor' } : kind === 'palisade' ? { icon: '🪵', the: 'Die Palisade', of: 'die Palisade' } : { icon: '🧱', the: 'Die Mauer', of: 'die Mauer' };
   }
   function handleEvent(ev) {
     const st = sim.state;
@@ -449,7 +481,11 @@ registerGame({ key: 'furtfehde', screen: function () {
         const b = st.buildings.find((x) => x.id === ev.id);
         if (!b || b.kind === 'bergfried') break;
         toastHouse(b.lord, '✅ ' + BNAME(b.kind) + ' ist fertig');
-        const mil = b.kind === 'kaserne' ? '⚔️ ' + houseName(b.lord) + ' rüstet auf: die Kaserne steht!' : b.kind === 'wachturm' ? '🗼 ' + houseName(b.lord) + ' baut einen Wachturm' : null;
+        let mil = b.kind === 'kaserne' ? '⚔️ ' + houseName(b.lord) + ' rüstet auf: die Kaserne steht!' : b.kind === 'wachturm' ? '🗼 ' + houseName(b.lord) + ' baut einen Wachturm' : null;
+        if (b.kind === 'soeldnerlager') {   // the first mercenary camp of a house (Phase 2)
+          const k = 'S' + b.lord;
+          if (alertAt[k] == null) { alertAt[k] = st.t; mil = '⛺ ' + houseName(b.lord) + ' heuert Söldner an: das Söldnerlager steht!'; }
+        }
         if (mil) herald(mil, lordColor(b.lord));
         break;
       }
@@ -465,8 +501,15 @@ registerGame({ key: 'furtfehde', screen: function () {
       case 'ruined': {
         const b = st.buildings.find((x) => x.id === ev.id);
         if (!b || b.kind === 'bergfried') break;
+        if (b.kind === 'palisade' || b.kind === 'mauer') {   // a wall line falls piece by piece: one toast per few seconds says it all (the breach herald comes with `breach`)
+          const k = 'T' + b.lord;
+          if (alertAt[k] != null && st.t - alertAt[k] < WALL_TOAST_S) break;
+          alertAt[k] = st.t;
+          toastHouse(b.lord, '💥 ' + BNAME(b.kind) + ' ist gebrochen — ♻️ Wiederaufbau für die Hälfte');
+          break;
+        }
         toastHouse(b.lord, '💥 ' + BNAME(b.kind) + ' ist zerstört — ♻️ Wiederaufbau für die Hälfte');
-        if (WHAT[b.kind]) herald('💥 ' + houseName(b.lord) + ' verliert ' + WHAT[b.kind], '#ff9a7a');
+        if (WHAT[b.kind]) herald('💥 ' + houseName(b.lord) + ' verliert ' + WHAT[b.kind], '#ff9a7a');   // (a Torhaus has its breach line)
         break;
       }
       case 'attack': {
@@ -479,13 +522,36 @@ registerGame({ key: 'furtfehde', screen: function () {
       case 'hit':
         if (own(keepOf, ev.id)) { const l = st.lords[keepOf[ev.id]]; if (l && !(l.prot > 0)) { const s = world.sites[l.site]; kkStart(s.x, s.y + (l.site < 2 ? 4 : -4), 26, '🏰 Sturm auf ' + houseName(l.i), nowMs()); } }
         break;
+      case 'ram': {   // a blow of a Rammbock: the Kampf-Kamera follows a breach in progress
+        const b = buildingOf(ev.id), d = b ? houses[b.lord] : null;
+        if (!b || !d || !isNum(ev.x) || !isNum(ev.y)) break;
+        const w = wallWords(b.kind);
+        kkBreach(ev.x, ev.y, WALLISH[b.kind] ? w.icon + ' Sturm auf ' + w.of + ' von ' + d.base : '🪵 Rammbock bei ' + d.base, nowMs(), false);
+        break;
+      }
+      case 'breach': {   // a wall piece or the Torhaus fell: herald (once per 20 s per house), the owner's phone, the Kampf-Kamera
+        const d = houses[ev.lord], a = ev.by == null ? null : houses[ev.by], b = buildingOf(ev.id);
+        if (!d) break;
+        const w = wallWords(ev.kind), burnt = ev.kind === 'palisade' && !!b && (b.burnt || 0) > 0.3;   // a palisade that went up in flames
+        const verb = burnt ? 'ist abgebrannt' : 'ist gebrochen', icon = burnt ? '🔥' : w.icon;
+        const kh = 'W' + ev.lord, ka = 'V' + ev.lord;
+        if (alertAt[kh] == null || st.t - alertAt[kh] >= WALL_HERALD_S) { alertAt[kh] = st.t; herald(icon + ' ' + w.the + ' von ' + d.base + ' ' + verb + '!', a && !burnt ? a.color : '#ff9a7a'); }
+        if (alertAt[ka] == null || st.t - alertAt[ka] >= WALL_ALERT_S) {
+          alertAt[ka] = st.t;
+          alertHouse(ev.lord, 'attack', icon + ' ' + w.the + ' ' + verb + '!', 0, ev.x, ev.y);
+          if (a && ev.by !== ev.lord) toastHouse(ev.by, '🧱 Bresche! ' + w.the + ' von ' + d.base + ' ist gefallen');
+        }
+        if (isNum(ev.x) && isNum(ev.y) && !burnt) kkBreach(ev.x, ev.y, icon + ' Bresche ' + (ev.kind === 'torhaus' ? 'im Tor' : ev.kind === 'palisade' ? 'in der Palisade' : 'in der Mauer') + ' von ' + d.base, nowMs(), true);
+        break;
+      }
       case 'plunder': {
-        const d = houses[ev.lord], a = ev.by == null ? null : houses[ev.by];
+        const d = houses[ev.lord], a = ev.by == null ? null : houses[ev.by], gold = ev.loot && ev.loot.gold > 0 ? ev.loot.gold | 0 : 0;
         if (!d) break;
         herald('🏰 ' + houseName(ev.lord) + ' wurde geplündert!', '#ffd24a');
-        pushBanner(['🏰 ' + houseName(ev.lord) + ' wurde geplündert!', a ? 'von ' + a.base + ' — +' + Sim.CONST.RUHM.plunder + ' Ruhm' : 'die Burg steht unter Schutz'], '#ffd24a', 4600);
+        if (gold > 0 && a) herald('💰 ' + a.base + ' erbeutet ' + gold + ' Gold!', '#ffd24a');   // Phase 2: gold is part of the loot
+        pushBanner(['🏰 ' + houseName(ev.lord) + ' wurde geplündert!', a ? 'von ' + a.base + ' — +' + Sim.CONST.RUHM.plunder + ' Ruhm' + (gold > 0 ? ' · 💰 ' + gold : '') : 'die Burg steht unter Schutz'], '#ffd24a', 4600);
         alertHouse(ev.lord, 'plunder', '🏰 Dein Haus wurde geplündert!', 0, world.sites[d.site].x, world.sites[d.site].y);
-        if (ev.by != null) toastHouse(ev.by, '💰 Beute gemacht: +' + Sim.CONST.RUHM.plunder + ' Ruhm');
+        if (ev.by != null) toastHouse(ev.by, '💰 Beute gemacht: +' + Sim.CONST.RUHM.plunder + ' Ruhm' + (gold > 0 ? ' und ' + gold + ' Gold' : ''));
         kkStart(world.sites[d.site].x, world.sites[d.site].y + (d.site < 2 ? 4 : -4), 26, '🏰 ' + d.base + ' wird geplündert', nowMs(), true);
         break;
       }
@@ -668,7 +734,7 @@ registerGame({ key: 'furtfehde', screen: function () {
   function drawLordPanel(h, st, now) {
     const l = st.lords[h.i];
     if (!l) return;
-    const c = hudCache.lords[h.i] || {}, y = c.y, w = 228 * U, ph = 100 * U, m = 12 * U, pad = 13 * U;
+    const c = hudCache.lords[h.i] || {}, y = c.y, w = 228 * U, ph = PANEL_H * U, m = 12 * U, pad = 13 * U;
     const east = h.site % 2 === 1, south = h.site >= 2;
     const x = east ? HW - m - w : m, y0 = south ? HH - m - ph : m;
     g.save();
@@ -676,26 +742,27 @@ registerGame({ key: 'furtfehde', screen: function () {
     g.fillStyle = h.color; rr(g, x, y0, 7 * U, ph, 5 * U); g.fill();
     shield(x + pad + 17 * U, y0 + 10 * U, 30 * U, 36 * U, h.color, h.i);
     const tx = x + pad + 42 * U, mw = w - pad - 42 * U - 10 * U - (l.crown ? 38 * U : 0);
-    txt(h.base, tx, y0 + 19 * U, fitPx(h.base, mw, 18 * U), '#fff');
-    if (l.crown) txt('👑', x + w - 22 * U, y0 + 19 * U, 22 * U, '#ffe27a', 'center');
+    txt(h.base, tx, y0 + 18 * U, fitPx(h.base, mw, 18 * U), '#fff');
+    if (l.crown) txt('👑', x + w - 22 * U, y0 + 18 * U, 22 * U, '#ffe27a', 'center');
     const owners = ownersOf(h);
-    txt(owners, tx, y0 + 38 * U, fitPx(owners, w - pad - 42 * U - 10 * U, 13 * U), h.bot ? '#cdd6e8' : '#f4ead0');
+    txt(owners, tx, y0 + 36 * U, fitPx(owners, w - pad - 42 * U - 10 * U, 13 * U), h.bot ? '#cdd6e8' : '#f4ead0');
     const px = 16 * U;
-    txt('⭐ ' + Math.round(l.ruhm) + '   👥 ' + l.people + '   ⚔️ ' + l.soldiers, x + pad + 8 * U, y0 + 62 * U, px, '#fff');
-    const s = (y && y.stock) || { korn: 0, holz: 0, stein: 0 };
-    txt('🌾 ' + s.korn + '  🪵 ' + s.holz + '  🪨 ' + s.stein, x + pad + 8 * U, y0 + 85 * U, 15 * U, '#f4e6c2');
+    txt('⭐ ' + Math.round(l.ruhm) + '   👥 ' + l.people + '   ⚔️ ' + l.soldiers, x + pad + 8 * U, y0 + 58 * U, px, '#fff');
+    const s = (y && y.stock) || { korn: 0, holz: 0, stein: 0, gold: 0 };
+    txt('🌾 ' + s.korn + '  🪵 ' + s.holz + '  🪨 ' + s.stein, x + pad + 8 * U, y0 + 81 * U, 15 * U, '#f4e6c2');
+    txt('💰 ' + (s.gold | 0), x + pad + 8 * U, y0 + 103 * U, 15 * U, (s.gold | 0) > 0 ? '#ffe27a' : '#a99f84');   // Phase 2: gold (the Markt, the mercenaries)
     // warnings and pacts, right-aligned in the last row
     let rx = x + w - 12 * U;
     const icons = warnIcons(h, st, now).map((ic) => ({ ic }));
     for (const p of (y && y.pacts) || []) if (p.state === 'active') icons.push({ ic: '🤝', col: lordColor(p.with) });
     for (let i = icons.length - 1; i >= 0; i--) {
       const it = icons[i];
-      if (it.col) { g.fillStyle = it.col; g.beginPath(); g.arc(rx - 9 * U, y0 + 85 * U, 11.5 * U, 0, Math.PI * 2); g.fill(); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 1.5 * U; g.stroke(); }   // the partner's colour
-      g.globalAlpha = it.col ? 1 : 0.7 + 0.3 * Math.sin(now / 150); txt(it.ic, rx, y0 + 85 * U, 15 * U, '#fff', 'right'); g.globalAlpha = 1; rx -= 24 * U;
+      if (it.col) { g.fillStyle = it.col; g.beginPath(); g.arc(rx - 9 * U, y0 + 103 * U, 11.5 * U, 0, Math.PI * 2); g.fill(); g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 1.5 * U; g.stroke(); }   // the partner's colour
+      g.globalAlpha = it.col ? 1 : 0.7 + 0.3 * Math.sin(now / 150); txt(it.ic, rx, y0 + 103 * U, 15 * U, '#fff', 'right'); g.globalAlpha = 1; rx -= 24 * U;
     }
     // protection / fury
-    if (l.prot > 0) txt('🛡️ ' + fmtClock(l.prot), x + w - 12 * U, y0 + 62 * U, 14 * U, '#ffe9a0', 'right');
-    else if (l.zorn > 0) txt('😠 ' + fmtClock(l.zorn), x + w - 12 * U, y0 + 62 * U, 14 * U, '#ff9a8a', 'right');
+    if (l.prot > 0) txt('🛡️ ' + fmtClock(l.prot), x + w - 12 * U, y0 + 58 * U, 14 * U, '#ffe9a0', 'right');
+    else if (l.zorn > 0) txt('😠 ' + fmtClock(l.zorn), x + w - 12 * U, y0 + 58 * U, 14 * U, '#ff9a8a', 'right');
     g.restore();
   }
 
@@ -748,7 +815,7 @@ registerGame({ key: 'furtfehde', screen: function () {
     return now - gestureAt > 2500;
   }
   function drawSoundHint(now) {
-    const px = 15 * U, label = '🔇 Klick oder Taste für Ton', w = textW(label, px) + 26 * U, hh = px + 14 * U, x = 12 * U, y = (12 + 100 + 8) * U;
+    const px = 15 * U, label = '🔇 Klick oder Taste für Ton', w = textW(label, px) + 26 * U, hh = px + 14 * U, x = 12 * U, y = (12 + PANEL_H + 8) * U;
     g.save(); g.globalAlpha = 0.78 + 0.22 * Math.sin(now / 420);
     panel(x, y, w, hh, 'rgba(255,226,120,.8)', 0.86);
     txt(label, x + w / 2, y + hh / 2 + 1, px, '#ffe9a8', 'center');
@@ -846,7 +913,17 @@ registerGame({ key: 'furtfehde', screen: function () {
     forest: '🌲 Zu wenig Wald in der Nähe', rock: '🪨 Der Steinbruch braucht Fels am Rand'
   };
   const REASON_PAUSE = { none: '❌ Das gibt es nicht mehr', kind: '❌ Nur Hof, Holzfäller und Steinbruch können ruhen', done: '❌ Nur fertige Betriebe können ruhen', other: '❌ Das geht gerade nicht' };
+  // a reason as the tail of a sentence: „❌ Der Platz ist belegt“ → „der Platz ist belegt“ (for „⚠️ 3 von 5 Stücken – …“)
+  const tail = (t) => { const x = String(t).replace(/^[^A-Za-zÄÖÜäöüß]+/, ''); return x.charAt(0).toLowerCase() + x.slice(1); };
+  const GOODS3 = ['korn', 'holz', 'stein'];
+  // what a building costs as the sim charges it: a wall piece per cell (len), a rebuilt ruin ⌈½⌉ of that
+  function buildCost(kind, len, ruin) {
+    const B = Sim.CONST.BUILD[kind] || {}, c = B.cost || {}, m = B.perCell ? (len >= 1 ? len : 1) : 1, k = ruin ? (Sim.CONST.REBUILD_COST == null ? 0.5 : Sim.CONST.REBUILD_COST) : 1, out = {};
+    for (const g of Object.keys(c)) out[g] = Math.ceil(c[g] * m * k);
+    return out;
+  }
   function reply(h, text, only) { (only != null ? [only] : h.humans).forEach((id) => toast(id, text)); }
+  const packs = (n) => n + (n === 1 ? ' Paket' : ' Pakete'), pieces = (n) => n + (n === 1 ? ' Stück' : ' Stücke');
   function handleOrder(id, h, d) {
     switch (d.t) {
       case 'ffBuild': {
@@ -854,11 +931,42 @@ registerGame({ key: 'furtfehde', screen: function () {
         let rot = d.rot;
         if (rot === undefined || rot === false) rot = 0; else if (rot === true) rot = 1;
         if (rot !== 0 && rot !== 1) return;
-        const y = sim.youOf(h.i), ruin = sim.state.buildings.some((b) => b.lord === h.i && b.ruined && b.kind === d.kind && b.i === d.i && b.j === d.j && (b.rot | 0) === rot);
-        const r = sim.build(h.i, d.kind, d.i, d.j, rot);
+        let len;   // Phase 2: `len` (1–4) is for a wall piece, i.e. the rebuild of a wall ruin (it is rebuilt only with its own length); every other kind ignores it
+        if (d.len !== undefined && d.len !== null) { if (!isInt(d.len) || d.len < 1 || d.len > 4) return; if (World.isWall(d.kind)) len = d.len; }
+        const y = sim.youOf(h.i), ruin = sim.state.buildings.some((b) => b.lord === h.i && b.ruined && b.kind === d.kind && b.i === d.i && b.j === d.j && (b.rot | 0) === rot && (b.len || 1) === (len || 1));
+        const r = sim.build(h.i, d.kind, d.i, d.j, rot, len);
         if (r.ok) { reply(h, (ruin ? '♻️ ' + BNAME(d.kind) + ' wird wiederaufgebaut' : '🔨 ' + BNAME(d.kind) + ' wird gebaut'), id); }
-        else if (r.reason === 'cost') reply(h, '❌ Zu wenig ' + (missingOf(Sim.CONST.BUILD[d.kind].cost, y && y.stock).join(' und ') || 'Material'), id);
+        else if (r.reason === 'cost') reply(h, '❌ Zu wenig ' + (missingOf(buildCost(d.kind, len, ruin), y && y.stock).join(' und ') || 'Material'), id);
         else reply(h, REASON_BUILD[r.reason] || '❌ Das geht gerade nicht', id);
+        return r;
+      }
+      case 'ffWall': {   // a line of wall pieces [[i, j, rot, len], …] (the phone sends only valid ones): the sim places them in order as long as the stock lasts
+        if (typeof d.kind !== 'string' || !own(Sim.CONST.BUILD, d.kind) || !World.isWall(d.kind) || !Array.isArray(d.pieces)) return;
+        const maxN = Sim.CONST.WALL_PIECES_MAX || 64, maxLen = (World.BUILDINGS[d.kind] || {}).maxLen || 4, list = [];
+        if (!d.pieces.length || d.pieces.length > maxN) return;
+        for (const p of d.pieces) {
+          if (!Array.isArray(p) || p.length < 3 || p.length > 4) return;
+          const rot = p[2] === true ? 1 : p[2] === false ? 0 : p[2], len = p.length > 3 ? p[3] : 1;
+          if (!isInt(p[0]) || !isInt(p[1]) || (rot !== 0 && rot !== 1) || !isInt(len) || len < 1 || len > maxLen) return;
+          list.push([p[0], p[1], rot, len]);
+        }
+        const r = sim.buildWall(h.i, d.kind, list), icon = d.kind === 'palisade' ? '🪵' : '🧱', miss = Object.keys(Sim.CONST.BUILD[d.kind].cost || {}).map((g) => (GOOD_ICON[g] || '') + ' ' + (NEED[g] || g)).join(' und ');
+        if (r.ok && !r.reason) reply(h, icon + ' ' + BNAME(d.kind) + ': ' + pieces(r.placed) + (r.placed === 1 ? ' wird' : ' werden') + ' gebaut', id);
+        else if (r.ok) reply(h, '⚠️ ' + r.placed + ' von ' + list.length + ' Stücken – ' + (r.reason === 'cost' ? 'zu wenig ' + miss : tail(REASON_BUILD[r.reason] || '❌ das geht nicht überall')), id);
+        else if (r.reason === 'cost') reply(h, '❌ Zu wenig ' + miss, id);
+        else if (r.reason === 'lord' || r.reason === 'kind' || r.reason === 'phase') reply(h, '❌ Das geht gerade nicht', id);
+        else reply(h, REASON_BUILD[r.reason] || '❌ Das geht gerade nicht', id);
+        return r;
+      }
+      case 'ffTrade': {   // the Markt: `packs` (1–5) packs of a good, sold for 💰 or bought with it; a success is silent (the phone's next ffYou says it), a trade that stops short says why
+        if (typeof d.good !== 'string' || GOODS3.indexOf(d.good) < 0 || (d.side !== 'sell' && d.side !== 'buy') || !isInt(d.packs) || d.packs < 1 || d.packs > 5) return;
+        const r = sim.trade(h.i, d.good, d.side, d.packs), ware = NEED[d.good];
+        if (r.ok && r.reason === 'cost') reply(h, '⚖️ Nur ' + packs(r.n) + ' – ' + (d.side === 'sell' ? 'mehr ' + ware + ' habt ihr nicht' : 'mehr Gold habt ihr nicht'), id);
+        else if (r.ok && r.reason === 'cap') reply(h, '⚖️ Nur ' + packs(r.n) + ' – das ' + ware + '-Lager ist voll', id);
+        else if (!r.ok && r.reason === 'markt') reply(h, '❌ Dafür braucht ihr erst einen Markt', id);
+        else if (!r.ok && r.reason === 'cost') reply(h, '❌ Zu wenig ' + ware + ' oder Gold', id);
+        else if (!r.ok && r.reason === 'cap') reply(h, '❌ ' + ware + '-Lager ist voll', id);
+        else if (!r.ok) reply(h, '❌ Das geht gerade nicht', id);
         return r;
       }
       case 'ffCancel': {
@@ -873,6 +981,7 @@ registerGame({ key: 'furtfehde', screen: function () {
         if (r.ok) return r;
         else if (r.reason === 'cost') reply(h, '❌ Zu wenig ' + (missingOf(Sim.CONST.UNIT[d.unit].cost, y && y.stock).join(' und ') || 'Material'), id);
         else if (r.reason === 'kaserne') reply(h, '❌ Dafür braucht ihr erst eine Kaserne', id);
+        else if (r.reason === 'lager') reply(h, '❌ Dafür braucht ihr erst ein Söldnerlager', id);
         else if (r.reason === 'pop') reply(h, '❌ Zu wenige Bauern übrig (oder die Warteschlange ist voll)', id);
         else reply(h, '❌ Das geht gerade nicht', id);
         return r;
@@ -882,6 +991,7 @@ registerGame({ key: 'furtfehde', screen: function () {
         const r = sim.banner(h.i, d.n, clampN(d.x, -200, 200), clampN(d.y, -200, 200));
         if (!r.ok) reply(h, r.reason === 'pact' ? '🤝 Tabu: das Land eures Paktpartners' : '❌ Das geht gerade nicht', id);
         else if (r.reason === 'unreachable') reply(h, '🌊 Kein Weg — die Fahne wartet am Ufer', id);
+        else if (r.garrison) { /* an order onto an own wall, gatehouse or tower: the phone says „🏹 … besetzen“ itself */ }
         else if (r.reason === 'snapped') reply(h, '📍 Die Fahne geht zum nächsten erreichbaren Ort', id);
         return r;
       }
@@ -950,6 +1060,7 @@ registerGame({ key: 'furtfehde', screen: function () {
       blit = /[?&]blit=1\b/.test(location.search);
       view = (Sim && World) ? ensureView() : null;
       if (!view) { endToLobby('🏰 Furt & Fehde braucht einen Browser mit WebGL.'); return; }
+      view.onGate = () => snd((S) => S.play('gate', { vol: 0.5 }));   // Phase 2: the view tells when a Torhaus starts to open (no sim event for it); the sound rate-limits itself
       curQuality = cfg.quality === 'low' ? 'low' : 'high'; autoDone = false; capDropped = false; glitches = []; glitchUntil = 0;
       if (!gestureFn) { gestureFn = () => { gestureAt = nowMs(); }; ['pointerdown', 'keydown', 'touchstart', 'click'].forEach((e) => document.addEventListener(e, gestureFn, true)); }   // the sound hint ends with the next click or key
       safe('setQuality', () => view.setQuality(curQuality));
@@ -964,7 +1075,7 @@ registerGame({ key: 'furtfehde', screen: function () {
       timers.forEach(clearTimeout); timers = [];
       if (gestureFn) { ['pointerdown', 'keydown', 'touchstart', 'click'].forEach((e) => document.removeEventListener(e, gestureFn, true)); gestureFn = null; }
       snd((S) => { S.ambience(null); S.battle(0); });
-      if (view) { safe('inset', () => view.inset(null)); safe('clear', () => view.setWorld(null, [])); }
+      if (view) { view.onGate = null; safe('inset', () => view.inset(null)); safe('clear', () => view.setWorld(null, [])); }
       showWrap(false); cv.style.display = '';
       phase = 'idle'; sim = null; world = null; view = null; hctx = null; endInfo = null; bots = {}; houses = []; spectators = []; kk.on = false;
     },

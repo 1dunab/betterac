@@ -8,11 +8,16 @@
 //     still     true = no animation (screenshots)
 //   map.resize(w, h)                 CSS px; the backing store follows devicePixelRatio (capped at 3)
 //   map.setLevel(L)                  water level 0..1: flood water, closing fords, mud where the water went down
-//   map.setBoard({ buildings: [{ id, lord, kind, i, j, rot, build, hp, fire, ruined, paused }], banners: [{ lord, n, x, y, count }], fires: [{ x, y, r, fire }] })   ruined = rubble (still blocks its footprint); paused = an own workplace that rests (dimmed, with a 💤 badge)
+//   map.setBoard({ buildings: [{ id, lord, kind, i, j, rot, len, build, hp, fire, ruined, paused, full, garrison }], banners: [{ lord, n, x, y, count }], fires: [{ x, y, r, fire }] })   ruined = rubble (still blocks its footprint); paused = an own workplace that rests (dimmed, with a 💤 badge);
+//                                    full = it rests because its store is full (the same 💤, orange); len = the length of a wall piece (Palisade, Mauer: a 1 × len footprint; default 1); garrison = archers standing in it (an own building shows a 🏹 badge)
 //   map.view('all' | 'mine', instant)  zoom presets (250 ms animated); the camera turns 'free' after a pan, pinch or wheel
-//   map.setTool('ghost' | 'banner' | null)  what one finger does: drag the ghost / grab an own banner pin / pan the map
+//   map.setTool('ghost' | 'banner' | 'wall' | null)  what one finger does: drag the ghost / grab an own banner pin / draw a wall line / pan the map
 //   map.setGhost({ kind, i, j, rot } | null); map.getGhost() → { kind, i, j, rot, ok, reason }  (validity = FurtWorld.canPlace with own quarter, level and occupancy)
 //   map.rotateGhost(); map.shake(); map.callout(x, y, text, ms); map.pulsePin(n); map.setOrder(n, x, y); map.selPin = n
+//   the wall tool (docs "Phase 2"): map.setWall({ kind: 'palisade' | 'mauer' } | null) arms it (with setTool('wall')); one drag draws a line from the cell under the finger (lifted like the ghost) to the cell under it now: straight, or an L whose first
+//                                    leg follows the direction the finger took first; map.flipWall() turns the corner. Every cell is checked with FurtWorld.canPlace; a refused cell is red, the runs of good cells between them
+//                                    become pieces of 1–4 cells (balanced). map.getWall() → { kind, a, b, cells, okCells, okPieces, badRuns, reason, pieces: [{ i, j, rot, len, ok, reason? }], send: [[i, j, rot, len], …] } | null (no line yet);
+//                                    map.clearWall(); map.setWallLabel(text) is the bubble at the line's end; events 'wallMove' (line changed) and 'wallEnd' (finger lifted)
 //   map.setArm(n | 0)                a banner that waits for its target (⚑ mode: tap a banner, then the map): a pulsing gold ring round its pin
 //   map.sendBanner(n, x, y)          the tap-to-send order: the same snapping, route check, order line and 'bannerDrop' as dragging the pin there
 //   map.setSelected(id | null)       ring around one building (the building card is open; id 'keep' = the own castle); map.ping(x, y, color, ms) a pulsing ring (an alert's place)
@@ -24,7 +29,8 @@
 //                                    (wood = own wooden buildings that are not ruins; covered = those a finished well or the keep reaches; extra = those the planned well would add), also when the layer is off
 //   spectators: me = -1 → no own quarter, no own pins, only the 'all' view; every building is drawn as a small mark in its house colour
 //   map.pick(px, py) → { px, py, x, y, k, i, j, building?, banner?, crossing?, site?, dBuilding?, dCrossing?, dSite? }   (~18 CSS px tolerance; dX = distance in map units)
-//   map.on('tap', pick) · ('ghostMove' | 'ghostEnd', ghost) · ('bannerDrag', { n, x, y, snap, route, time }) · ('bannerDrop', { n, x, y, snap, route, time })
+//   map.on('tap', pick) · ('ghostMove' | 'ghostEnd', ghost) · ('wallMove' | 'wallEnd', wall) · ('bannerDrag', { n, x, y, snap, route, time }) · ('bannerDrop', { n, x, y, snap, route, time })   snap = { kind: 'crossing' | 'site' | 'building' | 'garrison', id, name, x, y };
+//        a drop within 1 cell of an own finished Mauer, Torhaus or Wachturm is a 'garrison' snap: the archers of the banner move in, and the exact point is kept (not the building's centre)
 //        ('bannerCancel', { n }) · ('view', 'all' | 'mine' | 'free')   a tap on an own pin (no drag) is a 'tap' with pick.banner, never an order
 //   map.render(now)                  call every frame: the static parchment layers are cached per zoom preset (re-drawn only on zoom, resize or a
 //                                    new camera), the dynamic layer (water, buildings, pins, ghost, route) is drawn when something changed or animates
@@ -197,7 +203,7 @@
     this.bviews = new Map();
     this.orders = {};
     this.ghost = null; this.ghostRes = null; this.shakeT = 0;
-    this.tool = null; this.selPin = 0; this.armPin = 0; this.pinPulse = null;
+    this.tool = null; this.selPin = 0; this.armPin = 0; this.pinPulse = null; this.wall = null; this.wallLabel = '';
     this.drag = null; this.ptrs = new Map(); this.pan = null; this.pinch = null; this.camT = 0; this.minScale = 1;
     this.maskLive = 0; this.maskVisible = false; this.fog = null; this.otherT = 0;
     this.callouts = []; this.pings = []; this.selId = null; this.partners = null; this.cover = null; this.covCv = null; this.covKey = '';
@@ -215,6 +221,7 @@
   const P = FurtWarmap.prototype;
 
   P.mySite = function () { const l = this.lords[this.me]; return l && l.site != null ? l.site : this.me; };
+  P.fpOf = function (b) { return this.FW.footprintOf(b.kind, b.rot | 0, b.len); };   // [w, h] in cells; a wall piece (Palisade, Mauer) is 1 × len
   P.lordColor = function (i) { const l = this.lords[i]; return (l && l.color) || LORD_FALLBACK[i & 3]; };
   P.siteColor = function (s) { for (const l of this.lords) if (l && l.site === s) return l.color || LORD_FALLBACK[s & 3]; return NEUTRAL; };
   P.on = function (name, fn) { (this.handlers[name] || (this.handlers[name] = [])).push(fn); return this; };
@@ -598,6 +605,7 @@
   const ROMAN = ['', 'I', 'II', 'III'];
   const REASON_TEXT = { wet: 'Zu nass', owner: 'Nicht dein Land', tight: 'Zu eng', forest: 'Kein Wald in der Nähe', rock: 'Kein Fels daneben', occupied: 'Belegt', terrain: 'Ungeeigneter Boden', bounds: 'Außerhalb der Karte' };
   const REASON_ICON = { wet: '💧', owner: '🚫', tight: '↔️', forest: '🌲', rock: '⛏️', occupied: '⛔', terrain: '🪨', bounds: '🚫' };
+  const GARRISON_NAME = { mauer: 'Mauer besetzen', torhaus: 'Tor besetzen', wachturm: 'Turm besetzen' };   // the label of a garrison snap
   P.REASON_TEXT = REASON_TEXT;
 
   // Flood water from hq and L (the integer rule: depth = 12·L − hq in decimetres), drawn at 3 px per cell and smoothed up:
@@ -666,7 +674,7 @@
   P.setLevel = function (L) {
     L = clamp(+L || 0, 0, 1);
     if (L === this.L && this.maskCv) return;
-    this.L = L; this.maskDirty = true; this.dirty = true; this.recheckGhost();
+    this.L = L; this.maskDirty = true; this.dirty = true; this.recheckGhost(); this.wallRecalc();
   };
   P.buildFog = function () {   // parchment haze over land that is not the own quarter (shown while placing buildings)
     const cv = document.createElement('canvas'); cv.width = GW; cv.height = GH;
@@ -683,7 +691,7 @@
     const keys = BKEYS();
     for (const bd of this.board.buildings) {
       if (bd.kind === 'bergfried' || keys.indexOf(bd.kind) < 0) continue;
-      const fp = this.FW.footprintOf(bd.kind, bd.rot | 0), code = 1 + keys.indexOf(bd.kind);
+      const fp = this.fpOf(bd), code = 1 + keys.indexOf(bd.kind);
       for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) { const k = (bd.j + dj) * GW + bd.i + di; if (k >= 0 && k < N) this.occ[k] = code; }
     }
     const seen = new Set();
@@ -694,7 +702,7 @@
       v.tx = bn.x; v.ty = bn.y; v.count = bn.count | 0;
     }
     for (const key of Array.from(this.bviews.keys())) if (!seen.has(key)) this.bviews.delete(key);
-    this.recheckGhost(); this.dirty = true;
+    this.recheckGhost(); this.wallRecalc(); this.dirty = true;
   };
   P.home = function (n) {
     const st = this.sites.find((q) => q.s === this.mySite());
@@ -731,20 +739,20 @@
   P.coverage = function (r, keepR) {
     const FW = this.FW, cv = this.cover, out = { r: r > 0 ? r : cv ? cv.r : 12, keepR: keepR > 0 ? keepR : cv ? cv.keepR : 12, discs: [], marks: [], wood: 0, covered: 0, extra: 0, plan: null };
     if (this.me < 0) return out;
-    const centre = (b) => { const fp = FW.footprintOf(b.kind, b.rot | 0); return { x: MX0 + b.i + fp[0] / 2, y: MY0 + b.j + fp[1] / 2 }; };
+    const centre = (b) => { const fp = FW.footprintOf(b.kind, b.rot | 0, b.len); return { x: MX0 + b.i + fp[0] / 2, y: MY0 + b.j + fp[1] / 2 }; };
     const keep = this.sites.find((q) => q.s === this.mySite()), live = [];   // the sources that put out fires: the keep and the finished wells
     if (keep) { const d = { kind: 'keep', id: 'keep', x: keep.x, y: keep.y, r: out.keepR, live: true, sel: this.selId === 'keep' }; out.discs.push(d); live.push(d); }
     const wood = [];
     for (const b of this.board.buildings) {
       if (b.lord !== this.me || b.ruined || !FW.BUILDINGS[b.kind] || b.kind === 'bergfried') continue;
       if (b.kind === 'brunnen') { const c = centre(b), d = { kind: 'well', id: b.id, x: c.x, y: c.y, r: out.r, live: (b.build == null ? 1 : b.build) >= 1, sel: this.selId === b.id }; out.discs.push(d); if (d.live) live.push(d); }
-      else if (FW.BUILDINGS[b.kind].mat === 'holz') wood.push(b);
+      else if (FW.BUILDINGS[b.kind].mat === 'holz' && !FW.BUILDINGS[b.kind].wall) wood.push(b);   // (a palisade line is no „Holzgebäude“ in the player's eyes: no ring on every piece)
     }
     const g = this.ghost;
     if (g && g.kind === 'brunnen') { const c = centre({ kind: 'brunnen', i: g.i, j: g.j, rot: g.rot }); out.plan = { kind: 'plan', x: c.x, y: c.y, r: out.r, live: true, sel: false }; out.discs.push(out.plan); }
     for (const b of wood) {
       const c = centre(b), cov = live.some((d) => Math.hypot(c.x - d.x, c.y - d.y) <= d.r), gain = !cov && !!out.plan && Math.hypot(c.x - out.plan.x, c.y - out.plan.y) <= out.plan.r;
-      const fp = FW.footprintOf(b.kind, b.rot | 0);
+      const fp = FW.footprintOf(b.kind, b.rot | 0, b.len);
       out.marks.push({ id: b.id, kind: b.kind, x: c.x, y: c.y, x0: MX0 + b.i, y0: MY0 + b.j, w: fp[0], h: fp[1], cov, gain }); if (cov) out.covered++; if (gain) out.extra++;
     }
     out.wood = out.marks.length;
@@ -784,9 +792,10 @@
     this.recheckGhost(); this.emit('ghostMove', this.getGhost());
   };
   P.setTool = function (t) {
-    this.tool = t === 'ghost' || t === 'banner' ? t : null;
+    this.tool = t === 'ghost' || t === 'banner' || t === 'wall' ? t : null;
     if (this.tool !== 'ghost' && this.drag && this.drag.type === 'ghost') this.drag = null;
     if (this.tool !== 'banner' && this.drag && this.drag.type === 'banner') this.drag = null;
+    if (this.tool !== 'wall' && this.drag && this.drag.type === 'wall') this.drag = null;
     this.dirty = true;
   };
   P.dragGhost = function (p, type) {
@@ -798,8 +807,96 @@
     this.emit('ghostMove', this.getGhost());
   };
 
+  // ---- the wall tool (docs "Phase 2"): a line of Palisade or Mauer pieces ----
+  // A drag draws a line from the start cell to the cell under the finger (both lifted above a touch like the ghost). Straight, or an L: the first leg follows the direction the finger took first
+  // (it is fixed once the finger is 2 cells away from the start; flipWall() turns the corner). Every cell of the line is checked with canPlace; a refused cell is red, and the runs of good cells
+  // between the red ones are cut into pieces of 1–4 cells (balanced: 9 cells become 3 + 3 + 3, not 4 + 4 + 1). The pieces are what ffWall sends.
+  const WALL_MAX_CELLS = 240;   // a line stops here (the sim takes 64 pieces per message)
+  const chop = (n, max) => { const k = Math.ceil(n / max), base = Math.floor(n / k), extra = n - base * k, out = []; for (let t = 0; t < k; t++) out.push(base + (t < extra ? 1 : 0)); return out; };
+  P.setWall = function (o) {
+    const B = o && o.kind ? this.FW.BUILDINGS[o.kind] : null;
+    this.wall = B && B.wall ? { kind: o.kind, a: null, b: null, axis: 0, locked: false, cells: 0, okCells: 0, okPieces: 0, badRuns: 0, reason: null, pieces: [], send: [] } : null;
+    this.wallLabel = ''; this.dirty = true;
+  };
+  P.clearWall = function () { const w = this.wall; if (w) { w.a = w.b = null; w.axis = 0; w.locked = false; this.wallLabel = ''; this.wallRecalc(); } };
+  P.setWallLabel = function (t) { t = t || ''; if (t !== this.wallLabel) { this.wallLabel = t; this.dirty = true; } };
+  P.flipWall = function () { const w = this.wall; if (!w || !w.a) return; w.axis = w.axis ? 0 : 1; w.locked = true; this.wallRecalc(); this.emit('wallMove', this.getWall()); };
+  P.wallCursor = function (p, type) {   // the cell under the (lifted) finger
+    const lift = type === 'touch' ? Math.min(this.liftPx, Math.max(0, p.y - 6)) : 0, w = this.toWorld(p.x, p.y - lift);
+    return { i: clamp(Math.floor(w.x - MX0), 0, GW - 1), j: clamp(Math.floor(w.y - MY0), 0, GH - 1) };
+  };
+  // the cells of the line from a to b in order: [{ i, j, h }] (h = on a horizontal leg); the corner belongs to the first leg
+  P.wallLine = function (a, b, axis) {
+    const out = [], di = b.i >= a.i ? 1 : -1, dj = b.j >= a.j ? 1 : -1, ni = Math.abs(b.i - a.i), nj = Math.abs(b.j - a.j);
+    if (ni === 0 || nj === 0) { const h = nj === 0; for (let t = 0; t <= Math.max(ni, nj); t++) out.push({ i: a.i + (h ? t * di : 0), j: a.j + (h ? 0 : t * dj), h }); return out; }
+    if (axis === 0) { for (let t = 0; t <= ni; t++) out.push({ i: a.i + t * di, j: a.j, h: true }); for (let t = 1; t <= nj; t++) out.push({ i: b.i, j: a.j + t * dj, h: false }); }
+    else { for (let t = 0; t <= nj; t++) out.push({ i: a.i, j: a.j + t * dj, h: false }); for (let t = 1; t <= ni; t++) out.push({ i: a.i + t * di, j: b.j, h: true }); }
+    return out;
+  };
+  P.wallRecalc = function () {
+    const w = this.wall; if (!w) return;
+    w.pieces = []; w.send = []; w.cells = w.okCells = w.okPieces = w.badRuns = 0; w.reason = null;
+    this.dirty = true;
+    if (!w.a) return;
+    const cells = this.wallLine(w.a, w.b, w.axis).slice(0, WALL_MAX_CELLS), site = this.mySite(), FW = this.FW;
+    w.cells = cells.length;
+    let run = null;
+    const flush = () => {
+      if (!run) return;
+      const h = run.h, first = run.cells[0];
+      if (run.ok) {
+        let at = 0;
+        for (const n of chop(run.cells.length, FW.BUILDINGS[w.kind].maxLen || 4)) {
+          const seg = run.cells.slice(at, at + n); at += n;
+          const i = Math.min(seg[0].i, seg[seg.length - 1].i), j = Math.min(seg[0].j, seg[seg.length - 1].j);
+          w.pieces.push({ i, j, rot: h || n === 1 ? 0 : 1, len: n, w: h ? n : 1, h: h ? 1 : n, ok: true });
+          w.okCells += n; w.okPieces++;
+        }
+      } else {
+        const n = run.cells.length, i = Math.min(first.i, run.cells[n - 1].i), j = Math.min(first.j, run.cells[n - 1].j);
+        w.pieces.push({ i, j, rot: h || n === 1 ? 0 : 1, len: n, w: h ? n : 1, h: h ? 1 : n, ok: false, reason: run.reason });
+        w.badRuns++; if (!w.reason) w.reason = run.reason;
+      }
+      run = null;
+    };
+    for (const c of cells) {
+      const r = FW.canPlace(this.grid, w.kind, c.i, c.j, 0, { lord: site, L: this.L, occ: this.occ, len: 1 }), ok = !!r.ok;
+      if (!run || run.ok !== ok || run.h !== c.h) { flush(); run = { ok, h: c.h, cells: [], reason: ok ? null : r.reason }; }
+      run.cells.push(c);
+    }
+    flush();
+    for (const pc of w.pieces) if (pc.ok && w.send.length < 64) w.send.push([pc.i, pc.j, pc.rot, pc.len]);
+  };
+  P.getWall = function () {
+    const w = this.wall; if (!w || !w.a) return null;
+    return { kind: w.kind, a: { i: w.a.i, j: w.a.j }, b: { i: w.b.i, j: w.b.j }, axis: w.axis, cells: w.cells, okCells: w.okCells, okPieces: w.okPieces, badRuns: w.badRuns, reason: w.reason,
+      pieces: w.pieces.map((p) => Object.assign({}, p)), send: w.send.map((p) => p.slice()) };
+  };
+  P.startWall = function (p, type) {
+    const w = this.wall; if (!w) return;
+    w.a = this.wallCursor(p, type); w.b = { i: w.a.i, j: w.a.j }; w.axis = 0; w.locked = false;
+    this.wallRecalc(); this.emit('wallMove', this.getWall());
+  };
+  P.dragWall = function (p, type) {
+    const w = this.wall; if (!w || !w.a) return;
+    const c = this.wallCursor(p, type);
+    if (c.i === w.b.i && c.j === w.b.j) return;
+    w.b = c;
+    if (!w.locked) { const ni = Math.abs(c.i - w.a.i), nj = Math.abs(c.j - w.a.j); if (Math.max(ni, nj) >= 2) { w.axis = ni >= nj ? 0 : 1; w.locked = true; } }
+    this.wallRecalc(); this.emit('wallMove', this.getWall());
+  };
+
   // ---- banners ----
   P.snapTarget = function (x, y) {
+    // a drop within 1 cell of an own finished Mauer, Torhaus or Wachturm is a garrison order (the sim's GARRISON_TOUCH): it wins over every other snap and keeps the exact point
+    let gb = null, gd = 1 + 1e-6;
+    for (const b of this.board.buildings) {
+      const B = b.lord === this.me ? this.FW.BUILDINGS[b.kind] : null;
+      if (!B || !B.slots || b.ruined || (b.build != null && b.build < 1)) continue;
+      const fp = this.fpOf(b), x0 = MX0 + b.i, y0 = MY0 + b.j, d = Math.hypot(Math.max(x0 - x, 0, x - (x0 + fp[0])), Math.max(y0 - y, 0, y - (y0 + fp[1])));
+      if (d < gd) { gd = d; gb = { kind: 'garrison', id: b.id, bkind: b.kind, name: GARRISON_NAME[b.kind] || 'besetzen', x, y }; }
+    }
+    if (gb) return gb;
     let best = null, bd = 4 + 1e-6;
     for (const c of this.crossings) {
       let ux = Math.cos(c.rot), uy = Math.sin(c.rot);
@@ -813,7 +910,7 @@
     }
     for (const b of this.board.buildings) {
       if (b.lord === this.me || b.kind === 'bergfried' || !this.FW.BUILDINGS[b.kind]) continue;
-      const fp = this.FW.footprintOf(b.kind, b.rot | 0), cx = MX0 + b.i + fp[0] / 2, cy = MY0 + b.j + fp[1] / 2;
+      const fp = this.fpOf(b), cx = MX0 + b.i + fp[0] / 2, cy = MY0 + b.j + fp[1] / 2;
       const d = Math.hypot(Math.max(Math.abs(x - cx) - fp[0] / 2, 0), Math.max(Math.abs(y - cy) - fp[1] / 2, 0)) - 0.6;
       if (d < bd) { bd = d; best = { kind: 'building', id: b.id, name: this.FW.BUILDINGS[b.kind].name + ' (Feind)', x: cx, y: cy }; }
     }
@@ -870,7 +967,7 @@
     bd = 1e9;
     for (const b of this.board.buildings) {
       if (b.kind === 'bergfried' || !this.FW.BUILDINGS[b.kind]) continue;
-      const fp = this.FW.footprintOf(b.kind, b.rot | 0), x0 = MX0 + b.i, y0 = MY0 + b.j;
+      const fp = this.fpOf(b), x0 = MX0 + b.i, y0 = MY0 + b.j;
       const d = Math.hypot(Math.max(x0 - w.x, 0, w.x - (x0 + fp[0])), Math.max(y0 - w.y, 0, w.y - (y0 + fp[1])));
       if (d <= tol && d < bd) { bd = d; out.building = b; out.dBuilding = d; }
     }
@@ -906,6 +1003,10 @@
     if (d) {   // the first finger had already grabbed something: undo that, a pinch is not a drag
       this.drag = null; this.dirty = true;
       if (d.type === 'ghost' && d.prev && this.ghost) { this.ghost.i = d.prev.i; this.ghost.j = d.prev.j; this.recheckGhost(); this.emit('ghostMove', this.getGhost()); }
+      else if (d.type === 'wall' && this.wall) {   // back to the line that was there before this finger touched down
+        const w = this.wall, pv = d.prev; w.a = pv ? pv.a : null; w.b = pv ? pv.b : null; w.axis = pv ? pv.axis : 0; w.locked = pv ? pv.locked : false;
+        this.wallRecalc(); this.emit('wallMove', this.getWall());
+      }
       else if (d.type === 'banner') this.emit('bannerCancel', { n: d.n });
     }
     a.dead = b.dead = true;   // these fingers no longer tap or drag
@@ -943,6 +1044,11 @@
     if (this.ptrs.size > 1) { this.ptrs.get(id).dead = true; return; }
     if (this.tool === 'banner') { const pin = this.hitPin(p); if (pin) { this.beginBannerDrag(pin, id, p, type); return; } }
     if (this.tool === 'ghost' && this.ghost) { this.drag = { type: 'ghost', id, ptype: type, prev: { i: this.ghost.i, j: this.ghost.j } }; this.dragGhost(p, type); return; }
+    if (this.tool === 'wall' && this.wall) {
+      const w = this.wall;
+      this.drag = { type: 'wall', id, ptype: type, prev: w.a ? { a: { i: w.a.i, j: w.a.j }, b: { i: w.b.i, j: w.b.j }, axis: w.axis, locked: w.locked } : null };
+      this.startWall(p, type); return;
+    }
     this.pan = { id, cx: this.cam.cx, cy: this.cam.cy, x: p.x, y: p.y, on: false };
   };
   P.pMove = function (id, p) {
@@ -957,7 +1063,7 @@
       return;
     }
     const d = this.drag; if (!d || d.id !== id) return;
-    if (d.type === 'banner') this.updateBannerDrag(p); else this.dragGhost(p, d.ptype);
+    if (d.type === 'banner') this.updateBannerDrag(p); else if (d.type === 'wall') this.dragWall(p, d.ptype); else this.dragGhost(p, d.ptype);
   };
   P.pUp = function (id, cancel, p) {
     const q = this.ptrs.get(id); this.ptrs.delete(id); if (!q) return;
@@ -972,7 +1078,8 @@
         if (cancel) this.emit('bannerCancel', { n: d.n });
         else if (!q.moved) { this.emit('bannerCancel', { n: d.n }); if (performance.now() - q.t0 < 700) this.emit('tap', this.pick(q.x, q.y)); }   // a tap on a pin picks the banner; it must not send it to the spot above the finger
         else this.dropBanner(d);
-      } else this.emit('ghostEnd', this.getGhost());
+      } else if (d.type === 'wall') this.emit('wallEnd', this.getWall());
+      else this.emit('ghostEnd', this.getGhost());
       return;
     }
     if (!cancel && !q.moved && performance.now() - q.t0 < 700) this.emit('tap', this.pick(q.x, q.y));
@@ -1013,16 +1120,83 @@
     }
     ctx.restore();
   };
+  // a wall piece (Palisade, Mauer): a 1 × len strip. Palisade = a row of dark log tops on wood, Mauer = light battlement blocks on grey stone; the house colour runs round it as a thin outline.
+  // `plan` draws the same body as a preview (no scaffolding, no bars).
+  P.drawWallBody = function (ctx, kind, x, y, w, h, col, alpha) {
+    const s = this.cam.s, horiz = w >= h, t = clamp(Math.min(w, h) * 0.9, 3, 12), wood = kind === 'palisade';
+    const bx = horiz ? x : x + (w - t) / 2, by = horiz ? y + (h - t) / 2 : y, bw = horiz ? w : t, bh = horiz ? t : h;
+    ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.fillStyle = 'rgba(40,24,8,0.26)'; ctx.fillRect(bx + 1.2, by + 1.4, bw, bh);   // a soft shadow lifts it off the paper
+    ctx.fillStyle = wood ? '#c8955a' : '#b3ab9b'; ctx.fillRect(bx, by, bw, bh);
+    if (wood) {
+      const n = Math.max(1, Math.round((horiz ? bw : bh) / Math.max(3.4, s * 0.5))), r = Math.max(0.9, t * 0.3);
+      ctx.fillStyle = '#6b4423';
+      for (let q = 0; q < n; q++) { const f = (q + 0.5) / n; ctx.beginPath(); ctx.arc(horiz ? bx + bw * f : bx + bw / 2, horiz ? by + bh / 2 : by + bh * f, r, 0, TAU); ctx.fill(); }
+    } else {
+      ctx.strokeStyle = 'rgba(246,240,224,0.92)'; ctx.lineWidth = Math.max(1, t * 0.36); ctx.setLineDash([Math.max(1.4, s * 0.3), Math.max(1.2, s * 0.22)]); ctx.beginPath();
+      if (horiz) { ctx.moveTo(bx + 1, by + bh / 2); ctx.lineTo(bx + bw - 1, by + bh / 2); } else { ctx.moveTo(bx + bw / 2, by + 1); ctx.lineTo(bx + bw / 2, by + bh - 1); }
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    ctx.lineWidth = 2.4; ctx.strokeStyle = col; ctx.strokeRect(bx - 0.6, by - 0.6, bw + 1.2, bh + 1.2);
+    ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(40,26,12,0.92)'; ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    ctx.restore();
+    return { bx, by, bw, bh, horiz };
+  };
+  P.drawWall = function (ctx, b, mine, x, y, w, h, col, now) {
+    const build = b.build == null ? 1 : b.build, g = this.drawWallBody(ctx, b.kind, x, y, w, h, col, 1);
+    if (build < 1) {   // scaffolding: pale haze with diagonal stripes, and how far it is
+      ctx.fillStyle = 'rgba(240,228,196,0.6)'; ctx.fillRect(g.bx, g.by, g.bw, g.bh);
+      ctx.save(); ctx.beginPath(); ctx.rect(g.bx, g.by, g.bw, g.bh); ctx.clip(); ctx.strokeStyle = 'rgba(92,62,32,0.55)'; ctx.lineWidth = 1.3; ctx.beginPath();
+      for (let t = -g.bh; t < g.bw; t += 6) { ctx.moveTo(g.bx + t, g.by + g.bh); ctx.lineTo(g.bx + t + g.bh, g.by); }
+      ctx.stroke(); ctx.restore();
+    }
+    const along = g.horiz ? g.bw : g.bh;
+    if (build < 1 || (b.hp != null && b.hp < 0.995)) {   // a thin bar beside the strip: the building progress (white) or the hit points
+      const v = build < 1 ? clamp(build, 0, 1) : clamp(b.hp, 0, 1), bw = Math.max(8, along - 2), px = g.horiz ? g.bx + 1 : g.bx + g.bw + 3, py = g.horiz ? g.by + g.bh + 3 : g.by + 1;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)'; if (g.horiz) ctx.fillRect(px, py, bw, 3); else ctx.fillRect(px, py, 3, bw);
+      ctx.fillStyle = build < 1 ? '#fff7e2' : v > 0.5 ? '#5cc24a' : v > 0.25 ? '#e6b830' : '#d6382a'; if (g.horiz) ctx.fillRect(px, py, bw * v, 3); else ctx.fillRect(px, py, 3, bw * v);
+    }
+    if (!mine && this.partners && this.partners.has(b.lord)) { ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = '#2e9e4a'; ctx.strokeRect(g.bx - 3, g.by - 3, g.bw + 6, g.bh + 6); ctx.setLineDash([]); }
+    if (b.fire > 0) this.drawFlames(ctx, g.bx - 2, g.by - 2, g.bw + 4, g.bh + 4, b.fire, now);
+    if (mine && b.garrison > 0 && build >= 1) this.drawGarrison(ctx, b.garrison, g.horiz ? g.bx + g.bw / 2 : g.bx + g.bw + 9, g.horiz ? g.by - 9 : g.by + g.bh / 2);
+  };
+  // the Torhaus: two flank towers and the open lane between them (rot 0: a 3 × 2 block, the lane is the middle column and runs north–south; rot 1: 2 × 3, the lane is the middle row). (x, y) = its top-left corner, s = px per cell
+  P.drawLane = function (ctx, rot, x, y, s, alpha, tint) {
+    const w = rot ? 2 * s : 3 * s, h = rot ? 3 * s : 2 * s;
+    const t1 = rot ? [x, y, w, s] : [x, y, s, h], t2 = rot ? [x, y + 2 * s, w, s] : [x + 2 * s, y, s, h], ln = rot ? [x, y + s, w, s] : [x + s, y, s, h];
+    ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha;
+    ctx.fillStyle = '#dcc58e'; ctx.fillRect(ln[0], ln[1], ln[2], ln[3]);
+    ctx.strokeStyle = 'rgba(112,80,40,0.8)'; ctx.lineWidth = Math.max(1, s * 0.16); ctx.setLineDash([s * 0.32, s * 0.26]); ctx.beginPath();   // wheel ruts along the lane
+    if (rot) { ctx.moveTo(x, y + s * 1.5); ctx.lineTo(x + w, y + s * 1.5); } else { ctx.moveTo(x + s * 1.5, y); ctx.lineTo(x + s * 1.5, y + h); }
+    ctx.stroke(); ctx.setLineDash([]);
+    for (const q of [t1, t2]) {   // the towers: grey stone with a light battlement dot row
+      ctx.fillStyle = tint || '#9f998b'; ctx.fillRect(q[0], q[1], q[2], q[3]);
+      ctx.fillStyle = 'rgba(246,240,224,0.85)'; const r = Math.max(0.9, s * 0.13);
+      for (let u = 0; u < 2; u++) for (let v = 0; v < (rot ? 3 : 2); v++) { ctx.beginPath(); ctx.arc(q[0] + q[2] * (rot ? (v + 0.5) / 3 : (u + 0.5) / 2), q[1] + q[3] * (rot ? (u + 0.5) / 2 : (v + 0.5) / 2), r, 0, TAU); ctx.fill(); }
+      ctx.lineWidth = 1.1; ctx.strokeStyle = 'rgba(40,26,12,0.92)'; ctx.strokeRect(q[0] + 0.5, q[1] + 0.5, q[2] - 1, q[3] - 1);
+    }
+    ctx.restore();
+  };
+  P.drawGarrison = function (ctx, n, cx, cy) {   // 🏹 and the number of archers inside: a small chestnut pill
+    const txt = String(n); ctx.save(); ctx.font = 'bold 11px system-ui,' + EMOJI;
+    const w = ctx.measureText(txt).width + 22, h = 16, x0 = cx - w / 2, y0 = cy - h / 2;
+    rrect(ctx, x0, y0, w, h, h / 2); ctx.fillStyle = '#5b3a1e'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff7e2'; ctx.stroke();
+    ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.font = '11px ' + EMOJI; ctx.fillStyle = '#fff'; ctx.fillText('🏹', x0 + 4, cy + 1);
+    ctx.font = 'bold 11px system-ui'; ctx.textAlign = 'right'; ctx.fillText(txt, x0 + w - 5, cy + 0.5);
+    ctx.restore();
+  };
   P.drawBuilding = function (ctx, b, mine, now) {
     const FW = this.FW, B = FW.BUILDINGS[b.kind];
     if (!B || b.kind === 'bergfried') return;
-    const fp = FW.footprintOf(b.kind, b.rot | 0), s = this.cam.s, p0 = this.toScreen(MX0 + b.i, MY0 + b.j), x = p0.x, y = p0.y, w = fp[0] * s, h = fp[1] * s;
+    const fp = this.fpOf(b), s = this.cam.s, p0 = this.toScreen(MX0 + b.i, MY0 + b.j), x = p0.x, y = p0.y, w = fp[0] * s, h = fp[1] * s;
     if (x > this.w + 4 || y > this.h + 4 || x + w < -4 || y + h < -4) return;
     const col = this.lordColor(b.lord), build = b.build == null ? 1 : b.build;
     if (b.ruined) { this.drawRuin(ctx, b, mine, x, y, w, h, col); return; }
+    if (B.wall) { this.drawWall(ctx, b, mine, x, y, w, h, col, now); return; }
     if (!mine) {   // an enemy building is a small mark in its lord's colour
       ctx.fillStyle = rgba(hex(col), 0.84); ctx.fillRect(x, y, w, h);
       if (B.mat === 'stein') { ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.fillRect(x + w * 0.28, y + h * 0.28, w * 0.44, h * 0.44); }
+      if (b.kind === 'torhaus') this.drawLane(ctx, b.rot | 0, x, y, s, 0.95, rgba(hex(col), 0.9));
       ctx.lineWidth = 1.3; ctx.strokeStyle = 'rgba(36,24,12,0.9)'; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
       if (this.partners && this.partners.has(b.lord)) { ctx.setLineDash([4, 3]); ctx.lineWidth = 2; ctx.strokeStyle = '#2e9e4a'; ctx.strokeRect(x - 2, y - 2, w + 4, h + 4); ctx.setLineDash([]); }
       if (b.fire > 0) this.drawFlames(ctx, x, y, w, h, b.fire, now);
@@ -1036,6 +1210,12 @@
       ctx.stroke();
       ctx.fillStyle = '#c98f58'; ctx.fillRect(x, y, 2 * s, 2 * s); ctx.lineWidth = 1.2; ctx.strokeStyle = 'rgba(46,30,14,0.9)'; ctx.strokeRect(x + 0.5, y + 0.5, 2 * s - 1, 2 * s - 1);
     }
+    if (b.kind === 'torhaus') this.drawLane(ctx, b.rot | 0, x, y, s, 1);
+    if (b.kind === 'markt' && w >= 24) {   // the stalls' awning: stripes of cream and the house colour along the top
+      const n = Math.max(4, Math.round(w / 6)), sw = w / n, ah = Math.min(h * 0.3, 13);
+      for (let q = 0; q < n; q++) { ctx.fillStyle = q % 2 ? 'rgba(250,244,226,0.96)' : rgba(hex(col), 0.92); ctx.fillRect(x + q * sw, y, sw, ah); }
+      ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(40,26,12,0.7)'; ctx.beginPath(); ctx.moveTo(x, y + ah); ctx.lineTo(x + w, y + ah); ctx.stroke();
+    }
     if (build < 1) {   // scaffolding: pale haze with diagonal stripes
       ctx.fillStyle = 'rgba(240,228,196,0.55)'; ctx.fillRect(x, y, w, h);
       ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip(); ctx.strokeStyle = 'rgba(92,62,32,0.5)'; ctx.lineWidth = 1.6; ctx.beginPath();
@@ -1044,15 +1224,15 @@
     }
     ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
     ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(40,26,12,0.92)'; ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
-    const rest = !!b.paused && build >= 1;   // a resting workplace: a cool wash, a dimmed icon and a 💤 badge
-    if (rest) { ctx.fillStyle = 'rgba(64,86,132,0.34)'; ctx.fillRect(x, y, w, h); }
-    if (m >= 13) {
+    const rest = (!!b.paused || !!b.full) && build >= 1;   // a resting workplace: a cool wash (blue = by order, orange = its store is full), a dimmed icon and a 💤 badge
+    if (rest) { ctx.fillStyle = b.paused ? 'rgba(64,86,132,0.34)' : 'rgba(190,112,30,0.3)'; ctx.fillRect(x, y, w, h); }
+    if (m >= 13 && b.kind !== 'torhaus') {
       ctx.save(); ctx.globalAlpha = build < 1 ? 0.55 : rest ? 0.45 : 1; ctx.font = clamp(m * 0.58, 10, 34) + 'px ' + EMOJI; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(B.icon, x + w / 2 + (isHof ? w * 0.12 : 0), y + h / 2 + (isHof ? h * 0.1 : 0) + 1); ctx.restore();
+      ctx.fillText(B.icon, x + w / 2 + (isHof ? w * 0.12 : 0), y + h / 2 + (isHof ? h * 0.1 : 0) + (b.kind === 'markt' ? h * 0.1 : 0) + 1); ctx.restore();
     }
     if (rest) {
       const br = clamp(m * 0.4, 9, 13), bx = x + w - br * 0.4, by = y + br * 0.4;
-      ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fillStyle = '#34456b'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff7e2'; ctx.stroke();
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fillStyle = b.paused ? '#34456b' : '#9a5a14'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = '#fff7e2'; ctx.stroke();
       ctx.save(); ctx.font = Math.round(br * 1.3) + 'px ' + EMOJI; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff'; ctx.fillText('💤', bx, by + 1); ctx.restore();
     }
     if (build < 1) {
@@ -1066,6 +1246,7 @@
       ctx.fillStyle = b.hp > 0.5 ? '#5cc24a' : b.hp > 0.25 ? '#e6b830' : '#d6382a'; ctx.fillRect(x + 3, y + h - 7, (w - 6) * clamp(b.hp, 0, 1), 4);
     }
     if (b.fire > 0) this.drawFlames(ctx, x, y, w, h, b.fire, now);
+    if (b.garrison > 0 && build >= 1) this.drawGarrison(ctx, b.garrison, b.kind === 'torhaus' ? x + w / 2 : x + w - 12, b.kind === 'torhaus' ? y - 8 : y + 3);   // the archers inside
   };
   // a ruin: a dull rubble plot (it still blocks the footprint); the dashed outline in the house colour says whose it is
   P.drawRuin = function (ctx, b, mine, x, y, w, h, col) {
@@ -1107,6 +1288,12 @@
     const x = p0.x + sh, y = p0.y;
     ctx.save();
     ctx.fillStyle = ok ? 'rgba(88,200,84,0.58)' : 'rgba(228,66,52,0.52)'; ctx.fillRect(x, y, w, h);
+    if (gh.kind === 'torhaus') {   // the lane between the towers, and chevrons at its two mouths: both must stay free
+      this.drawLane(ctx, gh.rot, x, y, s, 0.75);
+      ctx.fillStyle = ok ? 'rgba(20,112,42,0.9)' : 'rgba(160,28,20,0.9)';
+      const mouths = gh.rot ? [[x - s * 0.5, y + s * 1.5, -1, 0], [x + w + s * 0.5, y + s * 1.5, 1, 0]] : [[x + s * 1.5, y - s * 0.5, 0, -1], [x + s * 1.5, y + h + s * 0.5, 0, 1]], q = Math.max(3, s * 0.45);
+      for (const [mx, my, dx, dy] of mouths) { ctx.beginPath(); ctx.moveTo(mx + dx * q, my + dy * q); ctx.lineTo(mx - dy * q - dx * q * 0.2, my + dx * q - dy * q * 0.2); ctx.lineTo(mx + dy * q - dx * q * 0.2, my - dx * q - dy * q * 0.2); ctx.closePath(); ctx.fill(); }
+    }
     if (!ok) {   // the cells that break the rule
       ctx.fillStyle = 'rgba(190,24,16,0.34)';
       for (let dj = 0; dj < fp[1]; dj++) for (let di = 0; di < fp[0]; di++) {
@@ -1119,7 +1306,7 @@
     ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,250,235,0.95)'; ctx.strokeRect(x, y, w, h);
     ctx.setLineDash([7, 4]); ctx.lineDashOffset = this.still ? 0 : -((now / 60) % 11); ctx.lineWidth = 2.6; ctx.strokeStyle = ok ? '#14702a' : '#a01c14'; ctx.strokeRect(x, y, w, h); ctx.setLineDash([]); ctx.lineDashOffset = 0;
     const B = FW.BUILDINGS[gh.kind], m = Math.min(w, h);
-    ctx.font = clamp(m * 0.6, 11, 36) + 'px ' + EMOJI; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.globalAlpha = 0.95; ctx.fillText(B.icon, x + w / 2, y + h / 2 + 1); ctx.globalAlpha = 1;
+    if (gh.kind !== 'torhaus') { ctx.font = clamp(m * 0.6, 11, 36) + 'px ' + EMOJI; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.globalAlpha = 0.95; ctx.fillText(B.icon, x + w / 2, y + h / 2 + 1); ctx.globalAlpha = 1; }
     if (!ok && res.reason) {
       const rx = x + w - 3, ry = y + 3;
       ctx.fillStyle = '#fff7e2'; ctx.beginPath(); ctx.arc(rx, ry, 11, 0, TAU); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#a8221a'; ctx.stroke();
@@ -1129,6 +1316,42 @@
     if (!ok && res.reason) {
       const by = y - 17 > 14 ? y - 17 : y + h + 17;
       bubble(ctx, x + w / 2, by, REASON_TEXT[res.reason] || 'Geht nicht', '#b3261e', '#fff', 14, this.w);
+    }
+  };
+  // the wall line being drawn: every good piece in the wall's own look under a green wash, every refused run red with the reason, the start dot, the end ring and a bubble with the numbers
+  P.drawWallPlan = function (ctx, now) {
+    const wl = this.wall; if (!wl || !wl.a) return;
+    const s = this.cam.s, col = this.lordColor(this.me), dash = this.still ? 0 : -((now / 60) % 11);
+    ctx.save(); ctx.lineJoin = 'round';
+    let icons = 0;
+    for (const pc of wl.pieces) {
+      const p0 = this.toScreen(MX0 + pc.i, MY0 + pc.j), w = pc.w * s, h = pc.h * s;
+      if (p0.x > this.w + 8 || p0.y > this.h + 8 || p0.x + w < -8 || p0.y + h < -8) continue;
+      if (pc.ok) {
+        ctx.fillStyle = 'rgba(88,200,84,0.5)'; ctx.fillRect(p0.x, p0.y, w, h);
+        this.drawWallBody(ctx, wl.kind, p0.x, p0.y, w, h, col, 0.9);
+        ctx.setLineDash([6, 3]); ctx.lineDashOffset = dash; ctx.lineWidth = 2; ctx.strokeStyle = '#14702a'; ctx.strokeRect(p0.x, p0.y, w, h); ctx.setLineDash([]); ctx.lineDashOffset = 0;
+      } else {
+        ctx.fillStyle = 'rgba(228,66,52,0.6)'; ctx.fillRect(p0.x, p0.y, w, h);
+        ctx.save(); ctx.beginPath(); ctx.rect(p0.x, p0.y, w, h); ctx.clip(); ctx.strokeStyle = 'rgba(150,20,14,0.55)'; ctx.lineWidth = 1.4; ctx.beginPath();
+        for (let t = -h; t < w; t += 5) { ctx.moveTo(p0.x + t, p0.y + h); ctx.lineTo(p0.x + t + h, p0.y); }
+        ctx.stroke(); ctx.restore();
+        ctx.setLineDash([6, 3]); ctx.lineDashOffset = dash; ctx.lineWidth = 2; ctx.strokeStyle = '#a01c14'; ctx.strokeRect(p0.x, p0.y, w, h); ctx.setLineDash([]); ctx.lineDashOffset = 0;
+        if (icons < 6) { icons++; const cx = p0.x + w / 2, cy = p0.y + h / 2, r = clamp(s * 1.1, 8, 11); ctx.fillStyle = '#fff7e2'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#a8221a'; ctx.stroke();
+          ctx.font = Math.round(r * 1.15) + 'px ' + EMOJI; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#000'; ctx.fillText(REASON_ICON[pc.reason] || '❌', cx, cy + 1); }
+      }
+    }
+    const a = this.toScreen(MX0 + wl.a.i + 0.5, MY0 + wl.a.j + 0.5), b = this.toScreen(MX0 + wl.b.i + 0.5, MY0 + wl.b.j + 0.5), r0 = clamp(s * 0.75, 5, 9), r1 = clamp(s * 1.2, 9, 15);
+    ctx.beginPath(); ctx.arc(a.x, a.y, r0, 0, TAU); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 2.4; ctx.strokeStyle = '#fff7e2'; ctx.stroke(); ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(40,26,12,0.9)'; ctx.stroke();   // the start
+    ctx.beginPath(); ctx.arc(b.x, b.y, r1, 0, TAU); ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,250,235,0.95)'; ctx.stroke(); ctx.lineWidth = 2.4; ctx.strokeStyle = '#2b1d0e'; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(b.x - r1 * 0.5, b.y); ctx.lineTo(b.x + r1 * 0.5, b.y); ctx.moveTo(b.x, b.y - r1 * 0.5); ctx.lineTo(b.x, b.y + r1 * 0.5); ctx.lineWidth = 1.6; ctx.stroke();   // the end
+    ctx.restore();
+    const endBad = wl.pieces.length && !wl.pieces[wl.pieces.length - 1].ok, txt = endBad ? REASON_TEXT[wl.pieces[wl.pieces.length - 1].reason] || 'Geht nicht' : this.wallLabel;
+    if (txt) {   // the bubble: above the end, or beside it when the last leg comes in vertically (it must not cover the line)
+      const vert = wl.a.i !== wl.b.i && wl.a.j !== wl.b.j ? wl.axis === 0 : wl.a.i === wl.b.i, bw = bubbleW(ctx, txt, 13), left = b.x - r1 - 10 - bw / 2, right = b.x + r1 + 10 + bw / 2;
+      let bx = b.x, by = b.y - r1 - 16 > 14 ? b.y - r1 - 16 : b.y + r1 + 16;
+      if (vert) { by = b.y; bx = right + bw / 2 < this.w - 4 || left - bw / 2 < 4 ? right : left; }
+      bubble(ctx, bx, by, txt, endBad ? '#b3261e' : 'rgba(46,32,18,0.94)', endBad ? '#fff' : '#fff7e2', 13, this.w);
     }
   };
   P.drawPartners = function (ctx) {   // a green ring and a 🤝 on the castle of every pact partner
@@ -1149,7 +1372,7 @@
     if (this.selId == null) return;
     let b, fp, bx, by;   // the building, its footprint and its top-left corner in map units
     if (this.selId === 'keep') { const k = this.sites.find((q) => q.s === this.mySite()); if (!k) return; b = { lord: this.me }; fp = this.FW.BUILDINGS.bergfried.size; bx = k.x - fp[0] / 2; by = k.y - fp[1] / 2; }
-    else { b = this.board.buildings.find((q) => q.id === this.selId); if (!b || !this.FW.BUILDINGS[b.kind]) return; fp = this.FW.footprintOf(b.kind, b.rot | 0); bx = MX0 + b.i; by = MY0 + b.j; }
+    else { b = this.board.buildings.find((q) => q.id === this.selId); if (!b || !this.FW.BUILDINGS[b.kind]) return; fp = this.fpOf(b); bx = MX0 + b.i; by = MY0 + b.j; }
     const p0 = this.toScreen(bx, by), s = this.cam.s, w = fp[0] * s, h = fp[1] * s;
     const pulse = this.still ? 0.5 : 0.5 + 0.5 * Math.sin(now / 260);
     ctx.save(); ctx.lineJoin = 'round';
@@ -1292,7 +1515,7 @@
       this.updateMask(now); this.maskDirty = false; this.lastMaskStamp = now; this.dirty = true;
     }
     const fireOn = this.board.buildings.some((b) => b.fire > 0) || this.board.fires.length > 0;
-    if (!(this.dirty || busy || this.maskDirty || this.freeStale() || (!this.still && (fireOn || this.ghost || (this.drag && this.drag.type === 'banner'))))) return;
+    if (!(this.dirty || busy || this.maskDirty || this.freeStale() || (!this.still && (fireOn || this.ghost || (this.wall && this.wall.a) || (this.drag && this.drag.type === 'banner'))))) return;
     this.dirty = false;
     const ctx = this.ctx, dpr = this.dpr, W = this.w, H = this.h, staticBefore = this.perf.staticMs;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.globalAlpha = 1; ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
@@ -1312,7 +1535,7 @@
     if (!this.otherT && this.me >= 0) this.otherT = setTimeout(() => { this.otherT = 0; if (this.cv) { try { this.layer(this.viewName === 'mine' ? 'all' : 'mine'); } catch (e) { /* ignore */ } } }, 400);
     if (this.maskVisible) { const p = this.toScreen(MX0, MY0); ctx.drawImage(this.maskCv, p.x, p.y, 144 * s, 90 * s); }
     this.drawCrossingNames(ctx);
-    if (this.tool === 'ghost') { if (!this.fog) this.buildFog(); const p = this.toScreen(MX0, MY0); ctx.drawImage(this.fog, p.x, p.y, 144 * s, 90 * s); }
+    if (this.tool === 'ghost' || this.tool === 'wall') { if (!this.fog) this.buildFog(); const p = this.toScreen(MX0, MY0); ctx.drawImage(this.fog, p.x, p.y, 144 * s, 90 * s); }
     const blds = this.board.buildings, cov = this.cover ? this.coverage() : null;
     if (cov) this.drawCoverDiscs(ctx, cov, now);
     for (const b of blds) if (b.lord !== me) this.drawBuilding(ctx, b, false, now);
@@ -1356,13 +1579,14 @@
       }
     }
     if (d) {
-      const p = this.toScreen(d.x, d.y), hy = p.y - 12 * 1.7, txt = d.noRoute ? (this.L > 0.55 ? '🌊 Hochwasser' : '✖ Kein Weg') : d.snap ? '📍 ' + d.snap.name : '';
+      const p = this.toScreen(d.x, d.y), hy = p.y - 12 * 1.7, txt = d.noRoute ? (this.L > 0.55 ? '🌊 Hochwasser' : '✖ Kein Weg') : d.snap ? (d.snap.kind === 'garrison' ? '🏹 ' : '📍 ') + d.snap.name : '';
       if (txt) {
         const bw = bubbleW(ctx, txt, 14); let bx = p.x + 22 + bw / 2; if (bx + bw / 2 > W - 4) bx = p.x - 22 - bw / 2;
         bubble(ctx, bx, hy, txt, d.noRoute ? '#b3261e' : 'rgba(46,32,18,0.94)', d.noRoute ? '#fff' : '#fff7e2', 14, W);
       }
     }
     this.drawGhost(ctx, now);
+    this.drawWallPlan(ctx, now);
     this.drawPings(ctx, now);
     for (const c of this.callouts) { const p = this.toScreen(c.x, c.y); bubble(ctx, p.x, p.y - 20, c.text, 'rgba(46,32,18,0.92)', '#fff7e2', 13, W); }
     const dt = performance.now() - t0 - (this.perf.staticMs - staticBefore);

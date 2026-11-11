@@ -12,10 +12,20 @@
      ?until=kk|fehde|ebbe|lastminute|plunder|end  fast-forward until that happens (the Kampf-Kamera opens, a phase starts, a keep is plundered, the end screen), settle 2 s
      ?end=1 same as until=end
      ?blit=1 draw into the visible 2D canvas instead of the full-window wrapper (headless screenshots); ?w=1600&h=1000 its size (default 1600 x 1000)
-     ?bench=N after the fast-forward: average ms/frame of N frames, printed top-left   ?dbg=1 status line (blit)
+     ?bench=N after the fast-forward: average ms/frame of N frames, draw calls, triangles and the real time of sim.step() (printed top-left)   ?dbg=1 status line (blit)
      ?phones=0 stand-ins do nothing   ?watch=<id> prints every message that stand-in's phone would get
-     ?pause=1 every finished Steinbruch and Holzfäller rests (💤 sign over it), ?pause=hof the farms too (sim.pause if the sim has it, else the flag is set on the state)   ?cam=x,y,dist[,el] a close-up camera (world x, y; default elevation 50°)
+     ?pause=1 every finished Steinbruch and Holzfäller rests (💤 sign over it), ?pause=hof the farms too (sim.pause if the sim has it, else the flag is set on the state)   ?cam=x,y,dist[,el] a close-up camera (world x, y; default elevation 50°); Phase 2: ?cam=siege|gate|tower|back|fence[,dist,el,az] centres on house 1's weak wall piece / house 0's Torhaus, front-right tower, back palisade or palisade fence (walls=1), looking at their height
      ?plunder=<sim s> at that time house 1's keep is knocked down by house 0 (a real plunder: loot, protection dome, herald, Kampf-Kamera; they are rare in bot matches)   ?pact=<sim s> houses 0 and 1 conclude a pact then
+     Phase 2 (Mauern & Söldner), all set up through sim.dev before the first step (free of charge):
+     ?walls=1  every house gets a walled village: Wachtürme in the corners, a stone wall (palisade at the back), a Torhaus on the river side in line with the keep gate, a Markt, a Söldnerlager and
+               some gold; 12 archers (banner 3) take the Torhaus and the walls beside it, 6 (banner 2) the front tower: ?garrison=0 leaves them out
+     ?siege=1  house 0 sends a Rammbock, 6 spearmen and 3 archers (banner 1) at the weakest wall piece of house 1 (a 1-cell stone piece next to its Torhaus), as soon as the Fehde starts (the order
+               is "unreachable" while the valley is flooded); ?siege=<sim s> picks the time. A breach follows about 15 s later. Implies walls=1
+     ?burn=<sim s>  at that time house 1 lights the palisade fence east of house 0's ring (the fire spreads along it; with walls=1; the ring's own back palisade lies within the keep well's reach and is put out)
+     ?gate=<sim s>  at that time 6 spearmen of every house walk out through the Torhaus (the doors open)   ?riders=1  6 Reiterschützen per house ride along their banner (house 0's meet four spearmen of house 1: they shoot and back away)
+     ?bots=0  no bot acts (a still scene: the archers stay on the walls)   ?settle=N  frames drawn after the fast-forward (default 40)   ?then=ram|breach|gate  drawn frames until that event
+               happens once more after the fast-forward (the fast-forward itself draws nothing and sends no event to the view: use until=ram&then=breach for the rubble of the first breach)
+     ?until=ram|breach also: until the first blow of a Rammbock / the first wall piece that falls (a sim.step wrapper counts the events: window.__evN)
      firefox --headless --no-remote --profile /tmp/ffp --window-size=1600,1000 \
        --screenshot out.png "http://localhost:3985/dev-furtfehde.html?blit=1&freeze=1&sim=200000&seed=7" -->
 <style>
@@ -143,11 +153,114 @@
       }
       if (pactAt >= 0 && !pacted && st.t >= pactAt && st.lords.length > 2) { pacted = true; S.pact(0, 1, true); S.pact(1, 0, true); }
     });
+    // ---- Phase 2 demo scenery (?walls ?garrison ?siege ?gate ?riders ?bots) ----
+    const evN = window.__evN = {};            // sim events counted by a sim.step wrapper (until=ram|breach, the status line)
+    const S0 = game._debug().sim, realStep = S0.step, bench0 = { ms: 0, n: 0, on: false };
+    S0.step = function () { const t0 = bench0.on ? realNow() : 0, ev = realStep.call(S0); if (bench0.on) { bench0.ms += realNow() - t0; bench0.n++; } for (const e of ev) evN[e.t] = (evN[e.t] || 0) + 1; return ev; };
+    { const v = game._debug().view, og = v && v.onGate; if (v) v.onGate = (g) => { evN.gate = (evN.gate || 0) + 1; if (og) og(g); }; }
+    const burnS = P('burn', '') === '' ? -1 : (parseFloat(P('burn', '1')) || 1), siegeP = P('siege', ''), siegeS = siegeP === '' ? -1 : (parseFloat(siegeP) || 1), gateP = P('gate', ''), gateS = gateP === '' ? -1 : (parseFloat(gateP) || 1);
+    const WALLS_ON = P('walls', '0') === '1' || siegeS >= 0, GARRISON = P('garrison', '1') !== '0', RIDERS = P('riders', '0') === '1';
+    const demo = window.__demo = { fail: 0, village: {} };
+    {
+      const Wd = window.FurtWorld, GW = Wd.GW, SX = -72, SY = -45;
+      const place = (S, lord, kind, i, j, rot, len) => { const r = S.dev.place(lord, kind, i, j, rot, len); if (!r.ok) { demo.fail++; console.warn('demo: ' + kind + ' @' + i + ',' + j + ' ' + r.reason); } return r; };
+      // a straight run of `total` cells as wall pieces (lens: their lengths; default balanced pieces of at most 4)
+      const line = (S, lord, kind, i, j, rot, total, lens) => {
+        if (total <= 0) return [];
+        const n = Math.ceil(total / 4), base = Math.floor(total / n), extra = total % n, ls = lens || Array.from({ length: n }, (_, k) => base + (k < extra ? 1 : 0)), out = []; let at = 0;
+        for (const len of ls) { const r = place(S, lord, kind, rot ? i : i + at, rot ? j + at : j, rot, len); out.push(r.ok ? r.b : null); at += len; }
+        return out;
+      };
+      const freeNear = (S, x, y) => {       // the centre of the nearest free cell (no building) to a world point
+        for (let r = 0; r < 7; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const ci = Math.floor(x - SX + dx), cj = Math.floor(y - SY + dy);
+          if (ci >= 0 && cj >= 0 && ci < GW && S.occ[cj * GW + ci] === 0) return { x: ci + SX + 0.5, y: cj + SY + 0.5 };
+        }
+        return { x, y };
+      };
+      const village = (S, lord) => {
+        const L = S.state.lords[lord], site = S.world.sites[L.site], ki = site.keep.i, kj = site.keep.j, north = L.site < 2;
+        const X0 = ki - 9, X1 = ki + 14, Y0 = north ? kj - 5 : kj - 7, Y1 = north ? kj + 12 : kj + 10, front = north ? Y1 : Y0, back = north ? Y0 : Y1;
+        const v = demo.village[lord] = { lord, north, front, towers: [] };
+        for (const [ti, tj] of [[X0, Y0], [X1 - 1, Y0], [X0, Y1 - 1], [X1 - 1, Y1 - 1]]) { const r = place(S, lord, 'wachturm', ti, tj, 0); v.towers.push(r.ok ? r.b : null); }
+        v.back = line(S, lord, 'palisade', X0 + 2, back, 0, X1 - X0 - 3);                          // the back: a palisade (it burns)
+        line(S, lord, 'mauer', X0, Y0 + 2, 1, Y1 - Y0 - 3); line(S, lord, 'mauer', X1, Y0 + 2, 1, Y1 - Y0 - 3);   // the sides: stone
+        v.ti = ki + 2; v.tj = north ? front - 1 : front;                                           // the Torhaus (3 × 2): its lane is the keep gate's column
+        const g = place(S, lord, 'torhaus', v.ti, v.tj, 0); v.gate = g.ok ? g.b : null;
+        const left = line(S, lord, 'mauer', X0 + 2, front, 0, v.ti - X0 - 2, [4, 1, 1]); v.weak = left[left.length - 1];   // the weakest piece: 1 cell, next to the Torhaus
+        line(S, lord, 'mauer', v.ti + 3, front, 0, X1 - v.ti - 4);
+        v.fence = line(S, lord, 'palisade', X1 + 3, kj, 1, 8);                                      // a palisade fence beside the ring, out of the keep well's reach (burn=<s> lights it)
+        // the Söldnerlager (5 × 4) west and the Markt (4 × 3) east of the keep, inside the ring (a free spot nearby if the exact one is taken)
+        for (const [kind, ci] of [['soeldnerlager', ki - 7], ['markt', ki + 8]]) {
+          let r = S.dev.place(lord, kind, ci, kj + 1, 0);
+          if (!r.ok) { const sp = Wd.suggest(S.world, kind, L.site, { L: S.state.level, occ: S.occ }); r = sp ? S.dev.place(lord, kind, sp.i, sp.j, sp.rot) : r; }
+          if (!r.ok) demo.fail++; else v[kind] = r.b;
+        }
+        S.dev.stock(lord, { gold: 30 + 10 * lord, korn: 60, holz: 60, stein: 30 });
+        v.tower = v.towers[north ? 3 : 1];                                                          // the front-right tower
+      };
+      const garrison = (S, lord) => {
+        const v = demo.village[lord], inside = v.north ? -1 : 1;
+        if (v.gate) {
+          const cx = SX + v.ti + 1.5, cy = SY + v.tj + 1;
+          for (let k = 0; k < 12; k++) { const p = freeNear(S, cx + ((k % 6) - 2.5) * 0.9, cy + inside * (3.4 + Math.floor(k / 6) * 0.9)); S.dev.spawn(lord, 'bogen', p.x, p.y, 3); }
+          S.banner(lord, 3, cx, cy);
+        }
+        if (v.tower) {
+          const cx = SX + v.tower.i + 1, cy = SY + v.tower.j + 1;
+          for (let k = 0; k < 6; k++) { const p = freeNear(S, cx + ((k % 3) - 1) * 0.9, cy + inside * (3.4 + Math.floor(k / 3) * 0.9)); S.dev.spawn(lord, 'bogen', p.x, p.y, 2); }
+          S.banner(lord, 2, cx, cy);
+        }
+      };
+      const startSiege = (S) => {
+        const A = 0, T = S.state.lords.length > 1 ? 1 : -1, v = demo.village[T];
+        if (T < 0 || !v || !v.weak) { console.warn('siege: no walled target'); return; }
+        const tx = SX + v.weak.i + 0.5, ty = SY + v.weak.j + 0.5, out = v.north ? 1 : -1, sy = ty + out * 8;
+        S.dev.spawn(A, 'ramme', tx, sy, 1);
+        for (let k = 0; k < 6; k++) { const p = freeNear(S, tx + (k - 2.5) * 1.1, sy + out * (2 + (k % 2))); S.dev.spawn(A, 'speer', p.x, p.y, 1); }
+        for (let k = 0; k < 3; k++) { const p = freeNear(S, tx + (k - 1) * 1.2, sy + out * 4.5); S.dev.spawn(A, 'bogen', p.x, p.y, 1); }
+        const r = S.banner(A, 1, tx, ty);
+        console.log('siege: house 0 → the wall piece of house 1 at ' + v.weak.i + ',' + v.weak.j + ' → ' + JSON.stringify(r));
+      };
+      const walkOut = (S) => {        // gate=<s>: six spearmen of every house march out through its Torhaus
+        for (const lord of Object.keys(demo.village)) {
+          const v = demo.village[lord]; if (!v.gate) continue;
+          const cx = SX + v.ti + 1.5, out = v.north ? 1 : -1, y0 = SY + v.tj + 1 - out * 5;
+          for (let k = 0; k < 6; k++) { const p = freeNear(S, cx + (k % 3 - 1) * 0.9, y0 - out * Math.floor(k / 3) * 1.0); S.dev.spawn(+lord, 'speer', p.x, p.y, 1); }
+          S.banner(+lord, 1, cx, SY + v.tj + 1 + out * 9);
+        }
+      };
+      const riders = (S) => {         // riders=1: six horse archers per house on banner 1; the riders of house 0 gallop towards house 1's guard (to see them shoot)
+        for (const L of S.state.lords) {
+          const site = S.world.sites[L.site], out = L.site < 2 ? 1 : -1;
+          for (let k = 0; k < 6; k++) { const p = freeNear(S, site.x + 0.5 + (k % 3 - 1) * 1.4, site.y + out * (6 + Math.floor(k / 3) * 1.5)); S.dev.spawn(L.i, 'reiterschuetze', p.x, p.y, 1); }
+          S.banner(L.i, 1, site.x + 0.5 + 8, site.y + out * 12);
+        }
+        if (S.state.lords.length > 1) {   // four spearmen of house 1 stand where house 0's riders arrive: the riders shoot and back away from them
+          const site = S.world.sites[S.state.lords[0].site], out = S.state.lords[0].site < 2 ? 1 : -1;
+          for (let k = 0; k < 4; k++) { const p = freeNear(S, site.x + 0.5 + 12 + (k % 2) * 1.2, site.y + out * (14 + Math.floor(k / 2) * 1.2)); S.dev.spawn(1, 'speer', p.x, p.y, 1); }
+        }
+      };
+      if (WALLS_ON) { for (const L of S0.state.lords) village(S0, L.i); if (GARRISON) for (const L of S0.state.lords) garrison(S0, L.i); }
+      if (RIDERS) riders(S0);
+      if (P('bots', '1') === '0') { const b = game._debug().bots; for (const k of Object.keys(b)) delete b[k]; }
+      let sieged = false, walked = false, burned = false;
+      pre.push(() => {
+        const st = S0.state;
+        if (burnS >= 0 && !burned && st.t >= burnS) {   // burn=<s>: a torch hits house 0's back palisade; the fire spreads along it
+          burned = true; const v = demo.village[0], b = v && ((v.fence && v.fence[0]) || (v.back && v.back[Math.floor(v.back.length / 2)]));
+          if (b) S0.dev.fire(b, 0.6, 1); else console.warn('burn: no palisade');
+        }
+        if (siegeS >= 0 && !sieged && (siegeP === '1' ? st.phase === 'fehde' : st.t >= siegeS)) { sieged = true; startSiege(S0); }
+        if (gateS >= 0 && !walked && st.t >= gateS) { walked = true; walkOut(S0); }
+      });
+    }
     game._hook('pre', () => { for (const f of pre) f(); });
 
     const status = () => {
       const d = game._debug(), st = d.sim && d.sim.state; if (!st) return '';
-      return 't=' + st.t.toFixed(0) + 's ' + st.phase + ' L=' + st.level.toFixed(2) + ' fight=' + d.fighters + ' kk=' + (d.kk.on ? d.kk.label : '–') + ' units=' + st.units.length + ' ruhm=' + st.lords.map((l) => l.ruhm).join('/') + ' ' + d.view.W + 'x' + d.view.H;
+      return 't=' + st.t.toFixed(0) + 's ' + st.phase + ' L=' + st.level.toFixed(2) + ' fight=' + d.fighters + ' kk=' + (d.kk.on ? d.kk.label : '–') + ' units=' + st.units.length + ' ruhm=' + st.lords.map((l) => l.ruhm).join('/') + (evN.ram || evN.breach ? ' ram=' + (evN.ram | 0) + ' breach=' + (evN.breach | 0) : '') + (() => { const r = st.units.find((u) => u.kind === 'ramme'), w = demo.village[1] && demo.village[1].weak; return (r ? ' ram@' + r.x.toFixed(1) + ',' + r.y.toFixed(1) + ' ' + r.anim : '') + (w ? ' weak@' + w.i + ',' + w.j + (w.ruined ? ' ruined' : '') : '') + (() => { const g0 = demo.village[0] && demo.village[0].gate, sp = st.units.find((u) => u.kind === 'speer'); return (g0 ? ' gate0@' + g0.i + ',' + g0.j + '=' + (g0.i - 72 + 1.5).toFixed(1) + ',' + (g0.j - 45 + 1).toFixed(1) : '') + (sp ? ' speer@' + sp.x.toFixed(1) + ',' + sp.y.toFixed(1) : ''); })() + (() => { const rd = st.units.filter((u) => u.kind === 'reiterschuetze'); return rd.length ? ' riders=' + rd.length + '@' + rd[0].x.toFixed(1) + ',' + rd[0].y.toFixed(1) + ' ' + rd[0].anim : ''; })(); })() + ' ' + d.view.W + 'x' + d.view.H;
     };
     const step = (dtMs) => {
       fake += dtMs || 16.7;
@@ -163,6 +276,8 @@
         case 'lastminute': return st.phase === 'fehde' && st.endsAt - st.t <= 60;
         case 'plunder': return st.lords.some((l) => l.prot > 0);
         case 'end': return d.phase === 'end';
+        case 'ram': return (evN.ram | 0) >= 1;
+        case 'breach': return (evN.breach | 0) >= 1;
         default: return false;
       }
     };
@@ -177,17 +292,35 @@
       }
       game._fast(false);
       if (until === 'plunder') for (let i = 0; i < 900 && !reached(); i++) step();
-      for (let i = 0; i < 40; i++) step();               // let weather, camera and the HUD settle on the target state
-      if (P('cam', '')) { const c = P('cam', '').split(',').map(Number); game._debug().view.debugCam({ x: c[0], y: c[1], dist: c[2] || 40, el: c[3] || 50, az: 0 }); for (let i = 0; i < 20; i++) step(); }
+      if (P('then', '')) { const ev0 = evN[P('then', '')] | 0; for (let i = 0; i < 6000 && (evN[P('then', '')] | 0) <= ev0; i++) step(); }   // then=ram|breach|gate: drawn frames (fx, shake, doors) until that event happens once more
+      for (let i = 0, n = parseInt(P('settle', '40'), 10) || 40; i < n; i++) step();               // let weather, camera and the HUD settle on the target state
+      if (P('cam', '')) {
+        // cam=siege|gate|tower|back|fence[,dist,el,az]: centred on house 1's weak wall piece / house 0's Torhaus / its front-right tower / the middle of its back palisade (walls=1)
+        const parts = P('cam', '').split(','), V0 = demo.village[0], V1 = demo.village[1], back = V0 && V0.back && V0.back[Math.floor(V0.back.length / 2)];
+        const named = { siege: V1 && V1.weak && [V1.weak.i - 72 + 0.5, V1.weak.j - 45 + 0.5], gate: V0 && V0.gate && [V0.gate.i - 72 + 1.5, V0.gate.j - 45 + 1],
+          tower: V0 && V0.tower && [V0.tower.i - 72 + 1, V0.tower.j - 45 + 1], back: back && [back.i - 72 + back.len / 2, back.j - 45 + 0.5],
+          fence: V0 && V0.fence && V0.fence[0] && [V0.fence[0].i - 72 + 0.5, V0.fence[0].j - 45 + 2] };
+        const liftBy = { tower: 4.5, gate: 2, siege: 1, fence: 1 };   // the camera looks at the top of a tower, the arch of a gate ...
+        const onTarget = Object.prototype.hasOwnProperty.call(named, parts[0]);
+        let c = parts.map(Number);
+        if (onTarget) {
+          const p = named[parts[0]];
+          c = p ? [p[0], p[1], parts[1] ? +parts[1] : 24, parts[2] ? +parts[2] : 42, parts[3] ? +parts[3] : 0] : [0, 0, 60, 50, 0];
+        }
+        const vw = game._debug().view;
+        vw.debugCam({ x: c[0], y: c[1], h: vw.land ? vw.land.heightAt(c[0], c[1]) + (onTarget ? liftBy[parts[0]] || 0 : 0) : 0.3, dist: c[2] || 40, el: c[3] || 50, az: c[4] || 0 }); for (let i = 0; i < 20; i++) step();   // (the camera looks at the ground height there)
+      }
       if (until === 'end') for (let i = 0; i < 120; i++) step();
       if (until === 'kk' || until === 'plunder') for (let i = 0; i < 60; i++) step();
       if (capped) console.warn('until=' + until + ' not reached in an hour of game time');
       if (bench > 0) {
+        bench0.on = true; bench0.ms = 0; bench0.n = 0;
         const t0 = realNow();
         for (let i = 0; i < bench; i++) step();
+        bench0.on = false;
         const ms = (realNow() - t0) / bench, v = game._debug().view;
         const el = document.getElementById('bench'); el.style.display = 'block';
-        el.textContent = 'bench ' + bench + ' frames: ' + ms.toFixed(1) + ' ms/frame  calls ' + (v && v.drawCalls) + '  tris ' + (v && Math.round(v.triangles / 1000)) + 'k  ' + (v && v.W) + 'x' + (v && v.H);
+        el.textContent = 'bench ' + bench + ' frames: ' + ms.toFixed(1) + ' ms/frame  calls ' + (v && v.drawCalls) + '  tris ' + (v && Math.round(v.triangles / 1000)) + 'k  ' + (v && v.W) + 'x' + (v && v.H) + '  sim.step ' + (bench0.n ? (bench0.ms / bench0.n).toFixed(2) : '–') + ' ms (x' + bench0.n + ')  buildings ' + game._debug().sim.state.buildings.length + ' units ' + game._debug().sim.state.units.length;
         document.title = 'BENCH ' + ms.toFixed(1);
         console.log(el.textContent);
       }

@@ -7,8 +7,12 @@
      ?only=all|buildings|sites|ruins|burnt|keep|<kind>|units|carry|column|banners|trees|rocks|deco|bridges|ruin|props
         <kind> = huette hof kornspeicher lager holzfaeller steinbruch kaserne wachturm brunnen (construction stages, damage, burnt,
         ruined; hof also growth stages). units = 5 kinds x 4 animations in 4 lord colours.
+     Phase 2: palisade mauer torhaus markt soeldnerlager (states, 2 lord colours) | walls (len 1-4 x rot 0/1) | joins (pieces edge to edge, an L) | buildings2 sites2 ruins2 burnt2
+        | yard (the demo yard: L-shaped Mauer, Torhaus with opening doors, 2 Wachtuerme, palisade, bogen on every slot, a column marching through the gate)
+        | units2 (Reiterschuetze idle/gallop/shoot, Rammbock idle/roll/swing) | scale (the new units next to the old ones)
      ?cell=<index> (show only that model of the section, large)  ?pick=<i,j,k> (several, large)   ?shadow=1   ?quality=low   ?spin=0   ?t=<seconds> (freezes the clock at t; add &anim=1 to keep it running)   ?night=1
      ?el=<elevation deg>  ?zoom=<factor>  ?fov=<deg>  ?team=<0..3 colour index of the first cell>
+     ?look=x,y,z (camera target in the cell's own frame)  ?yaw=<deg> (fixed turntable angle with spin=0)  ?open=<0..1> (fixes the Torhaus doors)  ?len=<1..4> (wall length of the kind sections)
      firefox --headless --no-remote --profile /tmp/ffp --window-size=1600,1000 --screenshot out.png \
        "http://localhost:3982/dev-furtfehde-art.html?only=huette&t=2" -->
 <style>
@@ -46,7 +50,9 @@ try {
   const S = {
     only: q.get('only') || 'all', quality: q.get('quality') === 'low' ? 'low' : 'high', spin: q.get('spin') !== '0',
     t0: parseFloat(q.get('t') || '0'), frozen: q.has('t') && q.get('anim') !== '1', night: q.get('night') === '1',
-    shadow: q.get('shadow') === '1', el: parseFloat(q.get('el') || '38'), zoom: parseFloat(q.get('zoom') || '1'), fov: parseFloat(q.get('fov') || '30'), team: parseInt(q.get('team') || '0', 10) || 0
+    shadow: q.get('shadow') === '1', el: parseFloat(q.get('el') || '38'), zoom: parseFloat(q.get('zoom') || '1'), fov: parseFloat(q.get('fov') || '30'), team: parseInt(q.get('team') || '0', 10) || 0,
+    yaw: q.has('yaw') ? parseFloat(q.get('yaw')) * Math.PI / 180 : 0.5, look: q.has('look') ? q.get('look').split(',').map(Number) : null,
+    open: q.has('open') ? parseFloat(q.get('open')) : null, len: Math.max(1, Math.min(4, parseInt(q.get('len') || '4', 10) || 4))
   };
   const Q = S.quality;
   const TEAM = ['#ff2d55', '#0a84ff', '#30d158', '#ffd60a'], teamHex = (i) => parseInt(TEAM[((i % 4) + 4) % 4].slice(1), 16);
@@ -64,14 +70,24 @@ try {
   const ground = (R, y, mat) => { const m = new T.Mesh(new T.CircleGeometry(R, 40), mat || groundMat); m.rotation.x = -Math.PI / 2; m.position.y = y == null ? -0.02 : y; m.receiveShadow = true; return m; };
 
   // ---------- cell factories: () => { group, fit: [boundingRadius, centreY], update(t), stats?() } ----------
-  const FIT = { huette: [2.0, 1.2], hof: [3.4, 0.9], kornspeicher: [2.5, 1.6], lager: [2.3, 0.7], holzfaeller: [2.3, 1.0], steinbruch: [2.6, 1.2], kaserne: [3.0, 1.5], wachturm: [3.9, 3.4], brunnen: [1.5, 0.9], keep: [7.4, 5.4] };
+  const FIT = { huette: [2.0, 1.2], hof: [3.4, 0.9], kornspeicher: [2.5, 1.6], lager: [2.3, 0.7], holzfaeller: [2.3, 1.0], steinbruch: [2.6, 1.2], kaserne: [3.0, 1.5], wachturm: [3.9, 3.4], brunnen: [1.5, 0.9], keep: [7.4, 5.4],
+    palisade: [2.9, 1.2], mauer: [3.0, 1.7], torhaus: [3.6, 2.4], markt: [3.3, 1.2], soeldnerlager: [4.0, 1.1] };
+  const fitOf = (kind, len) => { const f = FIT[kind]; return (kind === 'palisade' || kind === 'mauer') && len ? [Math.max(kind === 'mauer' ? 2.5 : 2.1, 0.62 * len + 0.55) * (kind === 'mauer' ? 1.15 : 1), f[1]] : f; };
   const KINDS = ['huette', 'hof', 'kornspeicher', 'lager', 'holzfaeller', 'steinbruch', 'kaserne', 'wachturm', 'brunnen'];
   const cellB = (kind, label, color, o) => ({ name: label, mk: () => {
     o = o || {};
-    const b = A.building(T, kind, { color, quality: Q, rot: o.rot || 0 });
+    const b = A.building(T, kind, { color, quality: Q, rot: o.rot || 0, len: o.len });
     b.setBuild(o.build == null ? 1 : o.build); b.setDamage(o.hp == null ? 1 : o.hp); b.setBurnt(o.burnt || 0); b.setRuined(!!o.ruined); b.setGrowth(o.growth == null ? 1 : o.growth);
-    const g = new T.Group(); g.add(b.group); g.add(ground(FIT[kind][0] * 1.05));
-    return { group: g, stat: b.group, fit: FIT[kind], update: (t) => b.animate(t, { working: o.working !== false, night: S.night ? 1 : 0 }) };
+    const fit = fitOf(kind, o.len), g = new T.Group(); g.add(b.group); g.add(ground(fit[0] * 1.05));
+    // slots: a bogen on every archer anchor (o.archers); open: fixed leaf position or (o.openAnim) doors that open and close
+    b.group.updateMatrix();
+    if (o.archers && b.anchors.slots) {
+      const slotKit = kit.create('bogen', b.anchors.slots.length);
+      b.anchors.slots.forEach((sl, i) => { const v = new T.Vector3(sl.x, sl.y, sl.z).applyMatrix4(b.group.matrix); slotKit.set(i, v.x, v.y, v.z, -PI_2, i % 2 ? 0 : 2, i * 0.37, teamHex(i + 1 + S.team), 0); });
+      slotKit.count(b.anchors.slots.length); slotKit.commit(); g.add(slotKit.mesh);
+    }
+    const open = (t) => (S.open != null ? S.open : o.openAnim ? 0.5 - 0.5 * Math.cos(t * 1.0) : o.open || 0);
+    return { group: g, stat: b.group, fit, update: (t) => { b.animate(t, { working: o.working !== false, night: S.night ? 1 : 0 }); b.setOpen(open(t)); } };
   } });
   const cellK = (label, color, emblem, o) => ({ name: label, mk: () => {
     o = o || {};
@@ -80,7 +96,8 @@ try {
     const g = new T.Group(); g.add(k.group); g.add(ground(FIT.keep[0] * 0.78));
     return { group: g, stat: k.group, fit: FIT.keep, update: () => {} };
   } });
-  const SPACING = { ritter: 2.5, bauer: 1.05, speer: 1.1, bogen: 1.1, fackel: 1.1 };
+  const PI_2 = Math.PI / 2;
+  const SPACING = { ritter: 2.5, bauer: 1.05, speer: 1.1, bogen: 1.1, fackel: 1.1, reiterschuetze: 2.3, ramme: 3.6 };
   const ANIMS = ['idle', 'walk', 'fight', 'work'];
   const cellU = (kind, anim, label, o) => ({ name: label || `${kind} ${ANIMS[anim]}`, mk: () => {
     o = o || {};
@@ -89,7 +106,7 @@ try {
     u.count(n); u.commit();
     u.mesh.castShadow = S.shadow;
     const g = new T.Group(); g.add(u.mesh); g.add(ground(sp * n * 0.62));
-    return { group: g, fit: [sp * n * 0.58 + 0.6, kind === 'ritter' ? 0.8 : 0.4], update: () => {}, stats: () => { u.count(1); const s = A.stats(u.mesh); u.count(n); return s; } };
+    return { group: g, fit: [sp * n * 0.58 + 0.6, kind === 'ritter' || kind === 'reiterschuetze' ? 0.8 : kind === 'ramme' ? 0.7 : 0.4], update: () => {}, stats: () => { u.count(1); const s = A.stats(u.mesh); u.count(n); return s; } };
   } });
   const cellMix = (anim, label) => ({ name: label, mk: () => {
     const g = new T.Group(), ms = [];
@@ -175,8 +192,109 @@ try {
     cells.push(cellB(k, `${k} rot 1 (90 Grad)`, c(0), { rot: 1 }), cellB(k, `${k} arbeitet`, c(1), { working: true }));
     return cells;
   };
+  // ---------- Phase 2: unit cells and the demo yard ----------
+  // new units side by side with the old ones (scale check)
+  const cellMix2 = (label, anim) => ({ name: label, mk: () => {
+    const g = new T.Group(), ms = [], xs = { speer: -6.4, bogen: -5.3, bauer: -4.2, fackel: -3.1, ritter: -1.4, reiterschuetze: 1.2, ramme: 5.0 };
+    Object.keys(xs).forEach((k, i) => { const u = kit.create(k, 1); u.set(0, xs[k], 0, 0, 0, k === 'bauer' ? (anim === 2 ? 2 : anim) : anim, i * 0.31, teamHex(i + S.team), 0); u.count(1); u.commit(); g.add(u.mesh); ms.push(u); });
+    g.add(ground(7.2));
+    return { group: g, fit: [6.6, 0.9], update: () => {}, stats: () => ({ tris: ms.reduce((a, u) => a + A.stats(u.mesh).tris, 0), calls: ms.length }) };
+  } });
+  const FP = { palisade: (rot, len) => (rot ? [1, len] : [len, 1]), mauer: (rot, len) => (rot ? [1, len] : [len, 1]), torhaus: (rot) => (rot ? [2, 3] : [3, 2]), wachturm: () => [2, 2] };
+  // the demo yard: placed like the renderer does it (group at the footprint's centre, rotation.y = -rot * 90 deg). Cells (i = x, j = z):
+  // Torhaus 3x2 at (0,0); walls of 4 cells left and right of it in row j = 1 (flush with the gate's front); a Wachturm at the left end and
+  // one in the north-east; the right wall turns north as an L (corner cell owned by the horizontal piece); an L of palisades on the west.
+  // wall pieces placed edge to edge like the renderer does: a straight run of mixed lengths and an L (the corner cell belongs to the horizontal piece)
+  const cellJoins = (kind, label, color) => ({ name: label, mk: () => {
+    const g = new T.Group(), art = new T.Group(); g.add(art);
+    const put = (i, j, rot, len) => { const b = A.building(T, kind, { color, quality: Q, rot, len }), fp = FP[kind](rot, len); b.group.position.set(i + fp[0] / 2, 0, j + fp[1] / 2); art.add(b.group); return b; };
+    const objs = [put(-5, 0, 0, 2), put(-3, 0, 0, 1), put(-2, 0, 0, 3), put(1, 0, 0, 4), put(4, 1, 1, 3), put(-5, 1, 1, 2)];
+    art.position.set(-0.5, 0, -0.5);
+    g.add(ground(7.4));
+    return { group: g, stat: art, fit: [kind === 'mauer' ? 7.4 : 6.8, 1.2], update: (t) => objs.forEach((b) => b.animate(t, {})) };
+  } });
+  const cellYard = (label, color) => ({ name: label, mk: () => {
+    const g = new T.Group(), art = new T.Group(), yard = new T.Group(), objs = [], OX = -0.5, OZ = 1.5, rs = [];
+    yard.position.set(OX, 0, OZ); art.add(yard); g.add(art);
+    const put = (kind, i, j, rot, len) => {
+      const b = A.building(T, kind, { color, quality: Q, rot, len }), fp = FP[kind](rot, len);
+      b.group.position.set(i + fp[0] / 2, 0, j + fp[1] / 2); yard.add(b.group); objs.push(b); return b;
+    };
+    const gate = put('torhaus', 0, 0, 0);
+    put('mauer', -4, 1, 0, 4); put('wachturm', -6, 0, 0);
+    put('mauer', 3, 1, 0, 4); put('mauer', 6, -3, 1, 4); put('wachturm', 5, -5, 0);
+    put('palisade', -6, -4, 1, 4); put('palisade', -5, -4, 0, 4);
+    // ground and a road through the gate
+    const roadMat = new T.MeshLambertMaterial({ color: '#b89a68' });
+    const road = new T.Mesh(new T.PlaneGeometry(1.5, 16), roadMat); road.rotation.x = -Math.PI / 2; road.position.set(1.5 + OX, -0.005, 4 + OZ); g.add(road);
+    g.add(ground(11, -0.02));
+    // a bogen on every slot anchor, looking away from the yard's middle
+    g.updateMatrixWorld(true);
+    const slots = []; objs.forEach((b) => { if (b.anchors.slots) b.anchors.slots.forEach((sl, i) => { const v = new T.Vector3(sl.x, sl.y, sl.z).applyMatrix4(b.group.matrix).applyMatrix4(yard.matrix); slots.push([v, b.kind, i]); }); });
+    const arch = kit.create('bogen', slots.length), cx0 = 0.5 + OX, cz0 = -1.5 + OZ;
+    slots.forEach(([v, kind, i], n) => { const heading = Math.atan2(v.z - cz0, v.x - cx0); arch.set(n, v.x, v.y, v.z, -heading, n % 3 === 1 ? 0 : 2, n * 0.173, teamHex(1 + S.team + (kind === 'wachturm' ? 1 : 0)), 0); });
+    arch.count(slots.length); arch.commit(); art.add(arch.mesh);
+    // a column marching north through the gate: the leaves open as it comes close
+    const col = kit.create('speer', 5); art.add(col.mesh);
+    // two Reiterschuetzen circle in front of the walls (one gallops, one shoots on the move), a ram batters the left wall
+    const rid = kit.create('reiterschuetze', 2), ram = kit.create('ramme', 1); art.add(rid.mesh, ram.mesh);
+    ram.set(0, -2.0 + OX, 0, 4.0 + OZ, Math.PI / 2, 2, 0.1, teamHex(S.team + 3), 0); ram.count(1); ram.commit();
+    // some trees and a few rocks round the edge (not part of the art stats)
+    const scatter = (geo, mat, pts) => { const im = new T.InstancedMesh(geo, mat, pts.length), m = new T.Matrix4(); pts.forEach((p, i) => { m.compose(new T.Vector3(p[0], 0, p[1]), new T.Quaternion().setFromEuler(new T.Euler(0, i * 2.3, 0)), new T.Vector3(p[2], p[2], p[2])); im.setMatrixAt(i, m); }); g.add(im); };
+    { const tl = A.tree(T, 'laub', { quality: Q }), tn = A.tree(T, 'nadel', { quality: Q }), rk = A.rock(T, { variant: 1, quality: Q });
+      scatter(tl.geometry, tl.material, [[-9.6, 2.2, 1.1], [-10.2, 6.4, 0.9], [9.4, 3.0, 1.2], [8.6, 7.0, 0.95], [-8.6, 9.2, 0.8]]);
+      scatter(tn.geometry, tn.material, [[-9.8, -2.4, 1.2], [-7.6, -6.2, 1.0], [9.8, -3.2, 1.15], [7.4, -6.6, 1.05], [0.0, -8.0, 1.2], [-3.5, -8.4, 0.9], [4.0, -8.2, 1.0]]);
+      scatter(rk.geometry, rk.material, [[-6.0, 5.2, 0.7], [6.8, 4.6, 0.6], [-4.4, -6.6, 0.8]]); }
+    return {
+      group: g, stat: art, fit: [8.6, 1.4],
+      update: (t) => {
+        let dmin = 99;
+        for (let k = 0; k < 5; k++) { const z = 8.5 - ((t * 0.9 + k * 1.25) % 15.5) , d = Math.abs(z - 1.0); dmin = Math.min(dmin, d); col.set(k, 1.5 + OX, 0, z + OZ, Math.PI / 2, 1, k * 0.37, teamHex(S.team + 2), 0); }
+        col.count(5); col.commit();
+        for (let k = 0; k < 2; k++) {                      // an ellipse in front of the wall; heading follows the path
+          const th = t * 0.45 + k * 2.6, a = 3.4, bz = 1.4, x = 3.8 + a * Math.cos(th), z = 6.9 + bz * Math.sin(th), hd = Math.atan2(bz * Math.cos(th), -a * Math.sin(th));
+          rid.set(k, x + OX, 0, z + OZ, -hd, k ? 2 : 1, k * 0.37, teamHex(S.team + 1 + k), 0);
+        }
+        rid.count(2); rid.commit();
+        gate.setOpen(S.open != null ? S.open : 1 - Math.min(1, Math.max(0, (dmin - 1.3) / 2.2)));
+        objs.forEach((b) => b.animate(t, { night: S.night ? 1 : 0 }));
+      }
+    };
+  } });
+  const cellUnits2 = (kind, anim, label, n) => cellU(kind, anim, label, { n: n || 2 });
+  Object.assign(SECTIONS, {
+    yard: () => [cellYard('Demo-Hof', TEAM[0])],
+    units2: () => [
+      cellUnits2('reiterschuetze', 0, 'Reiterschuetze idle'), cellUnits2('reiterschuetze', 1, 'Reiterschuetze galoppiert'), cellUnits2('reiterschuetze', 2, 'Reiterschuetze schiesst'),
+      cellUnits2('ramme', 0, 'Ramme idle'), cellUnits2('ramme', 1, 'Ramme rollt'), cellUnits2('ramme', 2, 'Ramme schwingt')
+    ]
+  });
+  // ---------- Phase 2 sections ----------
+  const KINDS2 = ['palisade', 'mauer', 'torhaus', 'markt', 'soeldnerlager'], WALLK = { palisade: 1, mauer: 1 };
+  const L2 = (k) => (WALLK[k] ? S.len : undefined);                       // wall pieces show ?len= (default 4)
+  const WOOD2 = { palisade: 1, markt: 1, soeldnerlager: 1 };
+  Object.assign(SECTIONS, {
+    buildings2: () => KINDS2.map((k, i) => cellB(k, WALLK[k] ? `${k} len ${S.len}` : k, tc(i), { len: L2(k), archers: !!{ mauer: 1, torhaus: 1 }[k] })),
+    sites2: () => KINDS2.map((k, i) => cellB(k, `${k} Bau 0.6`, tc(i), { build: 0.6, working: false, len: L2(k) })),
+    ruins2: () => KINDS2.map((k, i) => cellB(k, `${k} Ruine`, tc(i), { ruined: true, len: L2(k) })),
+    burnt2: () => KINDS2.map((k, i) => cellB(k, `${k} verbrannt 0.7`, tc(i), { burnt: 0.7, len: L2(k) })),
+    // wall pieces of length 1..4, rotation 0 and 1 (rot 1 runs along +z)
+    walls: () => ['palisade', 'mauer'].flatMap((k, ki) => [0, 1].flatMap((rot) => [1, 2, 3, 4].map((len) => cellB(k, `${k} len ${len} rot ${rot}`, tc(len + ki * 2 + rot), { len, rot, archers: k === 'mauer' })))),
+    joins: () => [cellJoins('palisade', 'palisade: 2+1+3+4 und L', tc(0)), cellJoins('mauer', 'mauer: 2+1+3+4 und L', tc(1))],
+    scale: () => [cellMix2('Reiterschuetze, Ritter, Speer, Bogen, Ramme', 1), cellMix2('idle', 0), cellMix2('kaempfen / schiessen / schwingen', 2)]
+  });
+  for (const k of KINDS2) SECTIONS[k] = () => {
+    const c = (i) => tc(i), cells = [], len = L2(k);
+    [0, 0.25, 0.5, 0.75, 1].forEach((b, i) => cells.push(cellB(k, `${k} Bau ${b}`, c(i), { build: b, working: false, len })));
+    cells.push(cellB(k, `${k} Schaden hp 0.4`, c(1), { hp: 0.4, len }), cellB(k, `${k} verbrannt 0.7`, c(2), { burnt: 0.7, len }), cellB(k, `${k} Ruine`, c(3), { ruined: true, len }));
+    cells.push(cellB(k, `${k} rot 1 (90 Grad)`, c(0), { rot: 1, len, archers: true }), cellB(k, `${k} 2. Farbe`, c(1), { len, archers: true }));
+    if (k === 'torhaus') [0, 0.5, 1].forEach((o, i) => cells.push(cellB(k, `torhaus Tore ${o === 0 ? 'zu' : o === 1 ? 'offen' : 'halb'}`, c(i + 2), { open: o, archers: i === 1 })), cells.push(cellB(k, 'torhaus Tore auf/zu', c(1), { openAnim: true, archers: true })));
+    if (WALLK[k]) [1, 2, 3].forEach((l, i) => cells.push(cellB(k, `${k} len ${l}`, c(i + 2), { len: l, archers: true })));
+    return cells;
+  };
   const selOnly = document.getElementById('selOnly');
-  const names = ['all', 'buildings', 'sites', 'ruins', 'burnt', 'keep', ...KINDS, 'units', 'carry', 'column', 'banners', 'trees', 'rocks', 'deco', 'bridges', 'ruin', 'props'];
+  const names = ['all', 'buildings', 'sites', 'ruins', 'burnt', 'keep', ...KINDS, 'units', 'carry', 'column', 'banners', 'trees', 'rocks', 'deco', 'bridges', 'ruin', 'props',
+    ...KINDS2, 'walls', 'joins', 'buildings2', 'sites2', 'ruins2', 'burnt2', 'yard', 'units2', 'scale'];
   for (const k of names) selOnly.add(new Option(k, k));
   selOnly.value = S.only;
   const go = (patch) => { const u = new URLSearchParams(location.search); for (const [k, v] of Object.entries(patch)) { if (v == null) u.delete(k); else u.set(k, v); } location.search = u.toString(); };
@@ -196,7 +314,7 @@ try {
   console.log('[gallery] ' + fmt.join(' | '));
   document.getElementById('info').textContent = `${nC} Modelle, ${Q}${S.night ? ', Nacht' : ''}`;
   document.title = 'Furt&Fehde Art ' + S.only + ' ' + fmt.join(' | ');
-  const sky = S.night ? new T.Color('#141a30') : new T.Color('#b9d9ee');
+  const sky = S.night ? new T.Color('#141a30') : new T.Color('#b9d9ee'), tgt = new T.Vector3();
 
   function frame(now) {
     const t = S.frozen ? S.t0 : S.t0 + now / 1000;
@@ -207,12 +325,14 @@ try {
       const cx = (i % cols) * cw, cy = H - (Math.floor(i / cols) + 1) * ch;
       m.update(t);
       if (!m.stats) m.s = A.stats(m.stat || m.group);
-      m.group.visible = true; m.group.rotation.y = S.spin ? t * 0.35 + i * 0.9 : 0.5;
+      m.group.visible = true; m.group.rotation.y = S.spin ? t * 0.35 + i * 0.9 : S.yaw;
       const R = m.fit[0] / S.zoom, el = S.el * Math.PI / 180, sc = sun.shadow.camera;
       if (S.shadow) { sc.left = -R * 1.5; sc.right = R * 1.5; sc.top = R * 1.5; sc.bottom = -R * 1.5; sc.near = 0.5; sc.far = 70; sc.updateProjectionMatrix(); }
       const d = (R * 1.15) / Math.sin(S.fov * Math.PI / 360);
       cam.aspect = cw / ch; cam.fov = S.fov; cam.updateProjectionMatrix();
-      cam.position.set(0, m.fit[1] + Math.sin(el) * d, Math.cos(el) * d); cam.lookAt(0, m.fit[1], 0);
+      const lk = S.look || [0, m.fit[1], 0];
+      if (S.look) { m.group.updateMatrixWorld(true); tgt.set(lk[0], lk[1], lk[2]).applyMatrix4(m.group.matrixWorld); } else tgt.set(0, m.fit[1], 0);
+      cam.position.set(tgt.x, tgt.y + Math.sin(el) * d, tgt.z + Math.cos(el) * d); cam.lookAt(tgt);
       sun.position.set(-7, 11, 6); sun.target.position.set(0, 0, 0);
       gl.setViewport(cx, cy, cw, ch); gl.setScissor(cx, cy, cw, ch);
       gl.render(scene, cam);

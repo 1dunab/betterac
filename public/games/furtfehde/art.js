@@ -23,7 +23,8 @@
 //   aWear  (0..1)  per triangle random: soot patches (damage), embers (burnt)
 //   aRig   (vec4)  xyz = pivot, w = part id (flag, roof, crops, boom, units' limbs, sway weight)
 //   units add per instance: aInst (anim, phase, carry, 0) and aTeamCol (linear rgb)
-//   uniforms: shared uTime, uGlow; per material uTeam, uBuild, uGrowth, uWork, uMoving, uDmg, uBurnt (+ uKind, uDims for units)
+//   uniforms: shared uTime, uGlow; per material uTeam, uBuild, uGrowth, uWork, uMoving, uDmg, uBurnt, uOpen (+ uKind, uDims for units)
+// Phase 2 (walls, Torhaus, Markt, Soeldnerlager, Reiterschuetze, Rammbock): see the "PHASE 2" blocks below.
 // ================================================================
 (function () {
   'use strict';
@@ -114,10 +115,15 @@ varying float vPart;
 varying float vVar;
 varying vec3 vTeamC;
 vec3 rotZ(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(c * v.x - s * v.y, s * v.x + c * v.y, v.z); }
+vec3 rotX(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(v.x, c * v.y - s * v.z, s * v.y + c * v.z); }
+vec3 rotY(vec3 v, float a) { float c = cos(a), s = sin(a); return vec3(c * v.x + s * v.z, v.y, -s * v.x + c * v.z); }
 `;
   // buildings, keeps, banners, bridges, props: parts
   // 0 static (rises while building) | 1 roof (drops in) | 2 flag (waves) | 3 crops (growth) | 4 boom (turns about y)
   // 5 lift (bobs) | 7 ground (always) | 10..13 construction site layers (pegs, footing, frame, scaffold)
+  // Phase 2: 6 / 8 gate leaf, left / right hinge (swing inwards with uOpen; pivot = hinge) | 20 stall awning (unfolds at the end,
+  // sways, hem ripples; pivot = back edge) | 22 campfire flame (flickers; pivot = base) | 23 / 24 / 25 paddock horse head / tail / body
+  // (breathe, nod and graze; .5 added to the id = the horse faces -x; pivot = neck base / tail root / hoof centre)
   const VS_MAIN_PARS = VS_COMMON + `
 uniform vec3 uTeam;
 uniform float uBuild;
@@ -126,6 +132,7 @@ uniform float uWork;
 uniform float uMoving;
 uniform float uDmg;
 uniform float uBurnt;
+uniform float uOpen;
 `;
   const VS_MAIN = `
 vec3 transformed = vec3( position );
@@ -162,6 +169,42 @@ if (part < 0.5) {
   float g = part < 10.5 ? smoothstep(0.0, 0.08, bld) : part < 11.5 ? smoothstep(0.08, 0.3, bld) : part < 12.5 ? smoothstep(0.18, 0.55, bld) : smoothstep(0.22, 0.6, bld);
   if (part > 11.5) g *= 1.0 - smoothstep(0.9, 1.0, bld);
   if (g < 0.004) transformed = vec3(0.0); else transformed.y *= g;
+} else if (part > 5.5 && part < 8.5 && abs(part - 7.0) > 0.5) {
+  // gate leaves: rise with the walls, then swing about the hinge (6: left, 8: right) towards -z
+  vec3 q = transformed;
+  q.y *= smoothstep(0.32, 0.8, bld);
+  transformed = aRig.xyz + rotY(q - aRig.xyz, (part < 7.0 ? 1.65 : -1.65) * uOpen);
+} else if (part > 19.5 && part < 20.5) {
+  // stall awning (canopy and valance in one piece): unfolds at the end of the build, sways, the hem ripples (valance hangs below y = 1.76)
+  float r = smoothstep(0.76, 0.96, bld);
+  float aph = aRig.x * 1.9 + aRig.z * 1.3;
+  float hem = clamp((1.76 - transformed.y) / 0.3, 0.0, 1.0);
+  vec3 q = transformed;
+  q.z += (sin(uTime * 2.1 + q.x * 3.3 + aph) * 0.06 + sin(uTime * 3.7 + q.x * 5.1 + aph * 2.0) * 0.02) * hem;
+  q.y += sin(uTime * 2.6 + q.x * 4.0 + aph) * 0.015 * hem;
+  q = aRig.xyz + rotX(q - aRig.xyz, sin(uTime * 1.15 + aph) * 0.05 + sin(uTime * 2.3 + aph * 1.7) * 0.015);
+  transformed = mix(aRig.xyz, q, r);
+  transformed.y += (1.0 - r) * 1.2;
+} else if (part > 21.5 && part < 22.5) {
+  // campfire flame: lights at the end of the build, flickers about its base
+  vec3 q = transformed - aRig.xyz;
+  float hh = max(q.y, 0.0), fph = aRig.x * 3.1 + aRig.z * 1.7;
+  q.x += sin(uTime * 19.0 + fph) * 0.3 * hh; q.z += cos(uTime * 23.0 + fph * 1.3) * 0.3 * hh;
+  q.y *= 1.0 + sin(uTime * 17.0 + fph * 2.0) * 0.26 + sin(uTime * 31.0 + fph) * 0.16;
+  transformed = mix(aRig.xyz, aRig.xyz + q, smoothstep(0.86, 1.0, bld));
+} else if (part > 22.5 && part < 25.75) {
+  // paddock horses: 23 head (nods, grazes now and then), 24 tail (swishes), 25 body (breathes); the legs ride on 25
+  float fid = floor(part + 0.01), dir = fract(part + 0.01) > 0.25 ? -1.0 : 1.0;
+  float hph = aRig.x * 1.7 + aRig.z * 2.3, ap = smoothstep(0.86, 1.0, bld);
+  vec3 q = transformed;
+  if (fid < 23.5) {
+    float g = pow(max(sin(uTime * 0.31 + hph * 1.3), 0.0), 3.0);
+    q = aRig.xyz + rotZ(q - aRig.xyz, -dir * (0.1 * sin(uTime * 0.9 + hph) + 0.62 * g));
+  } else if (fid < 24.5) {
+    q = aRig.xyz + rotX(q - aRig.xyz, 0.3 * sin(uTime * 1.9 + hph) + 0.12 * sin(uTime * 4.3 + hph * 2.0));
+  }
+  q.y += sin(uTime * 1.5 + hph) * 0.012;
+  transformed = mix(vec3(aRig.x, 0.0, aRig.z), q, ap);
 }
 `;
   // trees, deco, rocks (instanced): aRig.w = sway amplitude (local units), aRig.xyz unused
@@ -185,7 +228,9 @@ vGlow = aGlow; vTeam = 0.0; vWear = aWear; vPart = 0.0; vTeamC = uTeam;
   // units: 0 body | 1,2 legs | 3,4 arms | 5 item R (weapon, torch stick, lance) | 6 item L (shield, bow) | 7 arrow
   // 8 tool (bauer, visible while working) | 9 flame (flickers, rides on item R)
   // 10 tail | 11..14 horse legs | 15 horse head | 16 pennant (rides on item R; aGlow = flutter weight)
-  // 20..23 carry items (korn, holz, stein, eimer; only the active one is visible)
+  // 17 wheel (ramme; turns about z at its pivot) | 20..23 carry items (korn, holz, stein, eimer; only the active one is visible)
+  // kinds: 0 bauer | 1 speer | 2 bogen | 3 ritter | 4 fackel | 5 reiterschuetze (0 idle, 1 gallop, 2 shoot while galloping) |
+  // 6 ramme (0 idle, 1 roll, 2 swing; ram log = part 5 and chains = part 6 swing, crew legs = parts 1/2 with a pivot per man)
   const VS_UNIT_PARS = VS_COMMON + `
 uniform float uKind;
 uniform vec4 uDims;
@@ -203,7 +248,9 @@ bool isWalk = anim == 1.0;
 bool isFight = anim == 2.0;
 bool isWork = anim == 3.0;
 bool horse = K > 2.5 && K < 3.5;
-float rate = horse ? 2.4 : (K > 3.5 ? 2.5 : 2.0);
+bool hArc = K > 4.5 && K < 5.5;
+bool ram = K > 5.5;
+float rate = horse ? 2.4 : (ram ? 1.3 : (hArc ? 2.8 : (K > 3.5 ? 2.5 : 2.0)));
 float wph = uTime * rate * 6.2831853 + ph;
 float sn = sin(wph);
 float hipY = uDims.x, shY = uDims.y, armZ = uDims.z;
@@ -257,13 +304,46 @@ if (K < 0.5) {
   }
   if (isWork) { float f = 0.5 + 0.5 * sin(uTime * 3.6 + ph); thR = mix(0.5, 1.9, f); thL = 0.3; itemAbsL = -0.3; }
   itemAbs = thR;
-} else if (!horse) {
+} else if (K > 3.5 && K < 4.5) {
   // ---- fackel: torch held up, swung while fighting
   thR = isWalk ? 2.05 + sn * 0.12 : 2.0 + sin(uTime * 1.7 + ph) * 0.05;
   if (isWalk) { thL = -sn * 0.9; lean = -0.14; lg = sn * 0.85; bob = abs(sn) * 0.05; }
   if (isFight) { thR = 1.3 + sin(uTime * 7.0 + ph) * 0.95; thL = 0.5 + sin(uTime * 7.0 + ph + 2.0) * 0.3; lean = -0.1; lg = 0.4; bob = 0.0; }
   if (isWork) { thR = 1.9 + sin(uTime * 3.0 + ph) * 0.3; }
   itemAbs = thR * 0.55;
+} else if (hArc) {
+  // ---- reiterschuetze: light horse and a short-bow archer; gallops (1), draws and looses while galloping (2)
+  bool run = isWalk || isFight;
+  thL = 0.85; thR = 0.5; itemAbsL = -0.12;
+  bob = sin(uTime * 1.5 + ph) * 0.01;
+  tailA = -0.12 - 0.12 * sin(uTime * 1.1 + ph);
+  headA = 0.05 * sin(uTime * 0.9 + ph);
+  if (run) {
+    thL = 1.0; thR = 0.6; itemAbsL = 0.05;
+    lean = sn * 0.045 - 0.03; bob = abs(sn) * 0.08;
+    tailA = -0.6 - 0.25 * sn; headA = 0.1 * sn;
+  }
+  if (isFight) {
+    float f = fract(uTime * 0.77 + aInst.y);
+    draw = smoothstep(0.0, 0.6, f) * (1.0 - smoothstep(0.64, 0.7, f));
+    arrowOn = f < 0.68 && f > 0.06;
+    thL = 1.48; itemAbsL = 0.0; thR = 1.5; armOffR = vec3(-0.3 * draw, 0.0, 0.0);
+    lean = sn * 0.04 + 0.02 - 0.04 * draw;
+  }
+  itemAbs = thR;
+} else if (ram) {
+  // ---- ramme: wheels turn and the crew walks while it rolls (1); the log swings on its chains (2)
+  thL = 0.0; thR = 0.0;
+  bob = sin(uTime * 1.3 + ph) * 0.004;
+  if (isWalk) { bob = abs(sin(uTime * 7.0 + ph)) * 0.014; lean = sin(uTime * 3.3 + ph) * 0.012; }
+  if (isFight) {
+    float f = fract(uTime * 0.5 + aInst.y);
+    float sw = f < 0.6 ? -0.7 * smoothstep(0.0, 0.6, f) : (f < 0.68 ? mix(-0.7, 0.3, smoothstep(0.6, 0.68, f)) : mix(0.3, 0.0, smoothstep(0.68, 1.0, f)));
+    itemAbsL = sw;                                        // the chains (0.46 long) turn about the roof beam
+    itemOff = vec3(0.46 * sin(sw), 0.46 * (1.0 - cos(sw)), 0.0);   // the log follows on the same arc
+    itemAbs = sw * 0.12;
+    bob = f > 0.66 && f < 0.78 ? 0.018 : 0.0;
+  }
 } else {
   // ---- ritter: gallop, lance couched forward
   thL = 0.35 + (isWalk ? sn * 0.08 : 0.0); thR = 1.15;
@@ -292,6 +372,7 @@ if (part < 0.5) {
   upper = false;
   float a = part < 1.5 ? lg : -lg;
   if (horse) a = (part < 1.5 ? 1.0 : -1.0) * (isWalk ? sn * 0.35 : (isFight ? 0.5 : 0.0));
+  if (ram) a = (part < 1.5 ? 1.0 : -1.0) * (isWalk ? 0.62 * sin(wph + pv.x * 3.0 + (pv.z > 0.0 ? 0.0 : 2.1)) : (isFight ? 0.22 * sin(uTime * 3.1416 + pv.x * 2.0 + pv.z * 4.0) : 0.0));
   p = pv + rotZ(p - pv, a);
 } else if (part < 3.5) {
   p = sL + rotZ(p - sL, thL);
@@ -322,7 +403,8 @@ if (part < 0.5) {
 } else if (part < 15.5) {
   upper = false;
   float o = part < 11.5 ? 0.0 : part < 12.5 ? 0.7 : part < 13.5 ? 3.14159 + 0.4 : 3.14159 + 1.1;
-  float a = isWalk ? sin(wph + o) * 0.85 : (isFight ? (part < 12.5 ? 0.7 + 0.5 * sin(uTime * 5.0 + ph + o) : 0.0) : 0.0);
+  bool run = isWalk || (isFight && hArc);
+  float a = run ? sin(wph + o) * 0.85 : (isFight ? (part < 12.5 ? 0.7 + 0.5 * sin(uTime * 5.0 + ph + o) : 0.0) : 0.0);
   if (part > 14.5) { upper = true; a = headA; }
   p = pv + rotZ(p - pv, a);
 } else if (part < 16.5) {
@@ -331,6 +413,8 @@ if (part < 0.5) {
   float d = max(position.x - pv.x, 0.0);
   p.z += sin(uTime * 9.0 + d * 6.0 + ph) * 0.05 * fl; p.y += cos(uTime * 7.0 + d * 5.0) * 0.03 * fl;
   gl = 0.0;
+} else if (part > 16.5 && part < 17.5) {
+  p = pv + rotZ(p - pv, isWalk ? -(uTime * 4.2 + ph) : ph);
 } else if (part > 19.5) {
   if (part > 22.5) p = sR + rotZ(p - sR, thR);
   hide = carry != part - 19.0;
@@ -396,7 +480,7 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
     else { o.roughness = 0.9; o.metalness = 0; m = new T.MeshStandardMaterial(o); }
     m.userData.u = {
       uTeam: { value: new T.Color(1, 1, 1) }, uBuild: { value: 1 }, uGrowth: { value: 1 }, uWork: { value: 0 },
-      uMoving: { value: 0 }, uDmg: { value: 0 }, uBurnt: { value: 0 }
+      uMoving: { value: 0 }, uDmg: { value: 0 }, uBurnt: { value: 0 }, uOpen: { value: 0 }
     };
     if (kind === 'unit') { m.userData.u.uKind = { value: opts.kindId || 0 }; m.userData.u.uDims = { value: new T.Vector4(0.34, 0.62, 0.17, 0) }; }
     m.onBeforeCompile = (sh) => patchShader(sh, m, kind);
@@ -1057,7 +1141,8 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
     b.pole(0, hy, 0, 0, hy + 1.7, 0, 0.03, 0.022, 4, C(P.timberDark));
     pennant(b, 0, hy + 1.1, 0, 0.62, 0.7, 0.42, q);
     b.cyl(0.14, 0.1, 0.12, 6, 0.5, hy, -0.5, C(P.iron)); b.sph(0.1, 0.5, hy + 0.14, -0.5, C(P.ember), { glow: 1.6, sh: 0, j: 0.05, d: 0 });
-    return { w: 2, d: 2, h: yT, stone: true, anchors: { door: [0, 0, 1.0], work: [0, 0, 1.0] } };
+    // archers on the platform (feet on the deck, y = 5.72): three of the four corners, the fourth holds the brazier
+    return { w: 2, d: 2, h: yT, stone: true, anchors: { door: [0, 0, 1.0], work: [0, 0, 1.0] }, slots: [{ x: 0.5, y: yT + 0.42, z: 0.5 }, { x: -0.5, y: yT + 0.42, z: 0.5 }, { x: -0.5, y: yT + 0.42, z: -0.5 }] };
   };
 
   KINDS.brunnen = function (b, q) {
@@ -1084,6 +1169,386 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
     b.roof(1.0, 0.26, 0.1, 0, 1.74, 0, [1, 1, 1], { team: 1, under: false, rows: 1 });
     b.rig(0, null);
     return { w: 1, d: 1, h: 1.38, stone: true, anchors: { door: [0, 0, 0.6], work: [0, 0, 0.6] }, bucket: true };
+  };
+
+
+  // =====================================================================
+  // PHASE 2 KITS. fn(b, q, { len }) like the kits above.
+  // Walls (palisade, mauer) are 1 x len cells along +x, centred on the origin: end faces sit flush on the cell borders and every
+  // rhythm (course heights, stake and merlon pitch) continues across a border, so neighbouring pieces join without gaps.
+  // =====================================================================
+  const WALL_WALK = 2.64;                                   // mauer: wall walk (feet height of the archers on top)
+  // small lord-coloured rag hanging from (x, yTop, z), streaming along +x (dir 1: part 2 flutters) or along -x (dir -1: hangs still)
+  function rag(b, x, yTop, z, w, h, dir) {
+    const pr = b.part, ppv = b.pv, pt = b.team, one = [1, 1, 1], o = { dbl: true, j: 0.03, sh: 0, team: 1 }, d = dir || 1;
+    b.rig(2, [x, yTop - h / 2, z]); b.team = 1;
+    b.quad([x, yTop, z], [x, yTop - h, z], [x + d * w * 0.55, yTop - h * 0.85, z], [x + d * w * 0.55, yTop - h * 0.15, z], one, o);
+    b.tri([x + d * w * 0.55, yTop - h * 0.15, z], [x + d * w * 0.55, yTop - h * 0.85, z], [x + d * w, yTop - h * 0.5, z], one, o);
+    b.part = pr; b.pv = ppv; b.team = pt;
+  }
+  // lord-coloured heater shield on a wall face (decals: rim + face); face f(+z) or k(-z), centre c, vertical centre y, wall plane s
+  function wallShield(b, face, c, y, s, low) {
+    const ptsOf = (k) => [[c - 0.23 * k, y + 0.2 * k], [c - 0.23 * k, y - 0.06 * k], [c, y - 0.4 * k], [c + 0.23 * k, y - 0.06 * k], [c + 0.23 * k, y + 0.2 * k]];   // counter-clockwise seen from outside
+    if (!low) decPts(b, face, ptsOf(1.22), s, C(P.timberDark), 1);
+    decPts(b, face, ptsOf(1.0), s, [1, 1, 1], 2, { team: 1, j: 0.03, sh: 0 });
+  }
+
+  // ---- Palisade: sharpened stakes (about 2.2 high) on cross beams, a thicker post at both ends with a lord-coloured rag
+  KINDS.palisade = function (b, q, o) {
+    const low = q === 'low', L = o.len, hl = L / 2, seg = low ? 4 : 5, pitch = low ? 0.34 : 0.25;
+    const woodD = C(P.timberDark), tipC = mix(C(P.timberLight), C(P.cream), 0.22), earth = mix(C(P.dirt), C(P.soil), 0.45);
+    b.roof(L, 0.66, 0.13, 0, -0.02, 0, earth, { under: false, j: 0.08, endCol: earth });                       // earth bank under the stakes
+    const n = Math.round(L / pitch), postX = hl - 0.15;
+    for (let i = 0; i < n; i++) {
+      const x = -hl + (i + 0.5) * (L / n);
+      if (abs(abs(x) - postX) < 0.17) continue;                        // the end posts stand here
+      const hv = hpos(x * 3.1, 0.5, 1.7), h = 2.02 + 0.34 * hv, zz = (hv - 0.5) * 0.07;
+      const c = mix(C(P.timber), C(P.bark), hpos(x, 1.3, 0.2) * 0.8);
+      b.cyl(0.105, 0.13, h - 0.34, seg, x, 0, zz, c, { sk: 'bt', j: 0.1 });
+      b.cone(0.105, 0.34, seg, x, h - 0.34, zz, tipC, { j: 0.08 });
+    }
+    // cross beams on both faces (run the whole piece: seamless), lashed with a darker band at the stakes
+    b.beam(-hl, 0.6, 0.15, hl, 0.6, 0.15, 0.1, woodD, { t2: 0.09 });
+    b.beam(-hl, 1.4, -0.15, hl, 1.4, -0.15, 0.1, woodD, { t2: 0.09 });
+    // a ribbon in the lord's colour lashed along both faces: the line reads from the TV's high camera (the rags alone do not)
+    for (const sz of [-1, 1]) b.beam(-hl, 1.78, sz * 0.14, hl, 1.78, sz * 0.14, 0.06, [1, 1, 1], { team: 1, t2: 0.05, j: 0.04, sh: 0 });
+    // end posts: thicker, taller, capped; the lord's rag hangs below the cap
+    for (const s of [-1, 1]) {
+      const x = s * postX;
+      b.cyl(0.14, 0.17, 2.4, low ? 5 : 6, x, 0, 0, C(P.timber), { sk: 'bt', j: 0.08 });
+      b.cone(0.14, 0.32, low ? 5 : 6, x, 2.4, 0, mix(C(P.timberLight), C(P.cream), 0.3), { j: 0.08 });
+      if (!low) b.cyl(0.18, 0.18, 0.06, 6, x, 1.0, 0, woodD, { sk: '' });
+      rag(b, x - s * 0.08, 2.66, 0.0, 0.44, 0.34, -s);                 // streams into its own piece, so it never reaches the neighbour's post
+    }
+    return { w: L, d: 1, h: 2.2, wood: true, len: L, noCrane: true, anchors: {}, slots: [], siteFn: (T, qq) => siteWall(T, L, false, qq), ruinFn: (T, qq) => ruinWall(T, L, false, qq) };
+  };
+
+  // ---- Mauer: stone wall about 3 high (plinth, 3 courses, coping, wall walk, merlons on both sides), lord-coloured shields every 2 cells
+  KINDS.mauer = function (b, q, o) {
+    const low = q === 'low', L = o.len, hl = L / 2, stB = C(P.stone), stD = C(P.stoneDark), stL = C(P.stoneLight);
+    const yC = low ? [0.45, 1.55, 2.46] : [0.45, 1.12, 1.79, 2.46], WK = WALL_WALK;
+    for (let i = 0; i < L; i++) {
+      const x0 = -hl + i, x1 = x0 + 1, ends = (i === 0 ? '' : 'l') + (i === L - 1 ? '' : 'r');
+      b.bb(x0, -0.1, -0.49, x1, 0.45, 0.49, stoneTone(stD, i, 1, 0.05), { sk: 'b' + ends, j: 0.07 });                      // plinth
+      for (let k = 0; k < yC.length - 1; k++) b.bb(x0, yC[k], -0.44, x1, yC[k + 1], 0.44, stoneTone(stB, i, k + 2, 0), { sk: 'bt' + ends, j: 0.07 });
+      b.bb(x0, 2.46, -0.49, x1, WK, 0.49, stoneTone(stL, i, 6, 0), { sk: 'b' + ends, j: 0.06 });                            // coping = the wall walk
+    }
+    // a runner in the lord's colour along the wall walk: it reads from the TV's high camera where the shields on the faces do not
+    b.quad([-hl, WK + 0.012, 0.13], [hl, WK + 0.012, 0.13], [hl, WK + 0.012, -0.13], [-hl, WK + 0.012, -0.13], [1, 1, 1], { team: 1, j: 0.03, sh: 0 });
+    // merlons on both sides; the pitch (0.5, or 1 on low) runs on across the border
+    const mc = mul(stL, 0.96), pt = low ? 1.0 : 0.5, mw = low ? 0.6 : 0.32, nm = Math.round(L / pt);
+    for (let k = 0; k < nm; k++) for (const sz of [-1, 1]) b.box(mw, 0.5, 0.17, -hl + (k + 0.5) * pt, WK, sz * 0.36, stoneTone(mc, k, sz + 3, 0), { sk: 'b', j: 0.06 });
+    // lord-coloured shields every 2 cells, arrow slits in between
+    const ns = Math.max(1, Math.round(L / 2));
+    for (let k = 0; k < ns; k++) { const c = -hl + (k + 0.5) * L / ns; wallShield(b, 'f', c, 1.5, 0.44, low); wallShield(b, 'k', c, 1.5, -0.44, low); }
+    if (!low) for (let i = 0; i < L; i++) {
+      const c = -hl + i + 0.5;
+      if (Array.from({ length: ns }, (_, k) => abs(c - (-hl + (k + 0.5) * L / ns))).some((dd) => dd < 0.45)) continue;
+      for (const [f, sg] of [['f', 1], ['k', -1]]) dec(b, f, c, 0.07, 1.55, 2.0, sg * 0.44, C(P.char), 3);
+    }
+    const slots = [];
+    for (let i = 0; i < L; i++) slots.push({ x: -hl + i + 0.5, y: WK, z: 0 });
+    return { w: L, d: 1, h: 2.64, stone: true, len: L, noCrane: true, anchors: {}, slots, ruinFn: (T, qq) => ruinWall(T, L, true, qq) };
+  };
+
+  // ---- Torhaus (3 x 2): two flanking towers (about 4.5 high), a gate passage along z with an arch and wooden doors (setOpen),
+  // a lord banner over the arch. Slots: the two tower tops and the bridge between them.
+  const GATE_R = 0.5, GATE_Y = 1.55;                         // arch: radius and springing height (crown at 2.05)
+  const TOWER_H = 3.9, BRIDGE_Y = 3.1;
+  // tower front face z at height y (a slight batter), shared by towers, bridge and the arch rings
+  const gateZ = (y) => 1.0 - 0.07 * (y / TOWER_H);
+  // frustum with independent rectangles: bottom [x0, x1, z0, z1] and top [..] (outward-facing sides, no caps)
+  function frustumRect(b, bot, top, y, h, col, o) {
+    const [x0b, x1b, z0b, z1b] = bot, [x0t, x1t, z0t, z1t] = top, ref = [(x0b + x1b) / 2, y + h / 2, (z0b + z1b) / 2];
+    const p0 = [[x0b, y, z0b], [x1b, y, z0b], [x1b, y, z1b], [x0b, y, z1b]], p1 = [[x0t, y + h, z0t], [x1t, y + h, z0t], [x1t, y + h, z1t], [x0t, y + h, z1t]];
+    for (let i = 0; i < 4; i++) { const k = (i + 1) % 4; b.Qo(p0[i], p0[k], p1[k], p1[i], typeof col === 'function' ? col(i) : col, o || NO, [0, 0, 1, 1], ref); }
+  }
+  KINDS.torhaus = function (b, q) {
+    const low = q === 'low', stB = C(P.stone), stD = C(P.stoneDark), stL = C(P.stoneLight), wood = C(P.timberDark), one = [1, 1, 1];
+    const NS = low ? 3 : 4, sh = TOWER_H / NS, mh = 0.5, mc = mul(stL, 0.96);
+    // flanking towers: the outer face and the front/back batter taper, the inner face (the passage wall) stays vertical
+    for (const sx of [-1, 1]) {
+      const cx = sx * 1.0;
+      for (let i = 0; i < NS; i++) {
+        const t0 = i / NS, t1 = (i + 1) / NS, o0 = cx + sx * (0.5 - 0.06 * t0), o1 = cx + sx * (0.5 - 0.06 * t1), inn = cx - sx * 0.5;
+        frustumRect(b, [Math.min(inn, o0), Math.max(inn, o0), -1.0 + 0.07 * t0, 1.0 - 0.07 * t0], [Math.min(inn, o1), Math.max(inn, o1), -1.0 + 0.07 * t1, 1.0 - 0.07 * t1],
+          i * sh - (i === 0 ? 0.06 : 0), sh + (i === 0 ? 0.06 : 0), (k) => stoneTone(stB, i + (sx > 0 ? 3 : 0), k, 0), { j: 0.07 });
+      }
+      // corbelled crown in the lord's colour (like the Wachturm's fascia; reads from afar) with the wall walk on top, merlons on all four sides
+      b.box(1.0, 0.3, 2.0, cx, TOWER_H - 0.3, 0, [1, 1, 1], { team: 1, sk: 'b', j: 0.05 });
+      if (low) {
+        for (const ox of [-1, 1]) for (const z of [-0.5, 0.5]) b.box(0.17, mh, 0.5, cx + ox * 0.415, TOWER_H, z, stoneTone(mc, ox + 3, 7, 0), { sk: 'b', j: 0.06 });
+        for (const sz of [-1, 1]) b.box(0.5, mh, 0.17, cx, TOWER_H, sz * 0.915, stoneTone(mc, sz + 4, 9, 0), { sk: 'b', j: 0.06 });
+      } else {
+        for (const ox of [-1, 1]) for (const z of [-0.6, -0.2, 0.2, 0.6]) b.box(0.17, mh, 0.26, cx + ox * 0.415, TOWER_H, z, stoneTone(mc, ox + 3, Math.round(z * 5) + 6, 0), { sk: 'b', j: 0.06 });
+        for (const sz of [-1, 1]) {
+          b.box(0.3, mh, 0.17, cx, TOWER_H, sz * 0.915, stoneTone(mc, sz + 4, 9, 0), { sk: 'b', j: 0.06 });
+          for (const ox of [-1, 1]) b.box(0.24, mh, 0.24, cx + ox * 0.38, TOWER_H, sz * 0.88, stoneTone(mc, sz + ox + 7, 11, 0.05), { sk: 'b', j: 0.06 });
+        }
+      }
+      // slits and a lord-coloured shield on the front and back faces, a slit on the outer face
+      for (const [f, sg] of [['f', 1], ['k', -1]]) {
+        wallShield(b, f, cx, 2.55, sg * (gateZ(2.55) + 0.003), low);
+        if (!low) for (const dx of [-0.28, 0.28]) dec(b, f, cx + dx, 0.07, 1.0, 1.45, sg * (gateZ(1.2) + 0.003), C(P.char), 3);
+      }
+      if (!low) for (const y of [1.6, 3.0]) decPts(b, sx > 0 ? 'r' : 'l', [[-0.035, y], [0.035, y], [0.035, y + 0.5], [-0.035, y + 0.5]], sx * (1.5 - 0.06 * (y / TOWER_H) + 0.003), C(P.char), 3);
+      // flag pole on the back of the tower top (the archer stands in the middle)
+      pennant(b, cx, TOWER_H, -0.58, 1.05, 0.62, 0.4, q);
+    }
+    // bridge over the arch: faces flush with the towers (so no gap shows), deck with merlons front and back
+    const N = 6, ringE = [];
+    for (let k = 0; k <= N; k++) { const a = PI - (k / N) * PI; ringE.push([cos(a) * GATE_R, GATE_Y + sin(a) * GATE_R]); }
+    const yS = 2.2;
+    for (const sg of [1, -1]) {
+      const zf = (y) => sg * gateZ(y), face = (pa, pb, pc, pd, col) => { if (sg > 0) b.Q(pa, pb, pc, pd, col, NO, [0, 0, 1, 1]); else b.Q(pb, pa, pd, pc, col, NO, [0, 0, 1, 1]); };
+      for (let k = 0; k < N; k++) face([ringE[k][0], ringE[k][1], zf(ringE[k][1])], [ringE[k + 1][0], ringE[k + 1][1], zf(ringE[k + 1][1])], [ringE[k + 1][0], yS, zf(yS)], [ringE[k][0], yS, zf(yS)], stoneTone(stB, 3, k + 20, 0.04));
+      face([-0.5, yS, zf(yS)], [0.5, yS, zf(yS)], [0.5, BRIDGE_Y, zf(BRIDGE_Y)], [-0.5, BRIDGE_Y, zf(BRIDGE_Y)], stoneTone(stB, 3, 30, 0.06));
+      // voussoir ring and impost blocks (decals in front of the facade)
+      const rr = GATE_R + 0.17, e = 0.02, put = (v, c) => { if (sg > 0) b.Q(v[0], v[1], v[2], v[3], c, FLAT, null); else b.Q(v[1], v[0], v[3], v[2], c, FLAT, null); };
+      for (let k = 0; k < N; k++) {
+        const a0 = PI - (k / N) * PI, a1 = PI - ((k + 1) / N) * PI;
+        const pts = [[cos(a0) * GATE_R, GATE_Y + sin(a0) * GATE_R], [cos(a1) * GATE_R, GATE_Y + sin(a1) * GATE_R], [cos(a1) * rr, GATE_Y + sin(a1) * rr], [cos(a0) * rr, GATE_Y + sin(a0) * rr]];
+        put(pts.map((p) => [p[0], p[1], zf(p[1]) + sg * e]), stoneTone(stL, k, 8, k % 2 ? 0.1 : 0));
+      }
+      for (const sxx of [-1, 1]) {
+        const v = [[sxx * GATE_R, 0], [sxx * rr, 0], [sxx * rr, GATE_Y], [sxx * GATE_R, GATE_Y]].map((p) => [p[0], p[1], zf(p[1]) + sg * e]);
+        if (sxx > 0) put(v, mul(stL, 0.9)); else put([v[1], v[0], v[3], v[2]], mul(stL, 0.9));
+      }
+    }
+    b.box(1.2, 0.07, 1.9, 0, BRIDGE_Y, 0, mix(C(P.plank), stL, 0.35), { sk: 'b', j: 0.05 });
+    for (const sz of [-1, 1]) for (const x of (low ? [0] : [-0.27, 0.27])) b.box(low ? 0.5 : 0.3, mh, 0.17, x, BRIDGE_Y + 0.07, sz * 0.86, stoneTone(mc, sz + 4, 12, 0), { sk: 'b', j: 0.06 });
+    // passage: barrel vault (the side walls are the tower faces) and a cobbled floor; dark, it lies in the shade
+    const zIn = 0.95, vc = mul(stD, 0.62);
+    for (let k = 0; k < N; k++) b.Qo([ringE[k][0], ringE[k][1], zIn], [ringE[k + 1][0], ringE[k + 1][1], zIn], [ringE[k + 1][0], ringE[k + 1][1], -zIn], [ringE[k][0], ringE[k][1], -zIn], stoneTone(vc, k, 3, 0), NO, null, [0, 3.2, 0]);
+    b.Qo([-0.5, 0.03, zIn], [0.5, 0.03, zIn], [0.5, 0.03, -zIn], [-0.5, 0.03, -zIn], mix(C(P.cobble), C(P.dirt), 0.4), { j: 0.08, sh: 0 }, null, [0, -2, 0]);
+    // wooden doors in the passage and a fixed lunette above them; the leaves swing open inwards (parts 6 and 8, hinged at the jambs)
+    const dz = 0.62, dw = 0.49;
+    b.poly(ringE.map((p) => [p[0] * 0.98, p[1], dz]).reverse(), mul(wood, 0.8), { j: 0.05, dbl: true });
+    for (const [part, sx] of [[6, -1], [8, 1]]) {
+      b.rig(part, [sx * GATE_R, 0, dz]);
+      const cx = sx * (GATE_R - dw / 2);
+      b.box(dw, GATE_Y, 0.08, cx, 0, dz, wood, { sk: 'b', j: 0.06 });
+      if (!low) for (const [f, s] of [['f', dz + 0.04], ['k', dz - 0.04]]) {
+        for (const lx of [-0.16, 0.0, 0.16]) dec(b, f, cx + lx, 0.025, 0.04, GATE_Y - 0.04, s, mul(wood, 0.55), 1);
+        for (const y of [0.3, 1.15]) dec(b, f, cx, dw - 0.04, y, y + 0.1, s, C(P.iron), 2);
+      }
+    }
+    b.rig(0, null);
+    // lord banner over the arch, hung from a rod
+    const bt = [[-0.28, 3.0], [0.28, 3.0], [0.28, 2.38], [0.0, 2.52], [-0.28, 2.38]];
+    for (const sg of [1, -1]) {
+      const v = bt.map((p) => [p[0], p[1], sg * (gateZ(p[1]) + 0.02)]);
+      b.poly(sg > 0 ? [v[0], v[4], v[3], v[2], v[1]] : [v[0], v[1], v[2], v[3], v[4]], one, { team: 1, sh: 0, j: 0.03 });
+      if (!low) b.beam(-0.33, 3.03, sg * (gateZ(3.0) + 0.03), 0.33, 3.03, sg * (gateZ(3.0) + 0.03), 0.035, wood);
+    }
+    // wall lanterns beside the arch
+    if (!low) for (const sg of [1, -1]) for (const sxx of [-1, 1]) {
+      const x = sxx * 0.78, z = sg * (gateZ(1.6) + 0.05);
+      b.box(0.1, 0.16, 0.1, x, 1.45, z, wood); b.cone(0.05, 0.15, 4, x, 1.61, z, C(P.flame), { glow: 3.4, sh: 0, j: 0.04 });
+    }
+    return {
+      w: 3, d: 2, h: TOWER_H, stone: true, anchors: { gate: [0, 0, 0] },
+      slots: [{ x: -1.0, y: TOWER_H, z: 0 }, { x: 1.0, y: TOWER_H, z: 0 }, { x: 0, y: BRIDGE_Y + 0.07, z: 0.42 }, { x: 0, y: BRIDGE_Y + 0.07, z: -0.42 }],
+      ruinFn: (T, qq) => ruinGate(T, qq)
+    };
+  };
+
+  // ---- Markt (4 x 3): three stalls with striped awnings (one stripe in the lord's colour, part 20 sways), crates, sacks, barrels and a
+  // big balance on a post (the trade sign). Back row of stalls, the front is open for goods and customers.
+  const AWN_FRONT = 1.76;                                     // front edge height of every awning (the shader ripples the hem below it)
+  function awning(b, cx, cz, w, stripes, q) {
+    const low = q === 'low', n = stripes.length, xa = cx - w / 2 - 0.03, dxs = (w + 0.06) / n, zb = cz - 0.55, zf = cz + 0.55, yb = 2.15, one = [1, 1, 1];
+    b.rig(20, [cx, yb, zb]);
+    for (let i = 0; i < n; i++) {
+      const x0 = xa + i * dxs, x1 = x0 + dxs, lord = stripes[i] === 'L', c = lord ? one : stripes[i], o = { dbl: !low, j: 0.03, sh: 0.1, team: lord ? 1 : 0 };
+      b.quad([x0, yb, zb], [x0, AWN_FRONT, zf], [x1, AWN_FRONT, zf], [x1, yb, zb], c, o);                       // canopy
+      const zv = zf + 0.01, ov = { dbl: !low, j: 0.03, sh: 0, team: lord ? 1 : 0 };
+      b.quad([x0, AWN_FRONT, zv], [x0, AWN_FRONT - 0.22, zv], [x1, AWN_FRONT - 0.22, zv], [x1, AWN_FRONT, zv], c, ov);       // valance
+      b.tri([x0, AWN_FRONT - 0.22, zv], [(x0 + x1) / 2, AWN_FRONT - 0.34, zv], [x1, AWN_FRONT - 0.22, zv], c, ov);           // scallop
+    }
+    b.rig(0, null);
+  }
+  function stall(b, cx, cz, w, stripes, goods, q) {
+    const low = q === 'low', wood = C(P.timber), woodD = C(P.timberDark), plank = C(P.plank), hx = w / 2 - 0.05;
+    for (const sx of [-1, 1]) {
+      b.pole(cx + sx * hx, 0, cz - 0.5, cx + sx * hx, 2.1, cz - 0.5, 0.05, 0.045, 4, wood);
+      b.pole(cx + sx * hx, 0, cz + 0.42, cx + sx * hx, AWN_FRONT - 0.08, cz + 0.42, 0.045, 0.04, 4, wood);        // ends below the swaying canopy (it dips about 0.05 at the posts)
+    }
+    b.box(w - 0.1, 1.3, 0.05, cx, 0.35, cz - 0.52, mix(plank, C(P.plankDark), 0.35), { sk: 'b', j: 0.08 });             // back board
+    if (!low) { dec(b, 'f', cx, w - 0.14, 0.95, 0.99, cz - 0.495, woodD, 1); dec(b, 'f', cx, w - 0.14, 1.45, 1.49, cz - 0.495, woodD, 1); }
+    b.box(w - 0.14, 0.6, 0.36, cx, 0, cz + 0.14, mix(wood, C(P.timberLight), 0.2), { sk: 'b', j: 0.07 });             // counter
+    b.box(w - 0.02, 0.05, 0.48, cx, 0.6, cz + 0.16, plank, { sk: 'b', j: 0.07 });
+    awning(b, cx, cz, w, stripes, q);
+    goods(b, cx, cz + 0.16, w, q);
+  }
+  function crate(b, x, y, z, s, yaw) {
+    b.push(x, y, z, yaw); b.box(s, s * 0.8, s, 0, 0, 0, mix(C(P.plank), C(P.timberLight), 0.3), { j: 0.1 });
+    b.box(s + 0.012, 0.06, s + 0.012, 0, s * 0.37, 0, C(P.plankDark), { sk: '' }); b.pop();
+  }
+  KINDS.markt = function (b, q) {
+    const low = q === 'low', woodD = C(P.timberDark), wood = C(P.timber), cream = C('#f1e6c8'), L = 'L';
+    const terr = C('#c8623a'), ochre = C('#e3a53b'), plum = C('#8a4f75');
+    b.rig(7, null);
+    b.bb(-1.95, 0, -1.45, 1.95, 0.05, 1.45, mix(C(P.cobble), C(P.dirt), 0.5), { sk: 'b', j: 0.07 });
+    for (const [x, z] of (low ? [[-1.0, 0.5], [1.1, 0.2]] : [[-1.0, 0.5], [1.1, 0.25], [0.3, 1.1], [-0.2, 0.0]])) b.cyl(0.32, 0.36, 0.04, 6, x, 0.04, z, mix(C(P.cobble), C(P.sand), 0.5), { j: 0.1 });
+    b.rig(0, null);
+    // stall A (grain), B (fruit), C (cloth)
+    stall(b, -1.35, -0.85, 1.2, [cream, terr, cream, L, cream, terr], (bb, cx, cz, w, qq) => {
+      for (const dx of [-0.32, 0.0, 0.32]) bb.cone(0.15, 0.2, 5, cx + dx, 0.65, cz, mix(C(P.straw), C(P.thatch), (dx + 0.32)), { j: 0.1 });
+      sack(bb, cx + 0.46, 0.65, cz - 0.05, 0.1, C(P.sack), qq);
+    }, q);
+    stall(b, 0, -0.85, 1.2, [ochre, cream, L, cream, ochre, cream], (bb, cx, cz, w, qq) => {
+      for (const dx of [-0.3, 0.3]) {
+        bb.cyl(0.14, 0.17, 0.12, 6, cx + dx, 0.65, cz, mix(C(P.plank), C(P.timberLight), 0.2), { sk: 'b', cap: C('#9a6b3a') });
+        for (let i = 0; i < 3; i++) bb.cone(0.055, 0.07, 3, cx + dx + (i - 1) * 0.07, 0.77, cz + (i % 2 ? 0.04 : -0.04), C(i === 1 ? '#c8334a' : '#d9852a'), { sh: 0, j: 0.06 });
+      }
+    }, q);
+    stall(b, 1.35, -0.85, 1.2, [cream, plum, cream, L, cream, plum], (bb, cx, cz, w, qq) => {
+      [[-0.3, cream], [0.0, C('#d9b77a')], [0.3, mix(C(P.slate), C(P.cream), 0.35)]].forEach(([dx, c], i) => bb.pole(cx + dx, 0.72, cz - 0.1, cx + dx, 0.72, cz + 0.1, 0.075, 0.075, low ? 4 : 5, c, { caps: true, cap: mul(c, 0.8) }));
+      if (!low) bb.pole(cx - 0.12, 0.84, cz - 0.12, cx + 0.12, 0.84, cz + 0.08, 0.06, 0.06, 4, mix(C('#d9b77a'), C(P.cream), 0.3), { caps: true });
+    }, q);
+    // crates, sacks and barrels in front of the stalls
+    crate(b, -1.6, 0, 0.3, 0.42, 0.2); crate(b, -1.12, 0, 0.45, 0.38, -0.3); if (!low) crate(b, -1.5, 0.34, 0.32, 0.34, 0.5);
+    sack(b, -0.65, 0, 0.55, 0.19, C(P.sack), q); sack(b, -0.38, 0, 0.78, 0.17, mul(C(P.sack), 0.92), q); if (!low) sack(b, -0.55, 0.3, 0.62, 0.15, C(P.sack), q);
+    barrel(b, 1.65, 0, 0.45, 0.2, 0.46, q); if (!low) barrel(b, 1.32, 0, 0.62, 0.17, 0.4, q);
+    crate(b, 1.0, 0, 0.18, 0.36, 0.15);
+    // the balance: post, base, beam and two pans (the left one is heavier)
+    const sx = 0.35, sz = 0.85, rope = C(P.straw), brass = C(P.brass);
+    b.box(0.42, 0.07, 0.34, sx, 0, sz, wood, { sk: 'b' });
+    b.pole(sx, 0.05, sz, sx, 1.6, sz, 0.05, 0.038, low ? 4 : 5, wood);
+    b.cone(0.07, 0.1, 4, sx, 1.6, sz, brass, { sh: 0 });
+    b.beam(sx - 0.58, 1.5, sz, sx + 0.58, 1.55, sz, 0.05, woodD);
+    for (const [dx, y] of [[-0.58, 1.5], [0.58, 1.55]]) {
+      const pyy = y - (dx < 0 ? 0.52 : 0.42);
+      b.cyl(0.22, 0.14, 0.06, low ? 5 : 6, sx + dx, pyy, sz, brass, { cap: mul(brass, 1.1), j: 0.05, sh: 0.1 });
+      for (const k of [-1, 1]) b.pole(sx + dx, y, sz, sx + dx + k * 0.17, pyy + 0.05, sz + k * 0.04, 0.012, 0.012, 3, rope);
+    }
+    if (!low) { b.cone(0.1, 0.14, 4, sx - 0.58, 1.02 - 0.03 + 0.06, sz, C(P.straw)); for (const dx of [0.5, 0.64]) b.box(0.07, 0.05, 0.07, sx + dx, 1.17 + 0.02, sz, C(P.iron)); }
+    // a tall pole behind the middle stall with the lord's pennant
+    pennant(b, 0, 0.0, -1.43, 2.5, 0.62, 0.38, q);
+    return { w: 4, d: 3, h: 0.9, wood: true, anchors: { door: [0, 0, 1.55], work: [0.3, 0, 1.2] } };
+  };
+
+  // ---- shared horse geometry (facing +x, hooves at y = 0, withers about 1.05, head about 1.45). Used by the paddock horses (static legs,
+  // parts 23/24/25 with .5 = faces -x) and by the Reiterschuetze (animated legs 11..14, head 15, tail 10).
+  function horseGeo(b, q, o) {
+    const low = q === 'low', coat = o.coat, coatD = mul(coat, 0.82), mane = o.mane, seg = low ? 4 : 5, dark = C('#2b2019');
+    const pl = o.legs;
+    [[0.34, 0.13], [0.34, -0.13], [-0.36, 0.13], [-0.36, -0.13]].forEach(([x, z], i) => {
+      if (pl) b.rig(pl[i], [x, 0.64, z]); else b.rig(o.body, o.bodyPv);
+      b.pole(x, 0.66, z, x + 0.02, 0.06, z, 0.07, 0.045, seg, i % 2 ? coatD : coat);
+      if (o.hooves && !low) b.box(0.1, 0.07, 0.1, x + 0.03, 0, z, dark);
+    });
+    b.rig(o.body, o.bodyPv || null);
+    b.box(0.34, 0.52, 0.4, 0.3, 0.56, 0, coat); b.box(0.42, 0.46, 0.38, -0.02, 0.6, 0, mul(coat, 1.04)); b.box(0.4, 0.5, 0.4, -0.34, 0.57, 0, coatD);
+    b.rig(o.head, [0.4, 1.0, 0]);
+    b.beam(0.36, 0.96, 0, 0.72, 1.42, 0, 0.2, coat, { t2: 0.17, caps: !low });
+    b.beam(0.7, 1.42, 0, 0.98, 1.2, 0, 0.15, coat, { t2: 0.13, caps: !low });
+    b.box(0.1, 0.1, 0.1, 1.02, 1.12, 0, dark);
+    if (!low) { b.cone(0.035, 0.1, 3, 0.7, 1.46, 0.055, coatD); b.cone(0.035, 0.1, 3, 0.7, 1.46, -0.055, coatD); }
+    b.beam(0.34, 1.05, 0, 0.7, 1.5, 0, 0.05, mane, { t2: 0.07 });
+    b.rig(o.tail, [-0.52, 1.02, 0]);
+    b.beam(-0.52, 1.02, 0, -0.67, 0.5, 0, 0.1, mane, { t2: 0.09 });
+    b.rig(o.body, o.bodyPv || null);
+  }
+  // paddock horse at (x, z) facing +x (dir 1) or -x (dir -1); `off` .5 marks the mirrored one for the shader
+  function paddockHorse(b, q, x, z, dir, coat, mane) {
+    b.push(x, 0, z, dir > 0 ? 0 : PI, 0.85);
+    const f = dir > 0 ? 0 : 0.5;
+    horseGeo(b, q, { coat, mane, legs: null, body: 25, head: 23 + f, tail: 24 + f, bodyPv: [0.4, 0, 0] });   // body and head share the pivot's x/z: one breathing phase
+    b.pop(); b.rig(0, null);
+  }
+
+  // ---- Soeldnerlager (5 x 4): three bright tents (large pavilion, round tent with a pole, ridge tent), a fenced paddock with two horses
+  // (parts 23..25), a weapon rack, a campfire (part 22, anchor `fire`) and the lord's pennant on the pavilion.
+  KINDS.soeldnerlager = function (b, q) {
+    const low = q === 'low', woodD = C(P.timberDark), wood = C(P.timber), woodL = C(P.timberLight), dark = C('#3a2a1c'), one = [1, 1, 1];
+    const cream = C('#f0e4c4'), saff = C('#e7a23a'), plum = C('#8a5a8e'), plumL = C('#b48ab8'), sienna = C('#b9683a');
+    b.rig(7, null);
+    b.bb(-2.45, 0, -1.95, 2.45, 0.05, 1.95, mix(C(P.dirt), C(P.soil), 0.3), { sk: 'b', j: 0.07 });
+    for (const [x, z, r] of (low ? [[-0.7, 0.9, 0.5]] : [[-0.7, 0.9, 0.5], [0.4, 1.1, 0.4], [-1.6, 0.5, 0.35]])) b.cyl(r, r + 0.05, 0.04, 6, x, 0.04, z, mix(C(P.dirt), C(P.sand), 0.35), { j: 0.1 });
+    b.rig(0, null);
+
+    // pavilion: square, cream walls with a braid, hip roof of saffron and cream panels, lord-coloured band, pennant
+    {
+      const cx = -1.5, cz = -0.95, hw = 0.85, wh = 0.7, ay = 2.0, E = hw + 0.14, ref = [cx, 0.9, cz];
+      b.box(2 * hw, wh, 2 * hw, cx, 0, cz, cream, { sk: 'bt', j: 0.05 });
+      b.box(2 * hw + 0.03, 0.11, 2 * hw + 0.03, cx, wh - 0.13, cz, one, { team: 1, sk: 'bt', j: 0.03 });
+      if (!low) {
+        dec(b, 'f', cx, 2 * hw, 0.3, 0.37, cz + hw, sienna, 1); dec(b, 'k', cx, 2 * hw, 0.3, 0.37, cz - hw, sienna, 1);
+        dec(b, 'r', cz, 2 * hw, 0.3, 0.37, cx + hw, sienna, 1); dec(b, 'l', cz, 2 * hw, 0.3, 0.37, cx - hw, sienna, 1);
+      }
+      decPts(b, 'f', [[cx - 0.3, 0], [cx + 0.3, 0], [cx + 0.22, 0.58], [cx - 0.22, 0.58]], cz + hw, dark, 2);
+      const cn = [[cx - E, cz + E], [cx + E, cz + E], [cx + E, cz - E], [cx - E, cz - E]];
+      for (let s = 0; s < 4; s++) for (let k = 0; k < 3; k++) {
+        const a = cn[s], c = cn[(s + 1) % 4], t0 = k / 3, t1 = (k + 1) / 3, n = s * 3 + k;
+        const p0 = [lerp(a[0], c[0], t0), wh, lerp(a[1], c[1], t0)], p1 = [lerp(a[0], c[0], t1), wh, lerp(a[1], c[1], t1)];
+        b.tri3o(p0, p1, [cx, ay, cz], n % 2 ? cream : saff, { j: 0.04, sh: 0.15 }, ref);
+        if (!low) b.tri3o([p0[0], wh, p0[2]], [p1[0], wh, p1[2]], [(p0[0] + p1[0]) / 2, wh - 0.13, (p0[2] + p1[2]) / 2], n % 2 ? saff : cream, { j: 0.04, sh: 0 }, [cx, 0.3, cz]);
+      }
+      pennant(b, cx, ay, cz, 0.5, 0.62, 0.38, q);
+    }
+    // round tent with a pole: striped walls, cone roof, brass ball
+    {
+      const cx = 1.65, cz = -1.15, r = 0.78, wh = 0.55, ay = 1.7, sg = 8;
+      b.cyl(r, r, wh, sg, cx, 0, cz, (k) => (k % 2 ? cream : plum), { sk: 'bt', j: 0.05, rot: PI / 8 });
+      b.cyl(0, r + 0.12, ay - wh, sg, cx, wh, cz, (k) => (k % 2 ? plumL : cream), { j: 0.06, rot: PI / 8 });
+      b.pole(cx, ay - 0.05, cz, cx, ay + 0.42, cz, 0.035, 0.025, 4, woodD);
+      b.cone(0.07, 0.12, 4, cx, ay + 0.42, cz, C(P.brass), { sh: 0 });
+      decPts(b, 'f', [[cx - 0.2, 0], [cx + 0.2, 0], [cx + 0.15, 0.48], [cx - 0.15, 0.48]], cz + r * cos(PI / 8) + 0.002, dark, 2);
+    }
+    // ridge tent (ridge along z, gables face +z / -z), saffron and cream stripes
+    {
+      const cx = 0.0, cz = -1.1, hw = 0.55, hl = 0.72, wh = 0.3, ay = 1.12, E = hw + 0.1, zF = cz + hl + 0.1, zB = cz - hl - 0.1;
+      b.box(2 * hw, wh, 2 * hl, cx, 0, cz, cream, { sk: 'bt', j: 0.05 });
+      for (let k = 0; k < 3; k++) {
+        const z0 = lerp(zB, zF, k / 3), z1 = lerp(zB, zF, (k + 1) / 3), c = k % 2 ? cream : saff, o = { j: 0.04, sh: 0.15 };
+        b.quad([cx - E, wh, z0], [cx - E, wh, z1], [cx, ay, z1], [cx, ay, z0], c, o);
+        b.quad([cx, ay, z0], [cx, ay, z1], [cx + E, wh, z1], [cx + E, wh, z0], c, o);
+      }
+      b.tri([cx - E, wh, zF], [cx + E, wh, zF], [cx, ay, zF], mul(cream, 0.95), { j: 0.04, sh: 0.1 });
+      b.tri([cx + E, wh, zB], [cx - E, wh, zB], [cx, ay, zB], mul(cream, 0.95), { j: 0.04, sh: 0.1 });
+      decPts(b, 'f', [[cx - 0.2, 0], [cx + 0.2, 0], [cx + 0.2, wh - 0.02], [cx - 0.2, wh - 0.02]], cz + hl, dark, 2);
+      if (!low) { b.pole(cx, ay - 0.05, zF + 0.02, cx, ay + 0.3, zF + 0.02, 0.03, 0.02, 4, woodD); b.pole(cx, ay - 0.05, zB - 0.02, cx, ay + 0.3, zB - 0.02, 0.03, 0.02, 4, woodD); }
+    }
+    // paddock: posts and two rails on four sides, gate gap at the front; two horses
+    {
+      const x0 = 0.6, x1 = 2.4, z0 = 0.08, z1 = 1.86, gap = [1.2, 1.7], post = (x, z) => b.pole(x, 0, z, x, 0.92, z, 0.05, 0.045, 4, woodL);
+      const sides = [[x0, z0, x1, z0], [x1, z0, x1, z1], [x0, z1, gap[0], z1], [gap[1], z1, x1, z1], [x0, z0, x0, z1]];
+      for (const [ax, az, bx, bz] of sides) {
+        const n = Math.max(1, Math.round(Math.hypot(bx - ax, bz - az) / (low ? 0.95 : 0.62)));
+        for (let i = 0; i <= n; i++) post(lerp(ax, bx, i / n), lerp(az, bz, i / n));
+        b.beam(ax, 0.72, az, bx, 0.72, bz, 0.05, wood); if (!low) b.beam(ax, 0.4, az, bx, 0.4, bz, 0.05, wood);
+      }
+      paddockHorse(b, q, 1.3, 0.72, 1, C('#8a5530'), C('#2b2019'));
+      paddockHorse(b, q, 1.78, 1.38, -1, C('#c9ae82'), C('#6a5238'));
+    }
+    // campfire: stone ring, crossed logs, flame (part 22); log seats and a cooking tripod outside
+    {
+      const fx = -0.75, fz = 0.9, nst = low ? 5 : 7;
+      for (let i = 0; i < nst; i++) { const a = (i / nst) * TAU + 0.3; b.push(fx + cos(a) * 0.32, 0, fz + sin(a) * 0.32, -a); b.box(0.15, 0.11, 0.12, 0, 0, 0, stoneTone(C(P.rock), i, 4, 0), { sk: 'b', j: 0.1 }); b.pop(); }
+      b.pole(fx - 0.28, 0.1, fz - 0.12, fx + 0.24, 0.2, fz + 0.14, 0.05, 0.045, 4, C('#2a1d14'), { caps: !low });
+      b.pole(fx - 0.2, 0.1, fz + 0.2, fx + 0.26, 0.2, fz - 0.16, 0.05, 0.045, 4, C('#3a2a1c'), { caps: !low });
+      b.rig(22, [fx, 0.12, fz]);
+      b.cone(0.2, 0.66, 5, fx, 0.12, fz, mix(C(P.flame), C(P.ember), 0.45), { glow: 3.0, sh: 0, j: 0.06 });
+      b.cone(0.12, 0.46, 4, fx, 0.12, fz, C(P.flame), { glow: 3.6, sh: 0, j: 0.04 });
+      b.cone(0.06, 0.28, 3, fx, 0.12, fz, C(P.flameHot), { glow: 4.2, sh: 0, j: 0.03 });
+      b.rig(0, null);
+      b.pole(fx - 1.0, 0.1, fz + 0.45, fx - 0.4, 0.1, fz + 0.8, 0.1, 0.1, 5, C(P.bark), { caps: true, cap: C(P.timberLight) });
+      if (!low) b.pole(fx + 0.25, 0.1, fz + 0.95, fx + 0.85, 0.1, fz + 0.7, 0.1, 0.1, 5, C(P.bark), { caps: true, cap: C(P.timberLight) });
+    }
+    // weapon rack with short bows, spears and a lord-coloured shield; barrel and crate by the pavilion
+    {
+      const rx0 = -0.35, rx1 = 0.45, rz = 1.62;
+      for (const x of [rx0, rx1]) b.pole(x, 0, rz, x, 1.18, rz, 0.05, 0.045, 4, woodD);
+      b.beam(rx0, 1.05, rz, rx1, 1.05, rz, 0.05, wood); b.beam(rx0, 0.45, rz, rx1, 0.45, rz, 0.05, wood);
+      for (let i = 0; i < 3; i++) { const x = rx0 + 0.18 + i * 0.2; b.pole(x, 0.2, rz + 0.1, x + 0.05, 0.62, rz + 0.1, 0.017, 0.017, 3, woodL); b.pole(x + 0.05, 0.62, rz + 0.1, x, 1.02, rz + 0.1, 0.017, 0.017, 3, woodL); }
+      for (const x of [rx0 + 0.1, rx1 - 0.1]) { b.pole(x, 0.04, rz + 0.18, x + 0.04, 1.55, rz + 0.1, 0.02, 0.016, 4, woodL); b.cone(0.045, 0.18, 4, x + 0.04, 1.55, rz + 0.1, C(P.steel)); }
+      if (!low) { b.push(rx1 + 0.28, 0.3, rz + 0.1, 0, 1, PI / 2 - 0.35); b.cyl(0.24, 0.24, 0.05, 8, 0, -0.025, 0, C(P.plankDark)); b.cyl(0.2, 0.2, 0.012, 8, 0, 0.026, 0, one, { team: 1, sk: 'b' }); b.pop(); }
+      if (!low) barrel(b, -2.2, 0, 0.2, 0.18, 0.42, q);
+      crate(b, -2.15, 0, 0.7, 0.4, 0.3); sack(b, -1.8, 0, 0.55, 0.16, C(P.sack), q);
+    }
+    return { w: 5, d: 4, h: 0.95, wood: true, anchors: { door: [-0.4, 0, 2.0], work: [-0.6, 0, 1.35], fire: [-0.75, 0.25, 0.9] } };
   };
 
   // =====================================================================
@@ -1190,6 +1655,84 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
       for (const [x0, x1, z0, z1] of [[-0.5, 2.5, -2.0, 2.0], [-2.5, -0.5, 0.0, 2.0]]) b.bb(ox + x0 + 0.03, 0, oz + z0 + 0.03, ox + x1 - 0.03, 0.04, oz + z1 - 0.03, mix(ash, C(P.soil), 0.12), { sk: 'b', j: 0.12 });
       for (let i = 0; i < 14; i++) b.box(0.05, 0.1 + r() * 0.12, 0.05, ox + (r() * 3 - 0.5), 0.04, oz + (r() * 4 - 2), C(P.char));
     }
+    return b;
+  }
+
+
+  // =====================================================================
+  // PHASE 2 construction sites and ruins that differ from the generic ones
+  // =====================================================================
+  // palisade site: pegs and string along both sides, a dug trench with soil banks, leaning props and a lashing rail
+  function siteWall(T, L, stone, q) {
+    const b = new B(T), low = q === 'low', hl = L / 2 - 0.05, peg = C(P.timberLight), twine = C(P.straw), soil = C(P.soil), earth = mix(C(P.dirt), C(P.soil), 0.5), pole = C('#a9824f');
+    b.rig(10, null);
+    for (const sz of [-1, 1]) {
+      for (let i = 0; i <= L; i++) { const x = -hl + 2 * hl * i / L; b.box(0.07, 0.42, 0.07, x, 0, sz * 0.43, peg); if (i === 0 || i === L) b.box(0.11, 0.1, 0.02, x + 0.05, 0.28, sz * 0.43, [1, 1, 1], { team: 1 }); }
+      b.beam(-hl, 0.33, sz * 0.43, hl, 0.33, sz * 0.43, 0.014, twine);
+    }
+    b.pole(-hl + 0.2, 0.07, -0.25, -hl + 0.95, 0.07, -0.22, 0.06, 0.06, 5, C(P.bark), { caps: true, cap: C(P.wattle) });
+    if (!low) b.pole(-hl + 0.25, 0.07, -0.05, -hl + 0.9, 0.07, -0.03, 0.06, 0.06, 5, C(P.bark), { caps: true, cap: C(P.wattle) });
+    b.rig(11, null);
+    b.bb(-hl, 0, -0.17, hl, 0.04, 0.17, soil, { sk: 'b', j: 0.08 });
+    for (const sz of [-1, 1]) b.roof(2 * hl, 0.3, 0.12, 0, 0, sz * 0.3, earth, { under: false, j: 0.08, endCol: earth });
+    b.rig(12, null);
+    for (let i = 0; i < L; i++) b.beam(-L / 2 + i + 0.5, 0, 0.46, -L / 2 + i + 0.5, 1.5, 0.08, 0.06, pole);
+    b.beam(-hl, 1.15, 0.08, hl, 1.15, 0.08, 0.05, pole);
+    return b;
+  }
+  // wall ruins: a stone wall is a low trail of rubble with a few broken stumps; a palisade is a row of snapped, charred stakes
+  function ruinWall(T, L, stone, q) {
+    const b = new B(T), r = rng(L * 131 + (stone ? 7 : 3)), low = q === 'low', hl = L / 2;
+    const wallC = stone ? C(P.stone) : C(P.timberDark), cinder = C(P.char), ash = mix(C('#3a332f'), stone ? C(P.stoneDark) : C(P.dirt), 0.3);
+    b.bb(-hl + 0.02, 0, stone ? -0.46 : -0.34, hl - 0.02, 0.05, stone ? 0.46 : 0.34, ash, { sk: 'b', j: 0.12 });
+    if (stone) {
+      // a continuous mound of rubble along the line, a few low broken stumps (stepped, narrowing blocks) and fallen blocks beside it
+      const nh = L * (low ? 2 : 3);
+      for (let k = 0; k < nh; k++) {
+        const rad = 0.2 + r() * 0.2;
+        b.sph(rad, -hl + (k + 0.5) * (L / nh) + (r() - 0.5) * 0.15, 0.05 + rad * 0.4, (r() - 0.5) * 0.5, mix(wallC, ash, 0.2 + r() * 0.5), { jit: 0.35, s: [1.3, 0.66, 1.1] });
+      }
+      for (let i = 0; i < L; i++) {
+        const cx = -hl + i + 0.5;
+        if (r() < 0.55 || i === 0) {
+          const h1 = 0.25 + r() * 0.35, w = 0.62 + r() * 0.3, x = cx + (r() - 0.5) * 0.2;
+          b.box(w, h1, 0.84, x, 0.03, 0, stoneTone(wallC, i, 4, 0), { j: 0.12 });
+          if (!low) b.box(w * 0.55, 0.12 + r() * 0.25, 0.58, x + (r() - 0.5) * 0.25, h1 + 0.03, (r() - 0.5) * 0.15, stoneTone(wallC, i, 5, 0.1), { j: 0.12 });
+        }
+        if (!low) { b.push(cx + (r() - 0.5) * 0.7, 0.1, (r() < 0.5 ? -1 : 1) * (0.28 + r() * 0.18), r() * 3, 1, (r() - 0.5) * 0.5, (r() - 0.5) * 0.5); b.box(0.28, 0.18, 0.24, 0, 0, 0, stoneTone(wallC, i, 6, 0.05), { j: 0.12 }); b.pop(); }
+      }
+    } else {
+      const n = Math.round(L / (low ? 0.34 : 0.25));
+      for (let i = 0; i < n; i++) {
+        const x = -hl + (i + 0.5) * (L / n);
+        if (r() < 0.38) continue;
+        const tall = r() < 0.3, h = tall ? 0.95 + r() * 0.9 : 0.12 + r() * 0.5, lx = (r() - 0.5) * 0.35 * h, lz = (r() - 0.5) * 0.2 * h;
+        b.pole(x, 0, (r() - 0.5) * 0.12, x + lx, h, (r() - 0.5) * 0.12 + lz, 0.12, 0.095, 4, mix(cinder, wallC, r() * 0.5), { caps: !low, cap: cinder, j: 0.14 });
+      }
+      for (const s of [-1, 1]) b.pole(s * (hl - 0.15), 0, 0, s * (hl - 0.15) + (r() - 0.5) * 0.1, 0.5 + r() * 0.8, 0, 0.16, 0.13, 5, cinder, { caps: true, cap: cinder, j: 0.14 });
+      b.pole(-hl * 0.5, 0.1, 0.22, -hl * 0.5 + 0.85, 0.1, 0.26, 0.09, 0.09, 5, mix(cinder, wallC, 0.4), { caps: !low, cap: cinder, j: 0.14 });
+      if (!low) b.pole(hl * 0.2, 0.1, -0.25, hl * 0.2 + 0.7, 0.1, -0.2, 0.08, 0.08, 5, cinder, { caps: true, cap: cinder, j: 0.14 });
+      b.cone(0.06, 0.1, 3, -hl * 0.2, 0.05, 0.1, C(P.ember), { glow: 1.2, sh: 0, j: 0.1 });
+    }
+    return b;
+  }
+  // Torhaus ruin: two broken tower stumps, a heap of fallen arch stones and burnt door planks
+  function ruinGate(T, q) {
+    const b = new B(T), r = rng(777), low = q === 'low', st = C(P.stone), stD = C(P.stoneDark), cinder = C(P.char), ash = mix(C('#3a332f'), C(P.stoneDark), 0.3);
+    b.bb(-1.42, 0, -0.92, 1.42, 0.06, 0.92, ash, { sk: 'b', j: 0.12 });
+    for (const [sx, h1, h2] of [[-1, 1.7, 2.3], [1, 1.1, 1.5]]) {
+      const cx = sx * 1.0;
+      b.bb(cx - 0.5, 0, -0.95, cx + 0.5, h1, 0.95, stoneTone(st, sx + 2, 4, 0), { sk: 'b', j: 0.1 });
+      b.bb(cx - 0.5, h1, -0.95, cx + 0.1 * sx, h2, -0.2, stoneTone(st, sx + 2, 5, 0.1), { sk: 'b', j: 0.12 });
+      if (!low) b.bb(cx - 0.45 * sx, h1, 0.2, cx + 0.5 * sx, h1 + 0.4, 0.95, stoneTone(st, sx + 2, 6, 0.05), { sk: 'b', j: 0.12 });
+    }
+    for (let i = 0; i < (low ? 4 : 8); i++) {
+      b.push((r() - 0.5) * 1.1, 0.06, (r() - 0.5) * 1.5, r() * 3, 1, (r() - 0.5) * 0.5, (r() - 0.5) * 0.5);
+      b.box(0.26 + r() * 0.16, 0.17, 0.22 + r() * 0.12, 0, 0, 0, stoneTone(stD, i, 7, 0), { j: 0.12 }); b.pop();
+    }
+    for (let i = 0; i < (low ? 3 : 7); i++) b.sph(0.16 + r() * 0.2, (r() - 0.5) * 2.6, 0.09, (r() - 0.5) * 1.6, mix(st, ash, 0.3 + r() * 0.3), { jit: 0.3, s: [1, 0.6, 1] });
+    b.beam(-0.35, 0.08, 0.25, 0.3, 0.2, -0.1, 0.1, cinder, { j: 0.15 });
+    if (!low) { b.beam(0.1, 0.08, -0.4, 0.4, 0.14, 0.3, 0.08, cinder, { j: 0.15 }); b.cone(0.07, 0.1, 3, -0.1, 0.06, 0.2, C(P.ember), { glow: 1.2, sh: 0, j: 0.1 }); }
     return b;
   }
 
@@ -1315,19 +1858,20 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
   // PUBLIC: building / keep
   // =====================================================================
   const defCache = new Map();
-  function getDef(T, kind, q) {
-    const key = q + kind; let d = defCache.get(key);
+  const WALLS = { palisade: 1, mauer: 1 };                    // kinds with a length: 1 x len cells along +x
+  function getDef(T, kind, q, len) {
+    const key = q + kind + (len || ''); let d = defCache.get(key);
     if (d) return d;
     const fn = KINDS[kind];
     if (!fn) throw new Error('FurtArt.building: unknown kind ' + kind);
-    const b = new B(T), info = fn(b, q);
+    const b = new B(T), info = fn(b, q, { len });
     const rc = info.rect || [0, 0, info.w, info.d];            // the part of the footprint covered by the building itself
     const mv = (g, dx, dz) => { g.translate(dx, 0, dz); g.computeBoundingSphere(); g.computeBoundingBox(); return g; };
     d = {
       info, body: b.geo(),
-      site: mv(siteGeo(T, rc[2], rc[3], info.h, q, info.rect ? [info.w, info.d, rc[0], rc[1]] : null).geo(), rc[0], rc[1]),
-      crane: craneGeo(T, info.h + 0.7, Math.min(rc[2], rc[3]) * 0.55, q).geo(),
-      ruin: mv(ruinGeo(T, rc[2], rc[3], !!info.stone, hash2(kind.length * 31, kind.charCodeAt(0)) * 1e6 + 5, q, info.farm ? [info.w, info.d, rc[0], rc[1]] : null).geo(), rc[0], rc[1])
+      site: mv((info.siteFn ? info.siteFn(T, q) : siteGeo(T, rc[2], rc[3], info.h, q, info.rect ? [info.w, info.d, rc[0], rc[1]] : null)).geo(), rc[0], rc[1]),
+      crane: info.noCrane ? null : craneGeo(T, info.h + 0.7, Math.min(rc[2], rc[3]) * 0.55, q).geo(),
+      ruin: mv((info.ruinFn ? info.ruinFn(T, q) : ruinGeo(T, rc[2], rc[3], !!info.stone, hash2(kind.length * 31, kind.charCodeAt(0)) * 1e6 + 5, q, info.farm ? [info.w, info.d, rc[0], rc[1]] : null)).geo(), rc[0], rc[1])
     };
     defCache.set(key, d);
     return d;
@@ -1337,41 +1881,47 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
   function building(T, kind, opts) {
     opts = opts || {};
     if (kind === 'bergfried') return keep(T, opts);
-    const q = qOf(opts), d = getDef(T, kind, q), info = d.info;
+    const q = qOf(opts), len = WALLS[kind] ? clamp(Math.round(+opts.len || 1), 1, 4) : 0, d = getDef(T, kind, q, len), info = d.info;
     const mat = newMat(T, q, 'main'); setTeam(mat, colOf(opts.color));
     const u = mat.userData.u, group = new T.Group();
     const body = new T.Mesh(d.body, mat), site = new T.Mesh(d.site, mat), ruinM = new T.Mesh(d.ruin, mat);
     body.name = 'body'; site.name = 'site'; ruinM.name = 'ruin';
-    const crane = new T.Mesh(d.crane, mat); crane.name = 'crane';
+    const crane = d.crane ? new T.Mesh(d.crane, mat) : null;                  // walls have no crane
     const rcI = info.rect || [0, 0, info.w, info.d];
-    crane.position.set(rcI[0] + rcI[2] / 2 - 0.45, 0, rcI[1] - rcI[3] / 2 + 0.45);
+    if (crane) { crane.name = 'crane'; crane.position.set(rcI[0] + rcI[2] / 2 - 0.45, 0, rcI[1] - rcI[3] / 2 + 0.45); }
     body.castShadow = true; body.receiveShadow = true; ruinM.castShadow = true; ruinM.receiveShadow = true; site.receiveShadow = true;
-    group.add(body, site, crane, ruinM);
+    if (crane) group.add(body, site, crane, ruinM); else group.add(body, site, ruinM);
     group.rotation.y = -((opts.rot | 0) % 2) * PI / 2;
     const anchors = {};
     for (const k in info.anchors) if (info.anchors[k]) anchors[k] = _anchor(T, group, k, info.anchors[k]);
+    // archer positions on top (local {x, y, z}, feet height; group frame, so they follow the rotation): mauer one per cell, torhaus 4, wachturm 3
+    if (info.slots) anchors.slots = info.slots.map((s) => ({ x: s.x, y: s.y, z: s.z }));
     let buildP = 1, ruined = false, lt = null, workV = 0;
     const vis = () => {
       body.visible = !ruined && buildP > 0.33; body.castShadow = buildP >= 0.999;
-      site.visible = !ruined && buildP < 0.999; crane.visible = !ruined && buildP < 0.999 && buildP > 0.05; ruinM.visible = ruined;
+      site.visible = !ruined && buildP < 0.999; if (crane) crane.visible = !ruined && buildP < 0.999 && buildP > 0.05; ruinM.visible = ruined;
     };
     function setBuild(p) { buildP = clamp(p == null ? 1 : p, 0, 1); u.uBuild.value = buildP; vis(); }
     function setDamage(hp) { u.uDmg.value = 1 - clamp(hp == null ? 1 : hp, 0, 1); }
     function setBurnt(bn) { u.uBurnt.value = clamp(bn || 0, 0, 1) * (info.stone ? 0.45 : 1); }
     function setRuined(r) { ruined = !!r; vis(); }
     function setGrowth(g) { u.uGrowth.value = clamp(g == null ? 1 : g, 0, 1); }
+    // torhaus: 0 closed .. 1 wide open (the leaves swing inwards); harmless on every other kind
+    function setOpen(v) { u.uOpen.value = clamp(v == null ? 0 : v, 0, 1); }
+    // world position of archer slot i (needs the group placed; fills and returns `out`, a THREE.Vector3)
+    function slotWorld(i, out) { const s = info.slots && info.slots[i]; if (!s) return null; group.updateWorldMatrix(true, false); return out.set(s.x, s.y, s.z).applyMatrix4(group.matrixWorld); }
     function animate(t, a) {
       a = a || {};
       const first = lt == null, dt = first ? 0 : clamp(t - lt, 0, 0.25); lt = t;
       const target = a.working && !ruined && buildP >= 0.999 ? 1 : 0;
       workV = first ? target : lerp(workV, target, 1 - Math.exp(-3 * dt));
       u.uWork.value = workV;
-      if (crane.visible) crane.rotation.y = sin(t * 0.8) * 1.0;
+      if (crane && crane.visible) crane.rotation.y = sin(t * 0.8) * 1.0;
       if (a.night != null) setNight(a.night);
     }
     function dispose() { mat.dispose(); }
     setBuild(opts.build == null ? 1 : opts.build); setGrowth(opts.growth == null ? 1 : opts.growth);
-    return { group, setBuild, setDamage, setBurnt, setRuined, setGrowth, animate, anchors, kind, dispose, mesh: body, material: mat };
+    return { group, setBuild, setDamage, setBurnt, setRuined, setGrowth, setOpen, slotWorld, animate, anchors, kind, len: len || 1, dispose, mesh: body, material: mat };
   }
 
   const keepCache = new Map();
@@ -1429,8 +1979,8 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
   // UNITS: one InstancedMesh per kind, animated entirely in the vertex shader (see VS_UNIT).
   // Nose along +x, feet at y = 0. Body parts are tagged with aRig (pivot + part id).
   // =====================================================================
-  const UNIT_KINDS = ['bauer', 'speer', 'bogen', 'ritter', 'fackel'];
-  const UNIT_DIMS = { bauer: [0.33, 0.62, 0.17], speer: [0.37, 0.7, 0.19], bogen: [0.35, 0.66, 0.14], ritter: [1.1, 1.4, 0.2], fackel: [0.34, 0.64, 0.16] };
+  const UNIT_KINDS = ['bauer', 'speer', 'bogen', 'ritter', 'fackel', 'reiterschuetze', 'ramme'];
+  const UNIT_DIMS = { bauer: [0.33, 0.62, 0.17], speer: [0.37, 0.7, 0.19], bogen: [0.35, 0.66, 0.14], ritter: [1.1, 1.4, 0.2], fackel: [0.34, 0.64, 0.16], reiterschuetze: [1.07, 1.36, 0.17], ramme: [0.35, 0.8, 0.3] };
   const ONE = [1, 1, 1];
 
   // legs (parts 1/2) and arms (3/4) of a biped; arms end in hands
@@ -1599,7 +2149,100 @@ totalEmissiveRadiance += fBase * min(vGlow * uGlow, 3.0) + vec3(1.0, 0.38, 0.08)
     b.rig(0, null);
     return b;
   }
-  const UNIT_BUILD = { bauer: bauerBuild, speer: speerBuild, bogen: bogenBuild, ritter: ritterBuild, fackel: fackelBuild };
+
+  // Reiterschuetze: a light dun horse and a rider with a short bow. Lord colour on the saddle cloth, the flank drapes and the tabard.
+  // Parts as the ritter: horse legs 11..14, head 15, tail 10; arms 3 / 4, bow 6, arrow 7.
+  function reiterBuild(T, q) {
+    const b = new B(T), low = q === 'low', skin = C(P.skin), steel = C(P.steel), dark = C('#2b2019');
+    const shY = 1.36, armZ = 0.17, handY = shY - 0.34, cloth = C('#cdb88a'), leather = C('#6b4a30'), pants = C('#5a4a30'), capC = C('#4a3524');
+    horseGeo(b, q, { coat: C('#c9a266'), mane: C('#4a3524'), legs: [11, 12, 13, 14], body: 0, head: 15, tail: 10, hooves: true });
+    b.rig(0, null);
+    // saddle cloth and flank drapes in the lord's colour, a thin trim
+    b.box(0.5, 0.06, 0.5, -0.02, 1.07, 0, ONE, { team: 1, sk: low ? 'b' : '' });
+    for (const sz of [-1, 1]) { b.box(0.44, 0.34, 0.03, 0.0, 0.7, sz * 0.215, ONE, { team: 1, sk: low ? 'btrl' : '' }); if (!low) b.box(0.46, 0.04, 0.04, 0.0, 0.68, sz * 0.217, C(P.brass), { sk: '' }); }
+    // rider: legs along the flanks, tabard, belt, head with a pointed fur cap, quiver
+    for (const sz of [-1, 1]) { b.box(0.11, 0.4, 0.09, 0.02, 0.74, sz * 0.265, pants); if (!low) b.box(0.17, 0.07, 0.1, 0.05, 0.7, sz * 0.265, leather); }
+    b.box(0.26, 0.4, 0.31, -0.03, 1.07, 0, ONE, { team: 1 });
+    b.box(0.275, 0.05, 0.325, -0.03, 1.13, 0, leather);
+    if (low) b.box(0.2, 0.2, 0.2, -0.03, 1.46, 0, skin); else b.sph(0.12, -0.03, 1.53, 0, skin, { s: [1, 1.05, 1] });
+    if (!low) b.cyl(0.14, 0.15, 0.07, 6, -0.03, 1.55, 0, capC, { sk: '' });
+    b.cone(0.12, 0.22, low ? 5 : 6, -0.03, 1.6, 0, capC);
+    b.pole(-0.2, 1.08, 0.07, -0.27, 1.5, 0.1, 0.05, 0.055, low ? 4 : 5, leather, { caps: !low, cap: dark });
+    // arms (parts 3, 4)
+    for (const [part, sz] of [[3, 1], [4, -1]]) {
+      b.rig(part, [0, shY, sz * armZ]);
+      b.box(0.085, 0.32, 0.085, 0, shY - 0.32, sz * armZ, cloth);
+      if (!low) b.box(0.07, 0.07, 0.07, 0, shY - 0.4, sz * armZ, skin);
+    }
+    // short bow (part 6) in the left hand, arrow (part 7) at the right
+    b.rig(6, [0, handY, armZ]);
+    const hz = 0.12, bh = 0.3, wood = C(P.timber), woodL = C(P.timberLight);
+    if (low) { b.beam(0.03, handY, hz, -0.05, handY + bh, hz, 0.035, wood); b.beam(0.03, handY, hz, -0.05, handY - bh, hz, 0.035, wood); }
+    else {
+      b.beam(0.05, handY, hz, 0.0, handY + bh * 0.55, hz, 0.035, wood); b.beam(0.0, handY + bh * 0.55, hz, -0.07, handY + bh, hz, 0.03, woodL);
+      b.beam(0.05, handY, hz, 0.0, handY - bh * 0.55, hz, 0.035, wood); b.beam(0.0, handY - bh * 0.55, hz, -0.07, handY - bh, hz, 0.03, woodL);
+      b.beam(-0.07, handY + bh, hz, -0.07, handY - bh, hz, 0.01, C(P.cream));
+    }
+    b.rig(7, [0, handY, -armZ]);
+    b.pole(0.0, handY, 0.03, 0.52, handY, 0.03, 0.012, 0.012, 3, woodL);
+    b.push(0.52, handY, 0.03, 0, 1, 0, -PI / 2); b.cone(0.03, 0.08, 3, 0, 0, 0, steel); b.pop();
+    b.rig(0, null);
+    return b;
+  }
+
+  // Rammbock: a covered log on 4 wheels (about 3 x 1.4 x 1.6). Hide roof with one lord-coloured hide draped over the ridge, hide curtains down
+  // the sides, 4 men whose legs show underneath (parts 1 / 2, one pivot per man), the log (part 5) swings on chains (part 6), wheels = part 17.
+  function rammeBuild(T, q) {
+    const b = new B(T), low = q === 'low', wood = C(P.timber), woodD = C(P.timberDark), woodL = C(P.timberLight), iron = C(P.iron), steel = C(P.steel);
+    const pants = C('#4d4338'), boot = C('#2e241c'), tunic = C('#7a6a4c');
+    const hides = [C('#b8956a'), C('#7a5535'), C('#d9c9a8'), C('#5a4030'), C('#a8793c'), C('#8a6a48')];
+    const yE = 0.9, yR = 1.42, zE = 0.74, x0 = -1.25, x1 = 1.2, WZ = 0.74;
+    // wheels
+    for (const x of [-0.8, 0.75]) for (const sz of [-1, 1]) {
+      b.push(x, 0.34, sz * WZ, 0, 1, sz * PI / 2); b.rig(17, [0, 0, 0]);
+      b.cyl(0.34, 0.34, 0.12, low ? 5 : 6, 0, -0.06, 0, wood, { sk: '', j: 0.08, cap: woodL });
+      if (!low) { b.quad([-0.3, 0.062, -0.04], [-0.3, 0.062, 0.04], [0.3, 0.062, 0.04], [0.3, 0.062, -0.04], woodD, { dbl: true, j: 0.04, sh: 0 }); b.quad([-0.04, 0.062, -0.3], [-0.04, 0.062, 0.3], [0.04, 0.062, 0.3], [0.04, 0.062, -0.3], woodD, { dbl: true, j: 0.04, sh: 0 }); }
+      b.pop(); b.rig(0, null);
+    }
+    for (const x of [-0.8, 0.75]) b.beam(x, 0.34, -WZ, x, 0.34, WZ, 0.08, woodD);
+    // frame: corner posts, eave rails, ridge beam
+    for (const x of [-1.1, 1.0]) for (const sz of [-1, 1]) b.box(0.09, yE - 0.3, 0.09, x, 0.3, sz * 0.66, wood, { sk: 'bt' });
+    for (const sz of [-1, 1]) b.beam(x0, yE, sz * zE, x1, yE, sz * zE, 0.09, woodD);
+    b.beam(x0 - 0.05, yR + 0.01, 0, x1 + 0.05, yR + 0.01, 0, 0.1, woodD);
+    // hide roof: patches along the slopes, the lord's hide draped over the ridge in the middle; hide curtains hang from the eaves
+    const cuts = [x0, -0.85, -0.38, 0.45, 0.85, x1], ro = { dbl: !low, j: 0.05, sh: 0.12 };
+    for (let i = 0; i < cuts.length - 1; i++) {
+      const a = cuts[i], c = cuts[i + 1], lord = i === 2, col = lord ? ONE : hides[i % hides.length], o = lord ? { ...ro, team: 1, j: 0.03 } : ro, e = lord ? 0.025 : 0;
+      b.quad([a, yE + e, zE + e], [c, yE + e, zE + e], [c, yR + e, 0], [a, yR + e, 0], col, o);
+      b.quad([c, yE + e, -zE - e], [a, yE + e, -zE - e], [a, yR + e, 0], [c, yR + e, 0], col, o);
+      const cz = zE - 0.06, yB = 0.4 + (i % 2) * 0.04;
+      b.quad([a, yB, cz], [c, yB, cz], [c, yE, zE - 0.02], [a, yE, zE - 0.02], mul(hides[(i + 2) % hides.length], 0.92), { j: 0.05, sh: 0.15 });
+      b.quad([c, yB, -cz], [a, yB, -cz], [a, yE, -zE + 0.02], [c, yE, -zE + 0.02], mul(hides[(i + 3) % hides.length], 0.92), { j: 0.05, sh: 0.15 });
+    }
+    b.tri([x0, yE, -zE], [x0, yE, zE], [x0, yR, 0], hides[1], { dbl: true, j: 0.05 });                              // closed back gable
+    // crew: four men, only their legs (and a tunic hem) show below the curtains
+    const men = [[-0.45, 0.36], [0.35, 0.36], [-0.45, -0.36], [0.35, -0.36]];
+    for (const [x, z] of men) {
+      if (!low) b.box(0.26, 0.3, 0.3, x, 0.33, z, tunic, { j: 0.08 });
+      for (const [part, sz] of [[1, 1], [2, -1]]) {
+        b.rig(part, [x, 0.35, z + sz * 0.075]);
+        b.box(0.1, 0.35, 0.1, x, 0, z + sz * 0.075, pants, { sk: 'bt' });
+        if (!low) b.box(0.16, 0.07, 0.115, x + 0.03, 0, z + sz * 0.075, boot);
+      }
+      b.rig(0, null);
+    }
+    // the log on four chains: iron-shod head, two iron bands; chains pivot at the ridge
+    b.rig(5, [0, 1.36, 0]);
+    b.pole(-1.0, 0.72, 0, 1.45, 0.72, 0, 0.18, 0.18, low ? 5 : 6, mix(wood, C(P.bark), 0.4), { caps: !low, cap: woodL });
+    b.pole(1.42, 0.72, 0, 1.64, 0.72, 0, 0.2, 0.15, low ? 5 : 6, iron);
+    b.push(1.64, 0.72, 0, 0, 1, 0, -PI / 2); b.cone(0.15, 0.2, low ? 5 : 6, 0, 0, 0, steel); b.pop();
+    if (!low) for (const x of [0.95, -0.9]) b.pole(x, 0.72, 0, x + 0.07, 0.72, 0, 0.205, 0.205, 6, iron);
+    for (const x of low ? [0.4] : [-0.4, 0.45]) for (const z of (low ? [0] : [-0.1, 0.1])) { b.rig(6, [x, 1.36, z]); b.pole(x, 1.36, z, x, 0.9, z, 0.022, 0.022, 3, iron); }
+    b.rig(0, null);
+    return b;
+  }
+
+  const UNIT_BUILD = { bauer: bauerBuild, speer: speerBuild, bogen: bogenBuild, ritter: ritterBuild, fackel: fackelBuild, reiterschuetze: reiterBuild, ramme: rammeBuild };
   const unitGeoCache = new Map();
   const _rgbCache = new Map();
   function rgbLin(v) {

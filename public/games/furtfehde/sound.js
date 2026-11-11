@@ -4,8 +4,8 @@
 // the wanted ambience / battle level is applied once audio runs, and one-shots from the last 1.5 s are replayed.
 //
 //   FurtSound.play(name, { vol, force })   one-shots, names in FurtSound.names (force skips the rate rules; for the harness):
-//                                       combat  clash arrow horn (an order) alarm (a house is attacked)
-//                                       work    hammer chop stone crackle (fire) collapse (a building falls)
+//                                       combat  clash arrow horn (an order) alarm (a house is attacked) thud (a blow of the Rammbock)
+//                                       work    hammer chop stone crackle (fire) collapse (a building falls) crumble (a wall breaks) gate (a Torhaus opens: the creak of its doors)
 //                                       water   bell (a crossing opens) splash
 //                                       events  cheer (plunder) fanfare (herald) chime (pact) sting (betrayal)
 //   FurtSound.ambience(mood)          'calm' (birds + river) | 'flood' (rushing water + rumble) | 'battle' (distant war drums) | null; soft ~3 s crossfades
@@ -14,11 +14,13 @@
 //   FurtSound.unlock()                called by the first pointer / key / touch / click itself; the glue need not call it
 //   FurtSound.supported / failed / names / moods / state() ('none' | 'suspended' | 'running') / stats { nodes, plays, queued, errors } (the glue's „🔇 Klick oder Taste für Ton“ hint reads supported, failed and state)
 //   Quiet building (docs T2): `buildDone` makes no sound; the hammer of build / rebuild plays at half its old volume, at most once per 2 s overall.
+//   Phase 2: `ram` → thud, `breach` → crumble (the glue keeps the clash of a wall `hit` and the collapse of its `ruined` out of it); `gate` is played by the glue when the view says a Torhaus
+//   opens (the view knows, the sim has no event for it), at most once per 2 s; a `trade` makes no sound on the TV.
 (function () {
   'use strict';
   const AC = window.AudioContext || window.webkitAudioContext;
   const noop = function () {};
-  const NAMES = ['clash', 'arrow', 'horn', 'alarm', 'hammer', 'chop', 'stone', 'crackle', 'collapse', 'bell', 'splash', 'cheer', 'fanfare', 'chime', 'sting'];
+  const NAMES = ['clash', 'arrow', 'horn', 'alarm', 'hammer', 'chop', 'stone', 'crackle', 'collapse', 'bell', 'splash', 'cheer', 'fanfare', 'chime', 'sting', 'thud', 'crumble', 'gate'];
   const api = { play: noop, ambience: noop, battle: noop, event: noop, unlock: noop, state: () => 'none', names: NAMES.slice(), moods: ['calm', 'flood', 'battle'], supported: false, failed: false,
     stats: { nodes: 0, plays: 0, queued: 0, errors: [] } };
   window.FurtSound = api;
@@ -31,7 +33,7 @@
   const queue = [];                            // one-shots asked for before the unlock: { name, vol, at }
   let amb = null, ambTimer = null, drumTimer = null, drumNext = 0, drumStep = 0, birdTimer = null;
   const lastAt = {};
-  const MIN_GAP = { clash: 0.05, arrow: 0.05, splash: 0.08 }, DEF_GAP = 0.12;   // s: the same one-shot never stacks closer than this
+  const MIN_GAP = { clash: 0.05, arrow: 0.05, splash: 0.08, thud: 0.25, crumble: 0.3, gate: 2 }, DEF_GAP = 0.12;   // s: the same one-shot never stacks closer than this
   const LOW_PRIO = { clash: 1, arrow: 1, splash: 1, hammer: 1, stone: 1 };
 
   const muted = () => typeof sfx === 'function' && sfx.muted === true;
@@ -159,6 +161,29 @@
         hiss(o, t + d, 0.1, 0.18, 'bandpass', 700 + rnd() * 1600, 400, 1.2, 0.004);
         voice(o, 'square', [[0, 180 + rnd() * 200], [0.06, 90]], t + d, 0.1, 0.07, ['lowpass', 600]);
       }
+    },
+    thud(t, o) {                      // a blow of the Rammbock: a deep boom, the knock of the log on stone or timber, a short rumble behind it
+      const k = rr(0.92, 1.08);
+      voice(o, 'sine', [[0, 120 * k], [0.2, 38]], t, 0.55, 0.8);
+      voice(o, 'triangle', [[0, 210 * k], [0.09, 70]], t, 0.2, 0.3, ['lowpass', 520]);
+      hiss(o, t, 0.13, 0.5, 'lowpass', 800, 140, 0.8, 0.003);
+      hiss(o, t + 0.05, 0.5, 0.2, 'lowpass', 320, 55, 0.7, 0.03);
+    },
+    crumble(t, o) {                   // a wall gives way: a grinding rumble and a boom, then blocks and gravel clatter down
+      hiss(o, t, 1.6, 0.42, 'lowpass', 750, 65, 0.9, 0.05);
+      voice(o, 'sine', [[0, 75], [1.1, 30]], t, 1.3, 0.55);
+      voice(o, 'sawtooth', [[0, 62], [0.9, 38]], t + 0.05, 1.0, 0.05, ['lowpass', 260]);
+      for (let i = 0; i < 15; i++) {
+        const d = 0.12 + i * 0.075 + rnd() * 0.05;
+        hiss(o, t + d, 0.05 + rnd() * 0.04, 0.1 + rnd() * 0.12, 'bandpass', 900 + rnd() * 2400, 500, 1.4, 0.003);
+        if (i % 3 === 0) voice(o, 'triangle', [[0, 260 + rnd() * 220], [0.05, 120]], t + d, 0.09, 0.07, ['lowpass', 900]);
+      }
+    },
+    gate(t, o) {                      // the doors of a Torhaus swing open: a low wooden creak with a wavering pitch and a dull clunk at the end
+      voice(o, 'sawtooth', [[0, 150], [0.25, 215], [0.55, 168], [0.8, 242]], t, 0.95, 0.07, ['bandpass', 520, 7], 0.12);
+      voice(o, 'square', [[0, 95], [0.4, 132], [0.8, 106]], t + 0.05, 0.85, 0.03, ['lowpass', 380, 3], 0.2);
+      hiss(o, t + 0.82, 0.08, 0.25, 'lowpass', 600, 150, 0.8, 0.004);
+      voice(o, 'sine', [[0, 125], [0.1, 60]], t + 0.84, 0.2, 0.28);
     },
     bell(t, o) {                      // a crossing is free: one deep bell stroke with a slow beating decay
       const f0 = 392;
@@ -347,7 +372,8 @@
     shot: ['arrow', 0.5, 0.09], clash: ['clash', 0.55, 0.07], hit: ['clash', 0.28, 0.1], order: ['horn', 0.8, 1.2], attack: ['alarm', 0.9, 4], lastMinute: ['alarm', 0.8, 5],
     build: ['hammer', 0.25, 2, 'hammer'], rebuild: ['hammer', 0.25, 2, 'hammer'], chop: ['chop', 0.6, 0.4], harvest: ['stone', 0.3, 1.2], ignite: ['crackle', 0.7, 0.6],
     cropBurnt: ['crackle', 0.5, 0.8], ruined: ['collapse', 1, 0.5], fireOut: ['splash', 0.7, 0.5], bucket: ['splash', 0.35, 0.3], crossingOpen: ['bell', 0.9, 1],
-    plunder: ['cheer', 1, 2], pactOn: ['chime', 0.9, 1], crown: ['fanfare', 0.55, 2], fehde: ['horn', 1, 5], over: ['fanfare', 1, 5], protEnd: ['chime', 0.4, 1]
+    plunder: ['cheer', 1, 2], pactOn: ['chime', 0.9, 1], crown: ['fanfare', 0.55, 2], fehde: ['horn', 1, 5], over: ['fanfare', 1, 5], protEnd: ['chime', 0.4, 1],
+    ram: ['thud', 0.85, 0.3], breach: ['crumble', 1, 0.4]   // Phase 2 (no entry for `trade` on purpose: trading is silent on the TV)
   };
   const evAt = {};
   api.event = function (ev, opts) {

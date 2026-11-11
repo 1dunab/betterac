@@ -223,4 +223,6 @@ are data PRs.
 - 🏰 Furt & Fehde — 3D castle-building strategy over a river valley: flood truce, fords and
   bridges that open as the water falls, a carrying economy, banners, fire and bucket chains,
   Ruhm with a bounty on the crown, pacts, bots in three strengths, a phone war table with
-  guide and advisor, Kampf-Kamera ([design notes](FURTFEHDE.md)).
+  guide and advisor, Kampf-Kamera; Phase 2 adds palisades, stone walls and gatehouses with
+  garrisoned archers, battering rams, a market with gold and a mercenary camp with horse
+  archers ([design notes](FURTFEHDE.md)).

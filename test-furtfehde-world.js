@@ -1,4 +1,6 @@
 // Regeltests Furt & Fehde: Welt (world.js) – Katalog, Generator, Fairness, Flut-Regel, Wege, Platzierung, Codec, Zeiten.
+// Phase 2 (Mauern & Söldner): die neuen Gebäude und Einheiten (hinten angehängt, Codes stabil), Wandlänge footprintOf(kind, rot, len), canPlace für Mauern, Torhaus-Gasse, Burgtor, Markt und
+// Söldnerlager, suggest mit len, dieselben Antworten auf dem decodierten Gitter und field mit extra-Kosten (gewichtetes Feld).
 const fs = require('fs');
 const crypto = require('crypto');
 const W = require('./public/games/furtfehde/world.js');
@@ -29,12 +31,17 @@ const dev = (a) => { const m = mean(a); return Math.max(...a.map(v => Math.abs(v
   eq(CLASSES.filter(c => c.build).map(c => c.key).join(''), 'AG', 'bebaubare Klassen');
   ok(CLASSES.every(c => /^#[0-9a-f]{6}$/i.test(c.color) && c.name), 'Klassen haben Namen und Farben');
   const sz = (k) => W.BUILDINGS[k].size.join('x') + '/' + W.BUILDINGS[k].mat;
-  eq(Object.keys(W.BUILDINGS).join(','), 'bergfried,huette,hof,kornspeicher,lager,holzfaeller,steinbruch,kaserne,wachturm,brunnen', 'Gebäudeliste');
+  eq(Object.keys(W.BUILDINGS).join(','), 'bergfried,huette,hof,kornspeicher,lager,holzfaeller,steinbruch,kaserne,wachturm,brunnen,palisade,mauer,torhaus,markt,soeldnerlager', 'Gebäudeliste (Phase 2 hinten angehängt: die Codes 1 + Index bleiben stabil)');
   eq([sz('bergfried'), sz('huette'), sz('hof'), sz('kornspeicher'), sz('lager')].join(' '), '6x6/stein 2x2/holz 5x4/holz 3x3/holz 3x3/holz', 'Gebäude 1');
   eq([sz('holzfaeller'), sz('steinbruch'), sz('kaserne'), sz('wachturm'), sz('brunnen')].join(' '), '2x2/holz 3x3/holz 4x3/stein 2x2/stein 1x1/stein', 'Gebäude 2');
   ok(Object.values(W.BUILDINGS).every(b => b.name && b.icon && b.draft && typeof b.draft === 'object'), 'Gebäude haben name/icon/draft');
-  eq(Object.keys(W.UNITS).join(','), 'bauer,speer,bogen,ritter,fackel', 'Einheiten');
-  eq(Object.values(W.UNITS).map(u => u.height).join(','), '1,1.15,1.1,1.8,1.05', 'Einheitenhöhen');
+  eq([sz('palisade'), sz('mauer'), sz('torhaus'), sz('markt'), sz('soeldnerlager')].join(' '), '1x1/holz 1x1/stein 3x2/stein 4x3/holz 5x4/holz', 'Phase-2-Gebäude (Mauern: Grundmaß 1 Zelle, die Länge kommt dazu)');
+  eq(Object.keys(W.UNITS).join(','), 'bauer,speer,bogen,ritter,fackel,reiterschuetze,ramme', 'Einheiten (Phase 2 hinten angehängt)');
+  eq(Object.values(W.UNITS).map(u => u.height).join(','), '1,1.15,1.1,1.8,1.05,1.7,1.6', 'Einheitenhöhen');
+  eq(Object.keys(W.BUILDINGS).filter(k => W.BUILDINGS[k].wall).join(','), 'palisade,mauer', 'Mauern tragen wall: true'); eq(W.BUILDINGS.mauer.maxLen + '/' + W.BUILDINGS.palisade.maxLen, '4/4', 'Wandlänge 1–4');
+  eq([W.isWall('mauer'), W.isWall('palisade'), W.isWall('torhaus'), W.isWall('huette'), W.isWall('zelt')].join(), 'true,true,false,false,false', 'isWall');
+  eq([['mauer', 3], ['mauer'], ['torhaus'], ['wachturm'], ['palisade', 4], ['hof'], ['zelt']].map(([k, n]) => W.slotsOf(k, n)).join(), '3,1,4,3,0,0,0', 'slotsOf: Mauer 1 je Zelle, Torhaus 4, Wachturm 3, sonst 0');
+  eq(Object.keys(W.BUILDINGS).map(k => W.CODE[k]).join(','), '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15', 'Gebäudecodes = 1 + Index');
   eq(W.surf(0.5), 0.6, 'surf(0.5)'); eq(W.surf(1), 1.2, 'surf(1)');
   eq(W.cellOf(-71.99, -44.99), 0, 'cellOf Ecke'); eq(W.cellOf(71.99, 44.99), N - 1, 'cellOf Gegenecke'); eq(W.cellOf(72, 0), -1, 'cellOf rechts raus'); eq(W.cellOf(0, -45.01), -1, 'cellOf oben raus');
   const c = W.cellXY(GW + 1); near(c.x, -70.5, 1e-9, 'cellXY x'); near(c.y, -43.5, 1e-9, 'cellXY y'); eq(W.cellOf(c.x, c.y), GW + 1, 'cellOf(cellXY)');
@@ -413,6 +420,41 @@ for (const seed of SEEDS) {
   eq(W.pathTime(w, [a, goal], 0, wall), Infinity, 'pathTime durch die Mauer = Infinity');
 }
 
+// ---- field with `extra` costs (a weighted field: what a breach of an enemy wall costs) ----
+{
+  const w = world(2), kcs = w.sites.map(s => W.cellOf(s.x + 0.5, s.y + 0.5)), start = kxy(kcs[0]), goal = { x: start.x + 14, y: start.y }, gk = W.cellOf(goal.x, goal.y), sk = W.cellOf(start.x, start.y);
+  const open = W.field(w, [gk], 0), zero = new Float32Array(N);
+  eq(W.field(w, [gk], 0, undefined, undefined, zero)[sk], open[sk], 'extra = 0 überall: das Feld bleibt gleich');
+  let diff = 0; const fz = W.field(w, [gk], 0, undefined, undefined, zero); for (let k = 0; k < N; k++) if (fz[k] !== open[k]) diff++;
+  eq(diff, 0, 'extra = 0: Zelle für Zelle dasselbe Feld');
+  // a full-height wall two cells thick with one gap row that costs 25 per cell: the way through the gap is the open way + 2 × 25
+  const wall = new Uint8Array(N), ex = new Float32Array(N), wi = Math.floor(start.x + 72 + 7), row = Math.floor(start.y + 45);
+  for (let j = 0; j < GH; j++) for (const i of [wi, wi + 1]) wall[j * GW + i] = 1;
+  const none = W.field(w, [gk], 0, undefined, wall);
+  eq(none[sk], Infinity, 'ohne Lücke gibt es keinen Weg');
+  for (const i of [wi, wi + 1]) { wall[row * GW + i] = 0; ex[row * GW + i] = 25; }
+  const gapped = W.field(w, [gk], 0, undefined, wall, ex);
+  near(gapped[sk], open[sk] + 50, 1e-3, 'Lücke mit extra 25 je Zelle: offener Weg + 50 (' + gapped[sk].toFixed(2) + ' gegen ' + open[sk].toFixed(2) + ')');
+  eq(gapped[W.cellOf(start.x, start.y + 3)] < Infinity, true, 'auch Zellen neben der Linie erreichen das Ziel durch die Lücke');
+  let neg = 0; for (let k = 0; k < N; k++) if (gapped[k] < open[k] - 1e-3 && gapped[k] !== Infinity) neg++;
+  eq(neg, 0, 'extra macht nie schneller als das freie Feld');
+  // a short strip with extra 100 across the straight way, walkable around: the field goes around instead of paying
+  const ex2 = new Float32Array(N), mid = W.cellOf((start.x + goal.x) / 2, start.y);
+  for (let dj = -2; dj <= 2; dj++) ex2[mid + dj * GW] = 100;
+  const around = W.field(w, [gk], 0, undefined, undefined, ex2);
+  ok(around[sk] > open[sk] - 1e-6 && around[sk] < open[sk] + 15, 'ein Hindernis mit extra 100 wird umgangen, nicht bezahlt (' + around[sk].toFixed(2) + ' gegen ' + open[sk].toFixed(2) + ')');
+  // the cheapest breach wins: two gaps, the nearer one expensive, the farther one cheap
+  const ex3 = new Float32Array(N), wall3 = new Uint8Array(N);
+  for (let j = 0; j < GH; j++) for (const i of [wi, wi + 1]) wall3[j * GW + i] = 1;
+  const far = Math.min(GH - 2, row + 9);
+  for (const i of [wi, wi + 1]) { wall3[row * GW + i] = 0; ex3[row * GW + i] = 80; wall3[far * GW + i] = 0; ex3[far * GW + i] = 5; }
+  const f3 = W.field(w, [gk], 0, undefined, wall3, ex3);
+  ok(f3[sk] < open[sk] + 80 && f3[sk] > open[sk] + 10 - 1e-6, 'bei zwei Lücken wird die billigere gewählt (' + f3[sk].toFixed(1) + ')');
+  // timing: a weighted field costs about the same as a plain one
+  const buf = new Float32Array(N); let t = process.hrtime.bigint(); for (let n = 0; n < 40; n++) W.field(w, [gk], 0, buf, wall3, ex3); const ms = Number(process.hrtime.bigint() - t) / 1e6 / 40;
+  ok(ms < 5, 'field mit extra Ø < 5 ms (' + ms.toFixed(2) + ')');
+}
+
 // ---- canPlace: every reason from a constructed case ----
 {
   const w = world(2), lord = 0, kp = w.sites[0], own = (k) => w.owner[k] === lord;
@@ -472,10 +514,84 @@ for (const seed of SEEDS) {
   eq(cp('hof', hofSpot.i, hofSpot.j, hofSpot.rot).ok, true, 'Hof-Vorschlag gültig (rot ' + hofSpot.rot + ')');
 }
 
+// ---- Phase 2 placement: walls (1 × len), Torhaus, Markt, Söldnerlager ----
+{
+  const w = world(2), lord = 0, CODE = W.CODE;
+  const cp = (kind, i, j, rot, o) => W.canPlace(w, kind, i, j, rot || 0, Object.assign({ lord, L: 0 }, o || {}));
+  const fp = (kind, rot, len) => W.footprintOf(kind, rot, len).join('x');
+  // footprints: walls are 1 × len (rot 0 along +i, rot 1 along +j), Torhaus 3 × 2 or 2 × 3
+  eq([fp('mauer', 0, 4), fp('mauer', 1, 4), fp('palisade', 0, 2), fp('palisade', 1, 3), fp('mauer', 0, 1)].join(' '), '4x1 1x4 2x1 1x3 1x1', 'footprintOf: Mauern 1 × len');
+  eq([fp('mauer', 0, 9), fp('mauer', 0, 0), fp('mauer', 0), fp('mauer', 1, -3), fp('mauer', 1, NaN)].join(' '), '4x1 1x1 1x1 1x1 1x1', 'footprintOf: zu lang → 4, schlechte Länge → 1');
+  eq([fp('torhaus', 0), fp('torhaus', 1), fp('markt', 0), fp('markt', 1), fp('soeldnerlager', 0), fp('soeldnerlager', 1), fp('huette', 1, 4), fp('kaserne', 1)].join(' '), '3x2 2x3 4x3 3x4 5x4 4x5 2x2 3x4', 'footprintOf: Torhaus, Markt, Söldnerlager (len wirkt nur bei Mauern)');
+  // a free 18 × 12 block of own dry meadow
+  const area = cellsOf(w, k => { const i = k % GW, j = (k - i) / GW; if (i + 18 > GW || j + 12 > GH) return false; for (let dj = 0; dj < 12; dj++) for (let di = 0; di < 18; di++) { const q = (j + dj) * GW + i + di; if (w.owner[q] !== lord || (w.cls[q] !== CI.G && w.cls[q] !== CI.A) || w.hq[q] < 12) return false; } return true; })[0];
+  ok(area !== undefined, 'freier Block gefunden');
+  const bi = area % GW, bj = (area - bi) / GW, occ = new Uint8Array(N);
+  const put = (kind, i, j, rot, len) => { const [wd, ht] = W.footprintOf(kind, rot, len); for (let dj = 0; dj < ht; dj++) for (let di = 0; di < wd; di++) occ[(bj + j + dj) * GW + bi + i + di] = CODE[kind]; };
+  const at = (kind, i, j, rot, len) => cp(kind, bi + i, bj + j, rot, { occ, len });
+  // walls: len 1–4, anything else is `bounds`; the free case is ok for every wall kind
+  for (const k of ['palisade', 'mauer']) {
+    for (let len = 1; len <= 4; len++) { eq(at(k, 2, 2, 0, len).ok, true, k + ' len ' + len + ' rot 0 ok'); eq(at(k, 2, 2, 1, len).ok, true, k + ' len ' + len + ' rot 1 ok'); }
+    eq(at(k, 2, 2, 0).ok, true, k + ': ohne len = 1');
+    for (const bad of [0, 5, 1.5, -1, NaN, '2', Infinity]) eq(at(k, 2, 2, 0, bad).reason, 'bounds', k + ' len ' + String(bad) + ' → bounds');
+  }
+  eq(cp('mauer', GW - 3, bj, 0, { len: 4 }).reason, 'bounds', 'Mauer ragt rechts raus: bounds'); eq(cp('mauer', bi, GH - 3, 1, { len: 4 }).reason, 'bounds', 'Mauer ragt unten raus: bounds'); ok(cp('mauer', GW - 4, bj + 3, 0, { len: 4 }).reason !== 'bounds', 'Mauer passt gerade noch (len wird mitgerechnet)');
+  eq(cp('huette', bi + 2, bj + 2, 0, { len: 4 }).ok, true, 'len wirkt nur bei Mauern (Hütte ignoriert es)');
+  // owner / terrain: another lord's land is `owner`, a ford, bridge or Steg belongs to nobody, and a wall on forest or reed is `terrain`
+  const foreign = cellsOf(w, k => w.owner[k] === 1 && w.owner[k + 1] === 1)[0]; eq(cp('mauer', foreign % GW, Math.floor(foreign / GW), 0, { len: 2 }).reason, 'owner', 'Mauer im fremden Viertel: owner');
+  for (const cr of w.crossings.slice(0, 7)) { const k = cr.cells[Math.floor(cr.cells.length / 2)]; eq(cp('mauer', k % GW, Math.floor(k / GW), 0, { len: 1 }).ok, false, 'auf der Querung ' + cr.id + ' steht nichts'); eq(cp('palisade', k % GW, Math.floor(k / GW), 1, { len: 2 }).ok, false, 'auch keine Palisade auf ' + cr.id); }
+  const forestK = cellsOf(w, k => w.owner[k] === lord && w.cls[k] === CI.T && w.owner[k + 1] === lord)[0]; eq(cp('mauer', forestK % GW, Math.floor(forestK / GW), 0, { len: 2 }).reason, 'terrain', 'Mauer im Wald: terrain');
+  // wet: a wall needs dry ground like everything else
+  const wetK = cellsOf(w, k => w.owner[k] === lord && w.cls[k] === CI.A && w.hq[k] >= 2 && w.hq[k] <= 4)[0];
+  if (wetK !== undefined) { eq(cp('mauer', wetK % GW, Math.floor(wetK / GW), 0, { len: 1 }).ok, true, 'Aue trocken: Mauer ok'); eq(cp('mauer', wetK % GW, Math.floor(wetK / GW), 0, { len: 1, L: 0.5 }).reason, 'wet', 'Aue unter Wasser: wet'); }
+  // walls may touch walls: end to end, alongside, diagonally; overlapping is `occupied`
+  put('mauer', 4, 4, 0, 4);
+  eq(at('mauer', 8, 4, 0, 3).ok, true, 'Mauer Ende an Ende: ok'); eq(at('mauer', 4, 5, 0, 4).ok, true, 'Mauer Seite an Seite: ok'); eq(at('palisade', 8, 5, 1, 2).ok, true, 'Palisade diagonal an der Mauer: ok'); eq(at('palisade', 3, 3, 1, 3).ok, true, 'Palisade am Ende der Mauer, im Winkel: ok');
+  eq(at('mauer', 6, 3, 1, 3).reason, 'occupied', 'Mauer über der Mauer: occupied');
+  // … but keep the usual gap to every other building: a hut one cell away is `tight`, with a free cell between it is ok
+  put('huette', 12, 8, 0); eq(at('mauer', 11, 8, 1, 3).reason, 'tight', 'Mauer dicht an der Hütte: tight'); eq(at('mauer', 11, 10, 0, 2).reason, 'tight', 'Mauer diagonal an der Hütte: tight'); eq(at('mauer', 14, 8, 0, 1).reason, 'tight', 'Mauer auf der anderen Seite: tight'); eq(at('mauer', 9, 8, 1, 3).ok, true, 'eine freie Zelle zur Hütte: ok'); eq(at('palisade', 15, 8, 1, 2).ok, true, 'Palisade mit Abstand zur Hütte: ok');
+  // a new house may not touch a wall (plain rule), a Wachturm or Torhaus may
+  eq(at('huette', 4, 5, 0).reason, 'tight', 'Hütte an der Mauer: tight'); eq(at('kaserne', 4, 5, 0).reason, 'tight', 'Kaserne an der Mauer: tight'); eq(at('huette', 4, 6, 0).ok, true, 'Hütte mit einer freien Zelle zur Mauer: ok');
+  eq(at('wachturm', 4, 5, 0).ok, true, 'Wachturm an der Mauer: ok'); eq(at('wachturm', 8, 3, 0).ok, true, 'Wachturm an der Mauerecke: ok');
+  eq(at('wachturm', 10, 8, 0).reason, 'tight', 'Wachturm an der Hütte: tight (nur Mauern dürfen angrenzen)');
+  put('wachturm', 2, 8, 0); eq(at('mauer', 4, 8, 0, 3).ok, true, 'Mauer an den Wachturm: ok'); eq(at('mauer', 2, 7, 0, 2).ok, true, 'Mauer an den Wachturm (oben): ok'); eq(at('wachturm', 4, 8, 0).reason, 'tight', 'Wachturm an den Wachturm: tight');
+  // Torhaus: 3 × 2 with its lane in the middle column (rot 0) or middle row (rot 1); walls attach to the flanks, never to the lane mouths
+  occ.fill(0);
+  eq(at('torhaus', 6, 4, 0).ok, true, 'Torhaus rot 0 ok'); eq(at('torhaus', 6, 4, 1).ok, true, 'Torhaus rot 1 ok');
+  eq(JSON.stringify(W.laneOf(6, 4, 0)), '{"cells":[[7,4],[7,5]],"ends":[[7,3],[7,6]]}', 'laneOf rot 0: Mittelspalte, Mündungen nördlich und südlich'); eq(JSON.stringify(W.laneOf(6, 4, 1)), '{"cells":[[6,5],[7,5]],"ends":[[5,5],[8,5]]}', 'laneOf rot 1: Mittelzeile, Mündungen westlich und östlich');
+  put('torhaus', 6, 4, 0);
+  eq(at('mauer', 2, 4, 0, 4).ok, true, 'Mauer an die Westflanke: ok'); eq(at('mauer', 9, 4, 0, 4).ok, true, 'Mauer an die Ostflanke: ok'); eq(at('palisade', 9, 4, 1, 2).ok, true, 'Palisade an die Ostflanke, senkrecht: ok'); eq(at('mauer', 5, 2, 1, 2).ok, true, 'Mauer im Winkel an der Nordwestecke, zwei Zellen von der Mündung: ok');
+  eq(at('mauer', 4, 3, 0, 4).reason, 'tight', 'Mauer deckt die Nordmündung: tight'); eq(at('mauer', 8, 3, 0, 2).reason, 'tight', 'Mauer neben der Nordmündung: tight'); eq(at('mauer', 6, 3, 0, 1).reason, 'tight', 'Mauer am Torhaus, nördlich der Westspalte, neben der Mündung: tight'); eq(at('mauer', 7, 6, 0, 1).reason, 'tight', 'Mauer auf der Südmündung: tight'); eq(at('palisade', 6, 7, 0, 3).reason, 'tight', 'Palisade eine Zelle vor der Südmündung: tight'); ok(at('palisade', 6, 8, 0, 3).ok, 'zwei Zellen vor der Mündung: ok');
+  occ.fill(0); put('torhaus', 6, 4, 1);   // rot 1: footprint 2 × 3, mouths west and east
+  eq(at('mauer', 4, 5, 0, 1).reason, 'tight', 'rot 1: Mauer auf der Westmündung: tight'); eq(at('mauer', 9, 3, 1, 4).reason, 'tight', 'rot 1: Mauer vor der Ostmündung: tight'); eq(at('mauer', 6, 2, 0, 4).ok, true, 'rot 1: Mauer an die Nordflanke: ok'); eq(at('mauer', 6, 7, 0, 4).ok, true, 'rot 1: Mauer an die Südflanke: ok');
+  // a Torhaus next to existing walls: the flank may touch, the lane mouths and their surroundings must stay free
+  occ.fill(0); put('mauer', 2, 4, 0, 4);
+  eq(at('torhaus', 6, 4, 0).ok, true, 'Torhaus an die Mauer gesetzt: ok'); put('palisade', 7, 2, 0, 1); eq(at('torhaus', 6, 4, 0).reason, 'tight', 'Palisade zwei Zellen vor der Mündung: tight'); occ.fill(0); put('mauer', 2, 4, 0, 4); put('huette', 8, 7, 0); eq(at('torhaus', 6, 4, 0).reason, 'tight', 'Hütte vor der Südmündung: tight');
+  occ.fill(0); eq(cp('torhaus', bi + 6, 0, 0).reason, 'bounds', 'Torhaus am oberen Rand: die Mündung läge außerhalb (bounds)'); eq(cp('torhaus', bi + 6, GH - 2, 0).reason, 'bounds', 'Torhaus am unteren Rand: bounds');
+  // the keep gate: no wall within one cell of it, the cells two away are fine; the keep itself keeps its ring
+  const gk = W.keepGate(w, lord), gi = gk % GW, gj = (gk - gi) / GW, kk = w.sites[lord].keep;
+  eq(gj, kk.j + 6, 'Burgtor: Zeile unter dem Bergfried (Burg 0 öffnet nach Süden)'); eq(gi, kk.i + 3, 'Burgtor: Spalte 4 des Bergfrieds'); eq([0, 1, 2, 3].map(s => { const g = W.keepGate(w, s), k = w.sites[s].keep; return (g % GW - k.i) + ',' + (Math.floor(g / GW) - k.j); }).join(' '), '3,6 3,6 3,-1 3,-1', 'Burgtore: Süd für Burg 0/1, Nord für 2/3');
+  eq(cp('mauer', gi - 1, gj + 1, 0, { len: 3 }).reason, 'tight', 'Mauer eine Zelle vor dem Burgtor: tight'); eq(cp('mauer', gi + 2, gj, 1, { len: 2 }).ok === false || cp('mauer', gi + 2, gj, 1, { len: 2 }).reason === 'tight', true, 'Mauer neben dem Burgtor: nicht erlaubt');
+  ok(['ok', 'terrain', 'wet', 'owner'].includes(cp('mauer', gi - 1, gj + 2, 0, { len: 3 }).reason || 'ok'), 'zwei Zellen vor dem Burgtor ist die Lücke groß genug (' + (cp('mauer', gi - 1, gj + 2, 0, { len: 3 }).reason || 'ok') + ')');
+  eq(cp('mauer', kk.i - 1, kk.j, 1, { len: 3 }).reason, 'tight', 'Mauer dicht am Bergfried: tight (oder fremd/Gelände davor)'.length ? 'tight' : '');
+  // Markt 4 × 3 and Söldnerlager 5 × 4 place like plain buildings (ring of one free cell, rot 1 swaps)
+  occ.fill(0);
+  eq(at('markt', 3, 3, 0).ok && at('markt', 3, 3, 1).ok && at('soeldnerlager', 3, 3, 0).ok && at('soeldnerlager', 3, 3, 1).ok, true, 'Markt und Söldnerlager: ok');
+  put('markt', 4, 4, 0); eq(at('huette', 8, 4, 0).reason, 'tight', 'Hütte dicht am Markt: tight'); eq(at('huette', 9, 4, 0).ok, true, 'Hütte mit einer freien Zelle zum Markt: ok'); eq(at('mauer', 8, 4, 1, 3).reason, 'tight', 'Mauer dicht am Markt: tight'); eq(at('soeldnerlager', 4, 5, 0).reason, 'occupied', 'Söldnerlager über dem Markt: occupied');
+  eq(at('markt', 4, 7, 0).reason, 'tight', 'Markt dicht am Markt: tight'); eq(at('markt', 4, 8, 0).ok, true, 'Markt mit einer freien Zelle zum Markt: ok');
+  // a ruin or any foreign code in the ring behaves like a building (the generic rule): any non-zero value that is no wall code is not exempt
+  occ.fill(0); occ[(bj + 5) * GW + bi + 5] = 1; eq(at('mauer', 6, 5, 0, 2).reason, 'tight', 'fremder occ-Wert: tight'); occ[(bj + 5) * GW + bi + 5] = CODE.mauer; eq(at('mauer', 6, 5, 0, 2).ok, true, 'Mauer-Code im Ring: ok');
+  // suggest for walls honours len: the spot is valid for exactly that length (rot 1 is tried only for len > 1)
+  for (const k of ['mauer', 'palisade']) for (let len = 1; len <= 4; len++) { const sg = W.suggest(w, k, lord, { L: 0, len }); ok(sg !== null, 'suggest ' + k + ' len ' + len); if (sg) { eq(W.canPlace(w, k, sg.i, sg.j, sg.rot, { lord, L: 0, len }).ok, true, 'suggest ' + k + ' len ' + len + ' ist gültig'); if (len === 1) eq(sg.rot, 0, 'ein einzelnes Stück hat keine Richtung (rot 0)'); } }
+  { const o2 = new Uint8Array(N); const a = W.suggest(w, 'mauer', lord, { L: 0, len: 3, occ: o2 }); put('mauer', 0, 0, 0, 1); const sg2 = W.suggest(w, 'torhaus', lord, { L: 0, occ }); ok(a && sg2 && W.canPlace(w, 'torhaus', sg2.i, sg2.j, sg2.rot, { lord, L: 0, occ }).ok, 'suggest torhaus (mit Mauer auf der Karte) gültig'); occ.fill(0); }
+  // order of reasons holds for the new kinds: bounds before owner before terrain
+  eq(cp('mauer', GW - 1, 10, 0, { len: 4, lord: 1 }).reason, 'bounds', 'bounds vor owner (Mauer)'); const foreign2 = cellsOf(w, k => { const i = k % GW, j = (k - i) / GW; return w.owner[k] === 1 && i > 3 && i < GW - 6 && j > 4 && j < GH - 5 && w.owner[k + 1] === 1 && w.owner[k + 2] === 1; })[0]; eq(cp('torhaus', foreign2 % GW, Math.floor(foreign2 / GW), 0).reason, 'owner', 'Torhaus im fremden Viertel: owner');
+}
+
 // ---- suggest: valid for every kind × lord on 10 seeds; 12 buildings in a row ----
 {
   const kinds = Object.keys(W.BUILDINGS).filter(k => k !== 'bergfried'), code = (k) => 1 + Object.keys(W.BUILDINGS).indexOf(k);
-  const seq = ['hof', 'huette', 'holzfaeller', 'steinbruch', 'kornspeicher', 'lager', 'kaserne', 'huette', 'wachturm', 'brunnen', 'hof', 'huette'];
+  const seq = ['hof', 'huette', 'holzfaeller', 'steinbruch', 'kornspeicher', 'lager', 'kaserne', 'huette', 'wachturm', 'brunnen', 'hof', 'huette', 'markt', 'soeldnerlager', 'torhaus', 'mauer', 'palisade'];
   const stampOcc = (occ, kind, s) => { const [w, h] = W.footprintOf(kind, s.rot); for (let dj = 0; dj < h; dj++) for (let di = 0; di < w; di++) occ[(s.j + dj) * GW + s.i + di] = code(kind); };
   let total = 0, near = 0;
   for (let seed = 1; seed <= 10; seed++) {
@@ -524,6 +640,7 @@ for (const seed of SEEDS) {
 
 // ---- encode / decode: roundtrip and equal answers on the decoded grid ----
 {
+  let okPhase2 = 0;
   for (const seed of [1, 2, 3, 9]) {
     const w = world(seed), e = W.encode(w), g = W.decode(e), T = 'seed ' + seed + ': ';
     ok(['cls', 'hq', 'owner'].every(f => /^([A-Za-z]\d*)+$/.test(e[f])), T + 'RLE-Format');
@@ -548,6 +665,18 @@ for (const seed of SEEDS) {
       if (a.ok !== b.ok || a.reason !== b.reason) pl++;
     }
     eq(pl, 0, T + 'canPlace gleich auf dem decodierten Gitter');
+    // Phase 2: every kind (walls with len), with an occupancy full of walls, towers, gates and houses scattered around the quarters
+    const occ2 = new Uint8Array(N), ks = Object.keys(W.BUILDINGS);
+    for (let n = 0; n < 160; n++) { const kind = ks[1 + Math.floor(rnd() * 14)], rot = rnd() < 0.5 ? 0 : 1, [fw, fh] = W.footprintOf(kind, rot, 1 + Math.floor(rnd() * 4)), i = Math.floor(rnd() * (GW - fw)), j = Math.floor(rnd() * (GH - fh)); for (let dj = 0; dj < fh; dj++) for (let di = 0; di < fw; di++) occ2[(j + dj) * GW + i + di] = W.CODE[kind]; }
+    let pl2 = 0;
+    for (let n = 0; n < 1500; n++) {
+      const kind = ks[1 + Math.floor(rnd() * 14)], i = Math.floor(rnd() * GW), j = Math.floor(rnd() * GH), rot = rnd() < 0.5 ? 0 : 1, lord = Math.floor(rnd() * 4), len = 1 + Math.floor(rnd() * 4);
+      const a = W.canPlace(w, kind, i, j, rot, { lord, L: 0, occ: occ2, len }), b = W.canPlace(g, kind, i, j, rot, { lord, L: 0, occ: occ2, len });
+      if (a.ok !== b.ok || a.reason !== b.reason) pl2++;
+      if (a.ok) okPhase2++;
+    }
+    eq(pl2, 0, T + 'canPlace (alle Arten, Mauern mit len, belegtes Gitter) gleich auf dem decodierten Gitter');
+    for (let s = 0; s < 4; s++) eq(W.keepGate(w, s), W.keepGate(g, s), T + 'Burgtor ' + s + ' gleich auf dem decodierten Gitter');
     let su = 0;
     for (let lord = 0; lord < 4; lord++) for (const kind of Object.keys(W.BUILDINGS).slice(1)) if (JSON.stringify(W.suggest(w, kind, lord)) !== JSON.stringify(W.suggest(g, kind, lord))) su++;
     eq(su, 0, T + 'suggest gleich auf dem decodierten Gitter');
@@ -556,6 +685,7 @@ for (const seed of SEEDS) {
     eq(fd, 0, T + 'field gleich'); const pa = W.path(w, w.sites[0], w.sites[3], 0), pb = W.path(g, w.sites[0], w.sites[3], 0);
     eq(JSON.stringify(pa), JSON.stringify(pb), T + 'path gleich'); near(W.heightAt(g, 0, 0), W.heightAt(w, 0, 0), 1.5, T + 'heightAt grob gleich auf decodiertem Gitter');
   }
+  ok(okPhase2 >= 20, 'unter den Zufallsplatzierungen sind genug gültige, damit der Vergleich etwas prüft (' + okPhase2 + ')');
   eq(W.encode(world(1)).cls, W.encode(world(1)).cls, 'encode deterministisch');
   const small = W.decode({ cls: 'G' + N, hq: 'W' + N, owner: 'A' + N }); ok(small.cls[0] === CI.G && small.hq[N - 1] === 2 && small.owner[5] === -1, 'decode: Lauflängen ohne und mit Zahl');
 }

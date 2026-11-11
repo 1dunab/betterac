@@ -1,6 +1,6 @@
 # 🎉 Party Hub
 
-![tests](https://github.com/Uruser42/betterac/actions/workflows/test.yml/badge.svg)
+![tests](https://github.com/1dunab/betterac/actions/workflows/test.yml/badge.svg)
 
 **Couch party games on your TV — every phone is a controller.** One command starts a local
 server; a TV (or laptop) shows the big screen, and everyone joins from their phone browser
@@ -79,7 +79,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | ⚡ Neonspur | 1–4 | 3D light-cycle arena: walls of light, jumps onto terraces, Turbo, power-ups, split-screen, bots |
 | 🐺 Werwolfnacht | 5–16 | Werewolf with an automatic moderator: secret roles and night actions on the phones, narrated village on the TV |
 | 🎈 Skyfarers | 1–8 | Co-op 3D airship crew: harvest, build and defend a floating island through storms and dragons until dawn |
-| 🏰 Furt & Fehde | 1–8 | 3D castle-building strategy: farm, build and send banners across fords and bridges at up to three rival castles — flood truce, fire, pacts and a bounty on the crown |
+| 🏰 Furt & Fehde | 1–8 | 3D castle-building strategy: farm, build walls and send banners across fords and bridges at up to three rival castles — flood truce, rams, mercenaries, fire, pacts and a bounty on the crown |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -267,6 +267,14 @@ prosperity; the leader wears the crown, and Ruhm won against the crown counts on
 times. Pacts last three minutes, and breaking one costs Ruhm and makes the betrayed house
 furious. The most Ruhm when time runs out wins — nobody is knocked out.
 
+Walls change the shape of a feud. Palisades and stone walls are drawn as lines on the phone, a
+gatehouse lets only the house's own people and allies through, and archers garrison walls,
+gatehouses and towers — up there they shoot farther and are hard to hit. Attackers hack
+through with spearmen and knights, or much faster with a battering ram, and torch-bearers set
+palisades alight. A market sells surplus grain, wood and stone for 💰 gold (and buys dearer in
+an emergency), and gold hires mercenaries at the Söldnerlager: torch-bearers and fast horse
+archers who shoot from the saddle.
+
 Up to four houses, two phones can share one; bots (Knappe, Ritter, Kriegsherr) fill empty
 houses and take over for anyone who leaves. The phone explains itself: what every building is
 for, where it belongs and how many you need, a guide, an advisor line, the well coverage while
@@ -278,7 +286,8 @@ and Mitschauen works.
 `node test-furtfehde-world.js` checks the map generator, `node test-furtfehde-sim.js` the
 rules, `node test-furtfehde-bots.js` plays 60 bot matches and prints a balance table, and `node
 test-furtfehde-flow.js` plays matches through the real screen and phone pages.
-`/dev-furtfehde.html?sim=470000&blit=1` runs the TV with bot lords,
+`/dev-furtfehde.html?sim=470000&blit=1` runs the TV with bot lords (`&walls=1` walls every
+village, `&siege=1` adds a ram assault),
 `/dev-furtfehde-view.html?flood=1` previews the valley and its flood, `/dev-furtfehde-art.html`
 shows every model, `/dev-furtfehde-map.html` the map generator and `/dev-furtfehde-phone.html`
 the phone. See the [Furt & Fehde design notes](docs/FURTFEHDE.md).

@@ -8,6 +8,9 @@
 //   staerke, Auflösung, quality) and the no-WebGL fallback.  Scenario 5 (Phase 1b): Auto quality with a stub clock (the median; a 1-s hitch is ignored; nativ → normal cap →
 //   Sparsam), the „🔇 Klick oder Taste für Ton“ hint, and sound.js in a sandbox with a fake AudioContext (buildDone silent, the hammer at half volume once per 2 s, the unlock).
 //   `sim.pause` / `youOf().food` come from C1: while a sim does not have them yet, this test installs small stand-ins and says so.
+//   Scenario 6 (Phase 2, Mauern & Söldner): the glue's ffWall / ffTrade / ffBuild-with-len / ffRecruit (lager, gold) round trips and their toasts, ffInfo.rules.tradePack / .prices (strict equality with the phone's copy),
+//   the board's 14th (len) and 15th (garrison) fields, a ruined wall rebuilt with its len, the herald lines (breach, gold plunder, the first Söldnerlager) and their rate limit, the Kampf-Kamera on a ram blow,
+//   what goes to the sound (the thud and the crumble, not the clash of a wall hit or the collapse of a breach) and the view's gate hook; sound.js and fx.js get their Phase 2 checks in scenario 5.
 const { makeDom } = require('./test-helpers');
 const FW = require('./public/games/furtfehde/world.js');
 const FS = require('./public/games/furtfehde/sim.js');
@@ -136,7 +139,7 @@ function worst(arr, per, t0, t1) { let m = 0; for (let t = t0; t <= t1 - per; t 
 const consumed = (inj) => until(() => inj.pending() === 0, 8000, 'die Sim hat die eingeschleusten Ereignisse ausgegeben');   // the glue handles them in the same call
 function installSpy(sim) {
   const rec = []; const orig = {};
-  for (const fn of ['build', 'cancel', 'recruit', 'banner', 'home', 'pact', 'pause']) {
+  for (const fn of ['build', 'cancel', 'recruit', 'banner', 'home', 'pact', 'pause', 'buildWall', 'trade']) {
     if (typeof sim[fn] !== 'function') continue;
     orig[fn] = sim[fn];
     sim[fn] = (...a) => { const r = orig[fn].apply(sim, a); rec.push({ fn, args: a, r }); return r; };
@@ -166,6 +169,26 @@ function standIns(sim) {
   return out;
 }
 function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, sim.state.lords[lord].site, { L: sim.state.level, occ: sim.occ }); }
+// Phase 2: `n` free cells in a row (rot 0, along +i) for a wall of house `lord`, on the rows south (sites 0, 1) or north (sites 2, 3) of its keep gate — { i, j } or null
+function wallRun(w, sim, lord, kind, n, skipRows) {
+  const W = w.FurtWorld, L = sim.state.lords[lord], gate = W.keepGate(sim.world, L.site), gi = gate % W.GW, gj = Math.floor(gate / W.GW), dir = L.site < 2 ? 1 : -1;
+  for (let dj = 4 + (skipRows | 0); dj < 16; dj++) for (let di = -14; di + n <= 14; di++) {
+    const j = gj + dir * dj, i = gi + di; let ok = true;
+    for (let k = 0; k < n && ok; k++) ok = W.canPlace(sim.world, kind, i + k, j, 0, { lord: L.site, L: sim.state.level, occ: sim.occ, len: 1 }).ok;
+    if (ok) return { i, j };
+  }
+  return null;
+}
+// the centre of the nearest cell without a building to a world point
+function freeAt(w, sim, x, y) {
+  const W = w.FurtWorld;
+  for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    const ci = Math.floor(x + 72 + dx), cj = Math.floor(y + 45 + dy);
+    if (ci >= 0 && cj >= 0 && ci < W.GW && sim.occ[cj * W.GW + ci] === 0) return { x: ci - 72 + 0.5, y: cj - 45 + 0.5 };
+  }
+  return { x, y };
+}
 
 (async () => {
   // ============================================================ Scenario 1: 5 phones on 4 houses (one shared)
@@ -221,7 +244,8 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
     check(info1.lords.map((l) => l.i).join() === '0,1,2,3' && info1.lords.every((l) => l.bot === false && l.emblem === l.i && typeof l.color === 'string'), 'ffInfo.lords nach Lord-Index geordnet, bot:false');
     check(info1.lords[0].name === 'Haus Falkenstein · Anna & Eva' && info1.lords[1].name === 'Haus Wolfsberg · Ben' && info1.lords[3].name === 'Haus Hirschfurt · Dino', 'Anzeigename = Hausname · Spielernamen („Anna & Eva“)');
     check(info1.shared === 'Eva' && p5.last('ffInfo').shared === 'Anna' && info2.shared === false && p3.last('ffInfo').shared === false, 'shared = Name des Mitspielers, nur am geteilten Haus');
-    check(info1.rules && Object.keys(info1.rules).sort().join() === 'bucketR,capKeep,capKorn,capLager,hutHouses,keepHouses,keepWellR' && info1.rules.bucketR === ci.BUCKET_R && info1.rules.keepWellR === ci.KEEP_WELL_R && info1.rules.capKeep === ci.CAP_KEEP && info1.rules.capKorn === ci.CAP_KORN && info1.rules.capLager === ci.CAP_LAGER && info1.rules.keepHouses === ci.KEEP_HOUSES && info1.rules.hutHouses === ci.HUT_HOUSES, 'ffInfo.rules aus FurtSim.CONST (bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses)');
+    check(info1.rules && Object.keys(info1.rules).sort().join() === 'bucketR,capKeep,capKorn,capLager,hutHouses,keepHouses,keepWellR,prices,tradePack' && info1.rules.bucketR === ci.BUCKET_R && info1.rules.keepWellR === ci.KEEP_WELL_R && info1.rules.capKeep === ci.CAP_KEEP && info1.rules.capKorn === ci.CAP_KORN && info1.rules.capLager === ci.CAP_LAGER && info1.rules.keepHouses === ci.KEEP_HOUSES && info1.rules.hutHouses === ci.HUT_HOUSES, 'ffInfo.rules aus FurtSim.CONST (bucketR, keepWellR, capKeep, capKorn, capLager, keepHouses, hutHouses, tradePack, prices)');
+    check(info1.rules.tradePack === ci.TRADE_PACK && ci.TRADE_PACK === 5 && JSON.stringify(info1.rules.prices) === JSON.stringify(ci.TRADE_PRICE) && info1.rules.prices.sell.stein === 2 && info1.rules.prices.buy.korn === 3, 'ffInfo.rules.tradePack und .prices { sell, buy } kommen aus FurtSim.CONST (Pakete zu 5, Verkauf 1 · 1 · 2, Kauf 3 · 3 · 5)');
     check([p1, p2, p3, p4, p5].every((p) => JSON.stringify(p.last('ffInfo').rules) === JSON.stringify(info1.rules)) && typeof info1.rules.bucketR === 'number' && info1.rules.bucketR > 0 && info1.rules.keepHouses > 0, 'ffInfo.rules kommt bei allen Handys gleich an (Zahlen > 0)');
     check(info1.costs && info1.costs.rebuild === ci.REBUILD_COST && info1.costs.build.hof.holz === ci.BUILD.hof.cost.holz && info1.costs.build.kaserne.stein === ci.BUILD.kaserne.cost.stein && info1.costs.units.ritter.stein === ci.UNIT.ritter.cost.stein && !('bergfried' in info1.costs.build) && !('bauer' in info1.costs.units), 'ffInfo.costs aus FurtSim.CONST (Gebäude, Einheiten, Wiederaufbau)');
 
@@ -256,7 +280,7 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       check(stand.food || f.eat === Math.round(y3.pop * 60 / ci.EAT_S), 'ffYou.food.eat = round(Leute · 60 / EAT_S) (R9)' + (stand.food ? ' [Stand-in]' : '')); }
     check(p6.all('ffYou').length === 0 && p6.all('ffBoard').length === 0, 'ein Handy ohne Haus (noch nicht beigetreten) bekommt nichts');
     const board0 = p2.last('ffBoard');
-    check(board0 && Array.isArray(board0.b) && Array.isArray(board0.banners) && board0.b.every((r) => r.length === 13 && r[2] !== 'bergfried' && (r[12] === 0 || r[12] === 1 || r[12] === 2)), 'ffBoard: Zeilen mit 13 Feldern [id, lord, kind, i, j, rot, build, hp, fire, ruined, noWood, workers, rest 0/1/2], ohne Bergfried');
+    check(board0 && Array.isArray(board0.b) && Array.isArray(board0.banners) && board0.b.every((r) => r.length === 15 && r[2] !== 'bergfried' && (r[12] === 0 || r[12] === 1 || r[12] === 2) && r[13] === 1 && r[14] === 0), 'ffBoard: Zeilen mit 15 Feldern [id, lord, kind, i, j, rot, build, hp, fire, ruined, noWood, workers, rest 0/1/2, len, garrison], ohne Bergfried (len 1 und garrison 0, solange es keine Mauern gibt)');
 
     // ---- orders: build ----
     const sim = dbg().sim, S = st(), spy = installSpy(sim);
@@ -268,7 +292,7 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
     check(p1.all('ffToast').some((m) => /Hof wird gebaut/.test(m.text)) && !p5.all('ffToast').some((m) => /Hof wird gebaut/.test(m.text)), 'Erfolgs-Toast „🔨 Hof wird gebaut“ nur beim Absender');
     await until(() => (p2.last('ffBoard') || { b: [] }).b.some((r) => r[2] === 'hof' && r[1] === 0), 2000, 'ffBoard zeigt den Hof');
     const hofRow = p2.last('ffBoard').b.find((r) => r[2] === 'hof');
-    check(hofRow.length === 13 && hofRow[12] === 0 && hofRow[3] === hofSpot.i && hofRow[4] === hofSpot.j && hofRow[5] === hofSpot.rot && hofRow[6] >= 0 && hofRow[6] <= 1 && hofRow[7] > 0, 'ffBoard-Zeile des Hofs: Position, Drehung, build/hp 0..1');
+    check(hofRow.length === 15 && hofRow[12] === 0 && hofRow[3] === hofSpot.i && hofRow[4] === hofSpot.j && hofRow[5] === hofSpot.rot && hofRow[6] >= 0 && hofRow[6] <= 1 && hofRow[7] > 0, 'ffBoard-Zeile des Hofs: Position, Drehung, build/hp 0..1');
     await until(() => p1.last('ffYou').stock.holz <= 25 - ci.BUILD.hof.cost.holz + 3, 2000, 'ffYou zeigt den bezahlten Hof');
     const shared = spot(w, sim, 'huette', 0);
     p5.send({ t: 'ffBuild', kind: 'huette', i: shared.i, j: shared.j, rot: shared.rot }); await sleep(40);
@@ -371,7 +395,7 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       check(farm.ok === true, 'Testhilfe: ein fertiger Hof zum Ruhen');
       const row = (p) => (p.last('ffBoard') || { b: [] }).b.find((r) => r[0] === farm.id);
       await until(() => row(p5) && row(p2), 2500, 'ffBoard zeigt den fertigen Hof');
-      check(row(p5).length === 13 && row(p5)[12] === 0, 'ffBoard: das 13. Feld (paused) ist 0, solange der Betrieb arbeitet');
+      check(row(p5).length === 15 && row(p5)[12] === 0, 'ffBoard: das 13. Feld (paused) ist 0, solange der Betrieb arbeitet');
       const n0 = spy.calls('pause').length; p1.clear(); p5.clear();
       p1.send({ t: 'ffPause', id: farm.id, on: true });
       await until(() => row(p5) && row(p5)[12] === 1, 3000, 'ffBoard: paused = 1');
@@ -423,7 +447,7 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       sim.step = function () { sim.dev.stock(0, { korn: sim.youOf(0).cap.korn }); return realStep.call(sim); };
       try {
         await until(() => row2(p5) && row2(p5)[12] === 2, 4000, 'ffBoard: 13. Feld = 2 (Lager voll)');
-        check(fb().full === true && fb().paused === false && row2(p5)[11] === 0 && row2(p5).length === 13, 'das Brett sagt 2, wenn das Korn am Deckel steht: buildings[].full, nicht pausiert, keine Arbeiter (12. Feld 0)');
+        check(fb().full === true && fb().paused === false && row2(p5)[11] === 0 && row2(p5).length === 15, 'das Brett sagt 2, wenn das Korn am Deckel steht: buildings[].full, nicht pausiert, keine Arbeiter (12. Feld 0)');
         check(row2(p2)[12] === 2 && row2(p1)[12] === 2, 'die 2 kommt bei allen Handys an (auch bei fremden Häusern)');
         const ph1 = cs.c1.window, d1 = ph1.document;
         await until(() => ph1.__ff.st.byId[farm2.id] && ph1.__ff.st.byId[farm2.id].full === true, 3000, 'das Handy kennt den vollen Betrieb');
@@ -493,7 +517,10 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       { t: 'ffRecruit' }, { t: 'ffRecruit', unit: 'bauer', n: 1 }, { t: 'ffRecruit', unit: 'drache', n: 1 }, { t: 'ffRecruit', unit: 'speer', n: 4 }, { t: 'ffRecruit', unit: 'speer', n: -1 }, { t: 'ffRecruit', unit: 'speer', n: 1.5 },
       { t: 'ffRecruit', unit: '__proto__', n: 1 }, { t: 'ffBanner' }, { t: 'ffBanner', n: 0, x: 1, y: 1 }, { t: 'ffBanner', n: 4, x: 1, y: 1 }, { t: 'ffBanner', n: 1, x: 'a', y: 1 }, { t: 'ffBanner', n: 1, x: NaN, y: 1 }, { t: 'ffBanner', n: 1, x: 1 },
       { t: 'ffPact' }, { t: 'ffPact', to: 0, on: true }, { t: 'ffPact', to: 9, on: true }, { t: 'ffPact', to: -1, on: true }, { t: 'ffPact', to: 1, on: 'yes' }, { t: 'ffPact', to: 1.5, on: true }, { t: 'ffUnbekannt' },
-      { t: 'ffPause' }, { t: 'ffPause', id: 'a', on: true }, { t: 'ffPause', id: 3 }, { t: 'ffPause', id: 3, on: 'yes' }, { t: 'ffPause', id: 3, on: 1 }, { t: 'ffPause', id: 0, on: true }, { t: 'ffPause', id: -2, on: false }, { t: 'ffPause', id: 2.5, on: true }, { t: 'ffPause', id: NaN, on: true }
+      { t: 'ffPause' }, { t: 'ffPause', id: 'a', on: true }, { t: 'ffPause', id: 3 }, { t: 'ffPause', id: 3, on: 'yes' }, { t: 'ffPause', id: 3, on: 1 }, { t: 'ffPause', id: 0, on: true }, { t: 'ffPause', id: -2, on: false }, { t: 'ffPause', id: 2.5, on: true }, { t: 'ffPause', id: NaN, on: true },
+      { t: 'ffWall' }, { t: 'ffWall', kind: 'mauer' }, { t: 'ffWall', kind: 'mauer', pieces: [] }, { t: 'ffWall', kind: 'hof', pieces: [[1, 1, 0, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 0, 5]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 2, 1]] },
+      { t: 'ffTrade' }, { t: 'ffTrade', good: 'gold', side: 'sell', packs: 1 }, { t: 'ffTrade', good: 'korn', side: 'swap', packs: 1 }, { t: 'ffTrade', good: 'korn', side: 'sell', packs: 0 }, { t: 'ffTrade', good: 'korn', side: 'sell', packs: 6 }, { t: 'ffTrade', good: '__proto__', side: 'sell', packs: 1 },
+      { t: 'ffBuild', kind: 'mauer', i: 1, j: 1, rot: 0, len: 0 }, { t: 'ffBuild', kind: 'mauer', i: 1, j: 1, rot: 0, len: 5 }, { t: 'ffBuild', kind: 'mauer', i: 1, j: 1, rot: 0, len: 'x' }
     ];
     for (const m of bad) p1.send(m);
     await sleep(50);
@@ -891,6 +918,23 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       check(a.log.osc === n2, 'sound.js: buildDone bleibt auch bei laufendem Ton stumm');
       a.S.event({ t: 'crossingOpen', id: 'westfurt' });
       check(a.log.osc > n2, 'sound.js: andere Ereignisse klingen weiter (die Furt-Glocke)');
+      // Phase 2: the thud of a ram blow, the crumble of a breach, the creak of a gate; trading is silent on the TV
+      check(['thud', 'crumble', 'gate'].every((n) => a.S.names.includes(n)) && a.S.names.length === 18, 'sound.js: die Namen thud, crumble und gate sind da (18 insgesamt)');
+      a.tick(10000); a.log.osc = 0; a.S.event({ t: 'trade', lord: 0, good: 'korn', side: 'sell', n: 2, gold: 2 });
+      check(a.log.osc === 0 && a.S.stats.queued === 0, 'sound.js: ein Handel (trade) macht keinen Ton');
+      a.S.event({ t: 'ram', id: 7, x: 0, y: 0 }); const rm1 = a.log.osc;
+      check(rm1 > 0, 'sound.js: ein Rammstoß (ram) klingt (thud)');
+      a.tick(100); a.S.event({ t: 'ram', id: 7, x: 0, y: 0 });
+      check(a.log.osc === rm1, 'sound.js: Rammstöße höchstens alle 0,3 s');
+      a.tick(450); a.S.event({ t: 'ram', id: 7, x: 0, y: 0 });
+      check(a.log.osc > rm1, 'sound.js: nach 0,3 s darf der nächste Stoß');
+      a.log.osc = 0; a.S.event({ t: 'breach', id: 8, lord: 0, kind: 'mauer', x: 0, y: 0, by: 1 });
+      check(a.log.osc > 0, 'sound.js: ein Mauerbruch (breach) klingt (crumble)');
+      a.tick(5000); a.log.osc = 0; a.S.play('gate'); const gt1 = a.log.osc;
+      a.tick(700); a.S.play('gate');
+      check(gt1 > 0 && a.log.osc === gt1, 'sound.js: das Knarren des Tores höchstens alle 2 s');
+      a.tick(2200); a.S.play('gate');
+      check(a.log.osc > gt1, 'sound.js: nach 2 s knarrt es wieder');
       const b = sandbox('suspended', { rejectFirst: true });
       b.L.pointerdown[0](); await tickP(); await tickP();
       check(b.S.state() === 'suspended' && b.log.resumes === 1, 'sound.js: lässt der Browser den ersten Versuch nicht zu, bleibt der Kontext schlafend');
@@ -945,6 +989,48 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
       const hutB = mk(7, 'huette', 20, 20, { fire: 0.8, hp: 0.8 }), fstate = { buildings: [hutB], units: [], banners: [], lords: [], dayT: 0.45, level: 0, t: 1 };
       fx.S.clear(); fx.A.clear(); for (let f = 0; f < 30; f++) fx.update(fstate, 1, { now: 4000 + f * 100, dt: 0.1 });
       check(fx.A.hw > 0, 'fx: ein echtes Feuer (Holzhütte brennt) wirft weiter leuchtende Funken – Orange bleibt dem Feuer vorbehalten (' + fx.A.hw + ' additive Teilchen)');
+
+      // ---- Phase 2 (docs „TV“): wall pieces have a length; hits chip stone, a ram blow bursts the ground, a breach throws rubble, a burning palisade is a small fire ----
+      const wl = mk(30, 'mauer', 30, 0, { len: 4 }), pl = mk(31, 'palisade', 30, 10, { len: 2 }), th = mk(32, 'torhaus', 30, 20, {}), hut2 = mk(33, 'huette', 30, 30, {});
+      const wstate = { buildings: [wl, pl, th, hut2], units: [], banners: [], lords: [], dayT: 0.45, level: 0, t: 1 };
+      const dims = (b) => { const o = fx.geom(b, fx.G); return o && [o.lw, o.ld].join('x'); };
+      check(dims(wl) === '4x1' && dims(pl) === '2x1' && dims(th) === '3x2' && dims(mk(34, 'mauer', 0, 0, { len: 1 })) === '1x1', 'fx: die Abmessungen einer Mauer folgen ihrer Länge (4 · 1, Palisade 2 · 1, Torhaus 3 · 2): ' + dims(wl) + ' ' + dims(pl) + ' ' + dims(th));
+      const hwS = () => fx.S.hw, hwA = () => fx.A.hw;
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'hit', id: 30, x: 30, y: 0.5 }, wstate);
+      check(hwS() >= 8 && hwA() <= 3, 'fx: ein Treffer auf eine Mauer wirft Steinsplitter und Staub (' + hwS() + ' weiche Teilchen) statt nur Funken');
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'hit', id: 999, x: 30, y: 0.5 }, wstate);
+      check(hwS() === 0 && hwA() >= 3, 'fx: ein Treffer auf eine Einheit bleibt bei den Funken (' + hwA() + ' additive Teilchen)');
+      fx.S.clear(); fx.A.clear(); fx.rings.forEach((r) => { r.live = false; });
+      fx.event({ t: 'ram', id: 30, x: 30, y: 0.5 }, wstate);
+      check(hwS() === 0, 'fx: der Staub eines Rammstoßes wartet die wenigen Bilder, die das Bild der Sim hinterherhinkt');
+      fx.update(wstate, 1, { now: fx.now + 30, dt: 0.016 }); fx.update(wstate, 1, { now: fx.now + 80, dt: 0.016 });
+      check(hwS() >= 12 && fx.rings.some((r) => r.live), 'fx: ein Rammstoß lässt den Boden aufplatzen: Staub und ein Ring (' + hwS() + ' weiche Teilchen)');
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'ruined', id: 30, by: 0 }, wstate);
+      check(hwS() === 0 && hwA() === 0, 'fx: „ruined“ einer Mauer bleibt stumm (der Bruch macht den Schutt)');
+      fx.bits.forEach((b2) => { b2.live = false; });
+      fx.event({ t: 'breach', id: 30, lord: 0, kind: 'mauer', x: 30, y: 0, by: 1 }, wstate);
+      check(hwS() >= 40 && fx.bits.filter((b2) => b2.live && b2.kind === 1).length >= 5, 'fx: ein Mauerbruch wirft eine Schuttwolke und stürzende Steine (' + hwS() + ' weiche Teilchen, ' + fx.bits.filter((b2) => b2.live && b2.kind === 1).length + ' Brocken)');
+      { const grey = fx.bits.filter((b2) => b2.live && b2.kind === 1).every((b2) => Math.abs(b2.r - b2.b) < 0.1); check(grey, 'fx: die Brocken einer Steinmauer sind grau, keine braunen Bretter'); }
+      fx.bits.forEach((b2) => { b2.live = false; }); fx.event({ t: 'breach', id: 31, lord: 0, kind: 'palisade', x: 30, y: 10, by: 1 }, wstate);
+      check(fx.bits.filter((b2) => b2.live && b2.kind === 1).length >= 4 && fx.bits.filter((b2) => b2.live && b2.kind === 1).every((b2) => b2.r > b2.b + 0.2), 'fx: eine Palisade splittert in braune Planken');
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'ruined', id: 33, by: 0 }, wstate);
+      check(hwS() > 10, 'fx: „ruined“ eines Hauses bleibt wie bisher (Staub, Rauch, Holzsplitter): ' + hwS());
+      // a burning palisade: the existing fire fx at a smaller scale — fewer particles than a burning hut, so many burning pieces keep the pools
+      const burn = (b2) => {   // the particles one burning piece emits in 2 s (every spawn counted)
+        b2.fire = 0.8; b2.hp = 0.8; const q = { buildings: [b2], units: [], banners: [], lords: [], dayT: 0.45, level: 0, t: 1 };
+        fx.S.clear(); fx.A.clear(); const sp = fx.S.spawn.bind(fx.S), sa = fx.A.spawn.bind(fx.A); let n = 0;
+        fx.S.spawn = (...a) => { n++; return sp(...a); }; fx.A.spawn = (...a) => { n++; return sa(...a); };
+        for (let f = 0; f < 40; f++) fx.update(q, 1, { now: fx.now + 50, dt: 0.05 });
+        delete fx.S.spawn; delete fx.A.spawn; b2.fire = 0; return n;
+      };
+      const nPal = burn(mk(35, 'palisade', 30, 40, { len: 1 })), nPal4 = burn(mk(36, 'palisade', 30, 50, { len: 4 })), nHut = burn(mk(37, 'huette', 30, 60, {}));
+      check(nPal > 0 && nPal < nPal4 && nPal4 < nHut, 'fx: eine brennende Palisade brennt kleiner als eine Hütte, ein langes Stück stärker als ein kurzes (Teilchen: 1 Feld ' + nPal + ' · 4 Felder ' + nPal4 + ' · Hütte ' + nHut + ')');
+      // gold in the loot: a second fountain of coins
+      view.keepObj = (l) => ({ group: { position: { x: l * 40, y: 0, z: 0 }, rotation: { y: 0 } }, mesh: null, anchors: {} });
+      fx.v1 = { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } }; fx.v2 = { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } };
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'plunder', lord: 0, by: 1, loot: { korn: 3, holz: 0, stein: 0, gold: 0 } }, wstate); const a0 = hwA();
+      fx.S.clear(); fx.A.clear(); fx.event({ t: 'plunder', lord: 0, by: 1, loot: { korn: 3, holz: 0, stein: 0, gold: 40 } }, wstate); const a1 = hwA();
+      check(a1 > a0 + 10, 'fx: Gold in der Beute: ein zweiter Münzregen (additive Teilchen ohne Gold ' + a0 + ', mit 40 Gold ' + a1 + ')');
     }
 
     const bus = makeBusR();
@@ -1033,6 +1119,228 @@ function spot(w, sim, kind, lord) { return w.FurtWorld.suggest(sim.world, kind, 
     pa.send({ t: 'shellAbort' }); await sleep(100);
     bus.disconnect('a'); await sleep(60);
     check(glueErr.length === 0, 'Auto-Qualität, Ton-Hinweis und Stub-Uhr ohne geloggten Fehler' + (glueErr.length ? ': ' + glueErr[0].slice(0, 200) : ''));
+  }
+
+  // ============================================================ Scenario 6 (Phase 2): Mauern & Söldner — walls, Markt, mercenaries, breaches: the glue's side
+  if (want(6)) {
+    const bus = makeBusR();
+    const screen = makeDom('screen.html', 'screen', bus, 'screen');
+    const cs = {};
+    for (const l of ['w1', 'w2', 'w3']) { cs[l] = makeDom('controller.html', 'controller', bus, l); recordInbox(bus, l); }
+    lightPhones(cs, ['w1', 'w2', 'w3']);                 // the first phone keeps the real war map
+    await sleep(150);
+    const w = screen.window, calls = {};
+    for (const l of Object.keys(cs)) bus.handlers[l].win = w;
+    stubView(w, calls); fastClock(w);
+    const glueErr = watchErrors(w);
+    w.HTMLCanvasElement.prototype.toDataURL = () => 'data:,';
+    const soundEv = [], plays = [], realSE = w.FurtSound.event, realPlay = w.FurtSound.play;
+    w.FurtSound.event = (ev) => { soundEv.push(ev.t); return realSE(ev); };
+    w.FurtSound.play = (...a) => { plays.push(a[0]); return realPlay.apply(w.FurtSound, a); };
+    const [pa, pb, pc] = ['w1', 'w2', 'w3'].map((l) => phoneOf(bus, cs, l));
+    join(pa, 'Anna'); join(pb, 'Ben'); join(pc, 'Cleo');
+    await sleep(150);
+    await launch(pa, w, { dauer: 6, burgen: 4, staerke: 'knappe', burgfrieden: '180', quality: 'high', aufloesung: 'normal' }, 61);   // 3 minutes of Burgfrieden: all the building stays on the quiet side
+    const dbg = dbgOf(w), st = () => dbg().sim.state, ci = FS.CONST, W = w.FurtWorld;
+    await until(() => dbg().phase === 'live', 6000, 'live');
+    const sim = dbg().sim, S = st(), spy = installSpy(sim), inj = injector(sim), row = (p, id) => (p.last('ffBoard') || { b: [] }).b.find((r) => r[0] === id);
+    check(dbg().houses.length === 4 && dbg().houses[3].bot && dbg().houses[0].humans.length === 1 && dbg().houses[1].humans.length === 1 && dbg().houses[2].humans.length === 1, 'Szenario 6: drei Menschen auf den Häusern I bis III, Haus IV ein Bot');
+
+    // ---- ffInfo: rules (tradePack, prices) and costs (walls per cell, gold) ----
+    {
+      const info = pa.last('ffInfo'), ph = cs.w1.window;
+      check(JSON.stringify(ph.__ff.st.rules) === JSON.stringify(info.rules) && info.rules.tradePack === 5 && info.rules.prices.buy.stein === 5 && info.rules.prices.sell.korn === 1, 'ffInfo.rules: tradePack und prices kommen bei der echten Handy-Seite ohne Abweichung an (strenge Gleichheit)');
+      check(info.costs.build.mauer.stein === 2 && info.costs.build.palisade.holz === 1 && info.costs.build.torhaus.stein === 12 && info.costs.build.markt.holz === 10 && info.costs.build.soeldnerlager.holz === 12 && !('bergfried' in info.costs.build), 'ffInfo.costs.build: Mauer und Palisade pro Feld (das Handy multipliziert), Torhaus, Markt, Söldnerlager');
+      check(info.costs.units.reiterschuetze.gold === 6 && info.costs.units.ramme.gold === 4 && info.costs.units.ramme.holz === 10 && info.costs.units.fackel.gold === 2, 'ffInfo.costs.units: Reiterschütze, Rammbock und Fackelträger kosten Gold');
+      const y0 = pa.last('ffYou');
+      check(y0 && typeof y0.stock.gold === 'number' && y0.stock.gold === 0, 'ffYou.stock.gold: 0 zu Beginn');
+    }
+
+    // ---- ffWall: a line of pieces, one toast; the board carries len (14th) and garrison (15th) ----
+    sim.dev.stock(0, { stein: 80, holz: 80, korn: 30, gold: 0 });
+    const run = wallRun(w, sim, 0, 'mauer', 7), run2 = wallRun(w, sim, 0, 'palisade', 3, 3);
+    check(!!run && !!run2, 'Testhilfe: freie Reihen für Mauer und Palisade (' + JSON.stringify(run) + ' · ' + JSON.stringify(run2) + ')');
+    pa.clear(); pb.clear();
+    const nw = spy.calls('buildWall').length;
+    pa.send({ t: 'ffWall', kind: 'mauer', pieces: [[run.i, run.j, 0, 4], [run.i + 4, run.j, 0, 3]] }); await sleep(60);
+    const walls = () => S.buildings.filter((b) => b.lord === 0 && b.kind === 'mauer' && !b.ruined);
+    check(spy.calls('buildWall').length === nw + 1 && spy.calls('buildWall')[nw].args[0] === 0 && spy.calls('buildWall')[nw].args[1] === 'mauer' && spy.calls('buildWall')[nw].r.ok && spy.calls('buildWall')[nw].r.placed === 2, 'ffWall erreicht sim.buildWall(0, "mauer", Stücke): 2 gesetzt');
+    check(walls().length === 2 && walls().map((b) => b.len).sort().join() === '3,4' && walls().every((b) => b.rot === 0 && b.j === run.j && b.build < 1), 'die Stücke stehen als Baustellen: Länge 4 und 3, gleiche Reihe');
+    check(pa.all('ffToast').some((m) => m.text === '🧱 Mauer: 2 Stücke werden gebaut') && pb.all('ffToast').length === 0, 'ffWall ok: Toast „🧱 Mauer: 2 Stücke werden gebaut“ nur beim Absender');
+    check(sim.youOf(0).stock.stein <= 80 - 14 && sim.youOf(0).stock.stein >= 80 - 14 - 1, 'bezahlt wird pro Feld: 7 Felder · 2 Stein = 14 Stein');
+    await until(() => (pb.last('ffBoard') || { b: [] }).b.filter((r) => r[2] === 'mauer').length === 2, 3000, 'ffBoard zeigt die Mauer');
+    { const rows = pb.last('ffBoard').b.filter((r) => r[2] === 'mauer');
+      check(rows.every((r) => r.length === 15) && rows.map((r) => r[13]).sort().join() === '3,4' && rows.every((r) => r[14] === 0 && r[1] === 0), 'ffBoard: die Mauerzeilen tragen len (14. Feld: 4 und 3) und garrison 0 (15. Feld)'); }
+    pa.clear();
+    pa.send({ t: 'ffWall', kind: 'palisade', pieces: [[run2.i, run2.j, 0, 1]] }); await sleep(50);
+    check(pa.all('ffToast').some((m) => m.text === '🪵 Palisade: 1 Stück wird gebaut') && S.buildings.some((b) => b.lord === 0 && b.kind === 'palisade' && b.len === 1), 'ein einzelnes Stück: „🪵 Palisade: 1 Stück wird gebaut“');
+    // partly: the stock lasts for one of three pieces
+    { const r3 = wallRun(w, sim, 0, 'mauer', 12, 6);
+      if (r3) {
+        sim.dev.stock(0, { stein: 8 }); pa.clear();
+        pa.send({ t: 'ffWall', kind: 'mauer', pieces: [[r3.i, r3.j, 0, 4], [r3.i + 4, r3.j, 0, 4], [r3.i + 8, r3.j, 0, 4]] }); await sleep(50);
+        check(pa.all('ffToast').some((m) => /^⚠️ 1 von 3 Stücken – zu wenig 🪨 Stein$/.test(m.text)), 'ffWall, nur ein Stück bezahlbar: „⚠️ 1 von 3 Stücken – zu wenig 🪨 Stein“ (war: ' + (pa.all('ffToast').map((m) => m.text).join(' | ')) + ')');
+      } else check(false, 'Testhilfe: eine freie Reihe für drei Stücke');
+    }
+    sim.dev.stock(0, { stein: 0 }); pa.clear();
+    { const r4 = wallRun(w, sim, 0, 'mauer', 4, 7) || run;
+      pa.send({ t: 'ffWall', kind: 'mauer', pieces: [[r4.i, r4.j, 0, 4]] }); await sleep(40); }
+    check(pa.all('ffToast').some((m) => m.text === '❌ Zu wenig 🪨 Stein'), 'ffWall ohne Stein: „❌ Zu wenig 🪨 Stein“ (war: ' + (pa.all('ffToast').map((m) => m.text).join(' | ') || '–') + ')');
+    sim.dev.stock(0, { stein: 40 }); pa.clear();
+    { const kp = dbg().world.sites[0].keep;
+      pa.send({ t: 'ffWall', kind: 'mauer', pieces: [[kp.i, kp.j, 0, 4]] }); await sleep(40);
+      check(pa.all('ffToast').some((m) => /^❌ (Der Platz ist belegt|Zu eng|Hier kann man nicht bauen|Außerhalb)/.test(m.text)) && !pa.all('ffToast').some((m) => /^(occupied|tight|terrain|bounds)$/.test(m.text)), 'ffWall auf die Burg: der Grund kommt als deutscher Toast (' + pa.all('ffToast').map((m) => m.text).join(' | ') + ')'); }
+    pb.clear(); pb.send({ t: 'ffWall', kind: 'mauer', pieces: [[run.i, run.j + 5, 0, 2]] }); await sleep(40);
+    check(pb.all('ffToast').some((m) => /^❌ Nur auf deinem eigenen Land$/.test(m.text)), 'ffWall im Land eines anderen Hauses: „❌ Nur auf deinem eigenen Land“');
+    // garbage never reaches the sim
+    { const n0 = spy.calls('buildWall').length + spy.calls('trade').length;
+      const bad = [{ t: 'ffWall' }, { t: 'ffWall', kind: 'mauer' }, { t: 'ffWall', pieces: [[1, 1, 0, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: 'x' }, { t: 'ffWall', kind: 'mauer', pieces: [] }, { t: 'ffWall', kind: 'hof', pieces: [[1, 1, 0, 1]] }, { t: 'ffWall', kind: 'bergfried', pieces: [[1, 1, 0, 1]] },
+        { t: 'ffWall', kind: '__proto__', pieces: [[1, 1, 0, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 0, 5]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 0, 0]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 2, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1.5, 1, 0, 1]] },
+        { t: 'ffWall', kind: 'mauer', pieces: [['a', 1, 0, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1]] }, { t: 'ffWall', kind: 'mauer', pieces: [null] }, { t: 'ffWall', kind: 'mauer', pieces: [{ i: 1 }] },
+        { t: 'ffWall', kind: 'mauer', pieces: Array.from({ length: 65 }, (_, k) => [k, 1, 0, 1]) }, { t: 'ffWall', kind: 'mauer', pieces: [[1, 1, 0, 1], [1, 1, 0, 9]] },
+        { t: 'ffTrade' }, { t: 'ffTrade', good: 'korn' }, { t: 'ffTrade', good: 'gold', side: 'buy', packs: 1 }, { t: 'ffTrade', good: 'korn', side: 'swap', packs: 1 }, { t: 'ffTrade', good: 'korn', side: 'sell', packs: 0 }, { t: 'ffTrade', good: 'korn', side: 'sell', packs: 6 },
+        { t: 'ffTrade', good: 'korn', side: 'sell', packs: 1.5 }, { t: 'ffTrade', good: 'korn', side: 'sell', packs: '2' }, { t: 'ffTrade', good: '__proto__', side: 'sell', packs: 1 }, { t: 'ffTrade', good: 5, side: 'sell', packs: 1 }];
+      for (const m of bad) pa.send(m);
+      await sleep(60);
+      check(spy.calls('buildWall').length + spy.calls('trade').length === n0, 'ungültige ffWall- und ffTrade-Nachrichten erreichen die Sim nicht (' + (spy.calls('buildWall').length + spy.calls('trade').length - n0) + ' von ' + bad.length + ' durchgekommen)'); }
+    for (const b of S.buildings.filter((x) => x.lord === 0 && (x.kind === 'mauer' || x.kind === 'palisade'))) sim.cancel(0, b.id);   // (the sites: the test needs the room)
+
+    // ---- ffTrade: the Markt ----
+    pb.clear(); pb.send({ t: 'ffTrade', good: 'korn', side: 'sell', packs: 1 }); await sleep(40);
+    check(pb.all('ffToast').some((m) => m.text === '❌ Dafür braucht ihr erst einen Markt') && spy.calls('trade').pop().r.reason === 'markt', 'ffTrade ohne Markt: „❌ Dafür braucht ihr erst einen Markt“');
+    const mk = (() => { const sp = spot(w, sim, 'markt', 0); return sim.dev.place(0, 'markt', sp.i, sp.j, sp.rot); })();
+    check(mk.ok === true, 'Testhilfe: ein fertiger Markt in Haus I');
+    sim.dev.stock(0, { korn: 30, holz: 20, stein: 10, gold: 0 }); pa.clear();
+    pa.send({ t: 'ffTrade', good: 'korn', side: 'sell', packs: 2 }); await sleep(40);
+    check(spy.calls('trade').pop().r.ok && spy.calls('trade').pop().args.join() === '0,korn,sell,2' && sim.youOf(0).stock.gold === 2 && sim.youOf(0).stock.korn <= 20 && sim.youOf(0).stock.korn >= 18, 'ffTrade: 2 Pakete Korn verkauft → 10 Korn weniger, 2 Gold (1 pro Paket)');
+    const tradeToasts = (p) => p.all('ffToast').filter((m) => /⚖️|❌|⚠️/.test(m.text));   // (the dev-placed Markt toasts „✅ Markt ist fertig“ on its own)
+    check(tradeToasts(pa).length === 0, 'ein gelungener Handel macht keinen Toast (ffYou sagt es)');
+    await until(() => pa.last('ffYou') && pa.last('ffYou').stock.gold === 2, 3000, 'ffYou.stock.gold kommt an');
+    check(pa.last('ffYou').stock.gold === 2 && cs.w1.window.__ff.st.you.stock.gold === 2, 'ffYou.stock.gold = 2 (auch bei der echten Handy-Seite)');
+    pa.clear(); pa.send({ t: 'ffTrade', good: 'stein', side: 'buy', packs: 1 }); await sleep(40);
+    check(pa.all('ffToast').some((m) => m.text === '❌ Zu wenig Stein oder Gold'), 'ffTrade kaufen ohne genug Gold: „❌ Zu wenig Stein oder Gold“');
+    sim.dev.stock(0, { korn: 12 }); pa.clear(); pa.send({ t: 'ffTrade', good: 'korn', side: 'sell', packs: 5 }); await sleep(40);
+    check(pa.all('ffToast').some((m) => m.text === '⚖️ Nur 2 Pakete – mehr Korn habt ihr nicht') && spy.calls('trade').pop().r.n === 2, 'ffTrade, nur 2 von 5 Paketen verkaufbar: „⚖️ Nur 2 Pakete – mehr Korn habt ihr nicht“');
+    { const cap = sim.youOf(0).cap.korn;
+      sim.dev.stock(0, { korn: cap - 7, gold: 100 }); pa.clear(); pa.send({ t: 'ffTrade', good: 'korn', side: 'buy', packs: 3 }); await sleep(40);
+      check(pa.all('ffToast').some((m) => m.text === '⚖️ Nur 1 Paket – das Korn-Lager ist voll'), 'ffTrade kaufen, das Lager läuft voll: „⚖️ Nur 1 Paket – das Korn-Lager ist voll“ (' + pa.all('ffToast').map((m) => m.text).join(' | ') + ')');
+      sim.dev.stock(0, { korn: cap, gold: 100 }); pa.clear(); pa.send({ t: 'ffTrade', good: 'korn', side: 'buy', packs: 1 }); await sleep(40);
+      check(pa.all('ffToast').some((m) => m.text === '❌ Korn-Lager ist voll'), 'ffTrade kaufen bei vollem Lager: „❌ Korn-Lager ist voll“'); }
+    sim.dev.stock(0, { korn: 30, holz: 10, stein: 10, gold: 100 }); pa.clear();
+    pa.send({ t: 'ffTrade', good: 'holz', side: 'buy', packs: 1 }); await sleep(40);
+    check(sim.youOf(0).stock.gold <= 97 && sim.youOf(0).stock.gold >= 96 && tradeToasts(pa).length === 0, 'ffTrade kaufen: 1 Paket Holz kostet 3 Gold');
+
+    // ---- ffRecruit: the Söldnerlager ('lager') and gold ('cost') ----
+    sim.dev.stock(0, { korn: 40, holz: 40, stein: 20, gold: 0 }); pa.clear();
+    pa.send({ t: 'ffRecruit', unit: 'reiterschuetze', n: 1 }); await sleep(40);
+    check(pa.all('ffToast').some((m) => m.text === '❌ Dafür braucht ihr erst ein Söldnerlager') && spy.calls('recruit').pop().r.reason === 'lager', 'ffRecruit ohne Söldnerlager: „❌ Dafür braucht ihr erst ein Söldnerlager“');
+    pa.clear(); pa.send({ t: 'ffRecruit', unit: 'fackel', n: 1 }); await sleep(40);
+    check(pa.all('ffToast').some((m) => /Söldnerlager/.test(m.text)), 'auch der Fackelträger kommt jetzt aus dem Söldnerlager (' + pa.all('ffToast').map((m) => m.text).join(' | ') + ')');
+    pa.clear(); pa.send({ t: 'ffRecruit', unit: 'ramme', n: 1 }); await sleep(40);
+    check(pa.all('ffToast').some((m) => /Kaserne/.test(m.text)), 'der Rammbock kommt aus der Kaserne: ohne sie „❌ Dafür braucht ihr erst eine Kaserne“');
+    { const sp = spot(w, sim, 'soeldnerlager', 0), sl = sim.dev.place(0, 'soeldnerlager', sp.i, sp.j, sp.rot);
+      check(sl.ok === true, 'Testhilfe: ein fertiges Söldnerlager');
+      pa.clear(); pa.send({ t: 'ffRecruit', unit: 'reiterschuetze', n: 1 }); await sleep(40);
+      check(pa.all('ffToast').some((m) => m.text === '❌ Zu wenig Gold'), 'ffRecruit ohne Gold: „❌ Zu wenig Gold“ (missingOf kennt Gold; war: ' + pa.all('ffToast').map((m) => m.text).join(' | ') + ')');
+      sim.dev.stock(0, { gold: 20, korn: 40 }); pa.clear(); pa.send({ t: 'ffRecruit', unit: 'reiterschuetze', n: 2 }); await sleep(40);
+      check(!pa.all('ffToast').some((m) => /❌/.test(m.text)) && sim.youOf(0).queue.some((q) => q.unit === 'reiterschuetze' && q.n === 2) && sim.youOf(0).stock.gold === 14, 'ffRecruit Reiterschütze: gelungen (6 Gold, 2 Korn), ein Eintrag in der Warteschlange'); }
+    { const ka = spot(w, sim, 'kaserne', 0); sim.dev.place(0, 'kaserne', ka.i, ka.j, ka.rot);
+      sim.dev.stock(0, { holz: 40, gold: 2 }); pa.clear(); pa.send({ t: 'ffRecruit', unit: 'ramme', n: 1 }); await sleep(40);
+      check(pa.all('ffToast').some((m) => m.text === '❌ Zu wenig Gold'), 'ffRecruit Rammbock mit 2 von 4 Gold: „❌ Zu wenig Gold“');
+      sim.dev.stock(0, { holz: 40, gold: 10 }); pa.clear(); pa.send({ t: 'ffRecruit', unit: 'ramme', n: 1 }); await sleep(40);
+      check(!pa.all('ffToast').some((m) => /❌/.test(m.text)) && sim.youOf(0).queue.some((q) => q.unit === 'ramme') && sim.youOf(0).stock.gold === 6, 'ffRecruit Rammbock: 10 Holz und 4 Gold bezahlt, in der Warteschlange'); }
+
+    // ---- the Wehrgang: the 15th board field counts the archers inside, a garrison order brings no snapping toast ----
+    const gw = wallRun(w, sim, 0, 'mauer', 4, 2), wp = gw && sim.dev.place(0, 'mauer', gw.i, gw.j, 0, 4);
+    check(wp && wp.ok === true, 'Testhilfe: eine fertige Mauer (4 Felder) für die Bogenschützen');
+    if (wp && wp.ok) {
+      const wx = -72 + gw.i + 2, wy = -45 + gw.j + 0.5, side = sim.state.lords[0].site < 2 ? -1 : 1;
+      for (let k = 0; k < 3; k++) { const p = freeAt(w, sim, wx - 1.5 + k * 1.5, wy + side * 3); sim.dev.spawn(0, 'bogen', p.x, p.y, 2); }
+      pa.clear(); const nb = spy.calls('banner').length;
+      pa.send({ t: 'ffBanner', n: 2, x: wx, y: wy }); await sleep(40);
+      const br = spy.calls('banner')[nb];
+      check(br && br.r.ok && br.r.garrison === true && !pa.all('ffToast').some((m) => /nächsten erreichbaren|Kein Weg/.test(m.text)), 'ffBanner auf die eigene Mauer: garrison: true, der Glue toastet nichts (das Handy sagt „🏹 … besetzen“ selbst)');
+      await until(() => { const r = row(pb, wp.id); return r && r[14] === 3; }, 8000, 'ffBoard: 3 Bogenschützen auf der Mauer');
+      const r = row(pb, wp.id);
+      check(r && r[14] === 3 && r[13] === 4 && S.buildings.find((b) => b.id === wp.id).garrison === 3 && S.units.filter((u) => u.on === wp.id).length === 3, 'ffBoard: 15. Feld = 3 Bogenschützen auf der Mauer, 14. Feld = len 4 (' + JSON.stringify(r) + ')');
+      // ---- a broken wall: ruined, the breach herald, the alert, the rebuild with its len ----
+      pa.clear(); pb.clear();
+      sim.dev.damage(wp.b, 1e7, 1);
+      await until(() => dbg().heraldLog.some((x) => /Die Mauer von Haus Falkenstein ist gebrochen!/.test(x)), 4000, 'Herold: Bresche');
+      check(dbg().heraldLog.some((x) => x === '🧱 Die Mauer von Haus Falkenstein ist gebrochen!'), 'Herold: „🧱 Die Mauer von Haus Falkenstein ist gebrochen!“');
+      await sleep(80);
+      check(pa.all('ffAlert').some((a) => a.kind === 'attack' && a.text === '🧱 Die Mauer ist gebrochen!' && typeof a.x === 'number' && typeof a.y === 'number'), 'ffAlert (attack) an das Haus der Mauer: „🧱 Die Mauer ist gebrochen!“ mit Ort');
+      check(pb.all('ffToast').some((m) => /^🧱 Bresche! Die Mauer von Haus Falkenstein ist gefallen$/.test(m.text)) && pa.all('ffToast').some((m) => /^💥 Mauer ist gebrochen — ♻️ Wiederaufbau für die Hälfte$/.test(m.text)), 'Toasts: der Angreifer („🧱 Bresche! …“) und der Besitzer („💥 Mauer ist gebrochen — ♻️ Wiederaufbau …“)');
+      await until(() => { const q = row(pb, wp.id); return q && q[9] === 1; }, 3000, 'ffBoard: ruined');
+      check(row(pb, wp.id)[13] === 4 && row(pb, wp.id)[14] === 0 && S.units.filter((u) => u.on === wp.id).length === 0, 'ffBoard: die Ruine behält len 4, die Besatzung ist abgesessen (15. Feld 0)');
+      sim.dev.stock(0, { stein: 20 }); const stein0 = sim.youOf(0).stock.stein; pa.clear();
+      const nb0 = spy.calls('build').length;
+      pa.send({ t: 'ffBuild', kind: 'mauer', i: gw.i, j: gw.j, rot: 0, len: 3 }); await sleep(40);
+      check(!pa.all('ffToast').some((m) => /wiederaufgebaut/.test(m.text)) && S.buildings.find((b) => b.id === wp.id).ruined === true, 'ffBuild mit falscher len: kein Wiederaufbau der Ruine (Toast: ' + (pa.all('ffToast').map((m) => m.text).join(' | ') || '–') + ')');
+      for (const b of S.buildings.filter((x) => x.lord === 0 && x.kind === 'mauer' && !x.ruined && x.id !== wp.id)) sim.cancel(0, b.id);
+      pa.clear();
+      pa.send({ t: 'ffBuild', kind: 'mauer', i: gw.i, j: gw.j, rot: 0, len: 4 }); await sleep(40);
+      const rb = S.buildings.find((b) => b.id === wp.id), rc = spy.calls('build').filter((x) => x.args[1] === 'mauer' && x.args[5] === 4).pop();
+      check(rc && rc.args.length === 6 && rc.r.ok && rc.r.id === wp.id && rb.ruined === false && rb.len === 4 && pa.all('ffToast').some((m) => m.text === '♻️ Mauer wird wiederaufgebaut'), 'ffBuild mit len 4: die Ruine wird mit ihrer Länge wiederaufgebaut (6. Argument, dieselbe id, „♻️ Mauer wird wiederaufgebaut“)');
+      check(sim.youOf(0).stock.stein <= stein0 - 4 && sim.youOf(0).stock.stein >= stein0 - 5, 'der Wiederaufbau kostet die Hälfte, pro Feld gerechnet: ⌈2 · 4 · ½⌉ = 4 Stein');
+      sim.cancel(0, wp.id);
+    }
+
+    // ---- herald lines and their rate limit, the gold plunder, the first Söldnerlager ----
+    for (const p of [pa, pb, pc]) p.clear();
+    const wall1 = sim.dev.place(1, 'mauer', 0, 0, 0, 1);   // (a bad spot: the real wall for the sound checks comes below)
+    const sp1 = wallRun(w, sim, 1, 'mauer', 4, 2), wl1 = sp1 && sim.dev.place(1, 'mauer', sp1.i, sp1.j, 0, 4);
+    check(wl1 && wl1.ok, 'Testhilfe: eine fertige Mauer in Haus II');
+    void wall1;
+    if (wl1 && wl1.ok) {
+      const bx = -72 + sp1.i + 2, by = -45 + sp1.j + 0.5, hn0 = dbg().heraldLog.length;
+      await until(() => !dbg().kk.on, 12000, 'die Kamera des ersten Bruchs schließt');   // (the broken wall of house I opened it a moment ago)
+      inj.add({ t: 'breach', id: wl1.id, lord: 1, kind: 'mauer', x: bx, y: by, by: 0 }, { t: 'breach', id: wl1.id, lord: 1, kind: 'torhaus', x: bx, y: by, by: 0 });
+      await consumed(inj); await sleep(30);
+      const lines = dbg().heraldLog.slice(hn0).filter((x) => /gebrochen/.test(x));
+      check(lines.length === 1 && lines[0] === '🧱 Die Mauer von Haus Wolfsberg ist gebrochen!', 'Herold: zwei Brüche desselben Hauses innerhalb von 20 s → eine Zeile (gedrosselt): ' + JSON.stringify(lines));
+      check(pb.all('ffAlert').filter((a) => a.kind === 'attack' && /gebrochen/.test(a.text)).length === 1, 'ffAlert: höchstens ein Bruch-Alarm pro 10 s und Haus');
+      // the Kampf-Kamera prefers a breach: a fallen piece opens it (cooldown or not) and labels it
+      check(dbg().kk.on && dbg().kk.src === 'breach' && /Bresche (in der Mauer|im Tor) von Haus Wolfsberg/.test(dbg().kk.label) && calls.inset && Math.abs(calls.inset.focus.x - bx) < 2, 'Kampf-Kamera: ein gefallenes Mauerstück öffnet sie am Bruch („' + dbg().kk.label + '“)');
+      await until(() => !dbg().kk.on, 12000, 'die Kamera schließt');
+      // ram blows: the camera follows (a blow opens it when the cooldown is over), sounds, view
+      const e0 = soundEv.length, ram0 = calls.evTypes.ram | 0, brc0 = calls.evTypes.breach | 0, unitId = S.units[0].id;
+      const hutB = S.buildings.find((b) => b.lord === 2 && b.kind !== 'bergfried' && !b.ruined), hs = !hutB && spot(w, sim, 'huette', 2), tmpHut = hutB || sim.dev.place(2, 'huette', hs.i, hs.j, hs.rot).b;
+      inj.add({ t: 'hit', id: wl1.id, x: bx, y: by }, { t: 'ram', id: wl1.id, x: bx, y: by }, { t: 'ruined', id: wl1.id, by: 0 }, { t: 'breach', id: wl1.id, lord: 1, kind: 'mauer', x: bx, y: by, by: 0 }, { t: 'hit', id: unitId, x: 0, y: 0 }, { t: 'ruined', id: tmpHut.id, by: 0 });
+      await consumed(inj); await sleep(30);
+      const sel = soundEv.slice(e0).filter((t) => ['hit', 'ram', 'breach', 'ruined'].includes(t)).join();
+      check(sel === 'ram,breach,hit,ruined', 'Ton: der Rammstoß und der Bruch klingen (thud, crumble); der Treffer auf die Mauer und das „ruined“ des Bruchs bleiben stumm, ein Treffer auf eine Einheit und ein anderes „ruined“ klingen wie bisher (' + sel + ')');
+      check((calls.evTypes.ram | 0) === ram0 + 1 && (calls.evTypes.breach | 0) === brc0 + 1, 'die View bekommt jedes Ereignis, auch ram und breach');
+      check(dbg().kk.on && /Bresche|Sturm/.test(dbg().kk.label), 'Kampf-Kamera: Bruch und Rammstoß halten sie auf der Mauer („' + dbg().kk.label + '“)');
+      // the gate hook: the view tells when a Torhaus opens; the creak is rate-limited by sound.js itself
+      const view = dbg().view, g0 = plays.length;
+      check(typeof view.onGate === 'function', 'der Glue hängt view.onGate ein (die View meldet ein sich öffnendes Torhaus)');
+      view.onGate({ id: 1, lord: 0, x: 0, z: 0 });
+      check(plays.length === g0 + 1 && plays[plays.length - 1] === 'gate', 'view.onGate → FurtSound.play("gate")');
+    }
+    { const hn0 = dbg().heraldLog.length;
+      inj.add({ t: 'plunder', lord: 1, by: 0, loot: { korn: 1, holz: 0, stein: 0, gold: 7 } });
+      await consumed(inj); await sleep(30);
+      const hl = dbg().heraldLog.slice(hn0);
+      check(hl.includes('🏰 Haus Wolfsberg wurde geplündert!') && hl.includes('💰 Haus Falkenstein erbeutet 7 Gold!'), 'Herold: Plünderung mit Gold → „💰 Haus Falkenstein erbeutet 7 Gold!“');
+      check(pa.all('ffToast').some((m) => /Beute gemacht: \+\d+ Ruhm und 7 Gold/.test(m.text)) && dbg().banners.some((b) => /💰 7/.test(b.lines.join(' '))), 'der Plünderer bekommt „💰 Beute gemacht: +20 Ruhm und 7 Gold“, das Banner nennt das Gold');
+      const hn1 = dbg().heraldLog.length;
+      inj.add({ t: 'plunder', lord: 2, by: 0, loot: { korn: 0, holz: 0, stein: 0, gold: 0 } });
+      await consumed(inj); await sleep(30);
+      check(!dbg().heraldLog.slice(hn1).some((x) => /erbeutet/.test(x)), 'ohne Gold keine Gold-Zeile'); }
+    { const sp = spot(w, sim, 'soeldnerlager', 1), sl = sp && sim.dev.place(1, 'soeldnerlager', sp.i, sp.j, sp.rot), hn0 = dbg().heraldLog.length;
+      check(sl && sl.ok, 'Testhilfe: ein fertiges Söldnerlager in Haus II');
+      if (sl && sl.ok) {
+        inj.add({ t: 'buildDone', id: sl.id }, { t: 'buildDone', id: sl.id }); await consumed(inj); await sleep(30);
+        const hl = dbg().heraldLog.slice(hn0).filter((x) => /Söldner/.test(x));
+        check(hl.length === 1 && hl[0] === '⛺ Haus Wolfsberg heuert Söldner an: das Söldnerlager steht!', 'Herold: das erste Söldnerlager eines Hauses → „⛺ Haus Wolfsberg heuert Söldner an: das Söldnerlager steht!“, nur einmal');
+      } }
+
+    inj.restore(); spy.restore();
+    for (const l of ['w1', 'w2', 'w3']) bus.disconnect(l);
+    await sleep(150);
+    check(w.eval('active') === null, 'alle weg → Lobby');
+    check(glueErr.length === 0, 'Szenario 6: Mauern, Markt, Söldner und Brüche ohne geloggten Glue-Fehler' + (glueErr.length ? ': ' + glueErr[0].slice(0, 300) : ''));
   }
 
   console.log(process.exitCode ? '\n❌ Furt-&-Fehde-Flow fehlgeschlagen' : '\n✅ Alle ' + checks + ' Furt-&-Fehde-Flow-Checks bestanden');
