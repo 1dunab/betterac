@@ -69,6 +69,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 💥 Artillery Hills | 2+ | Worms-style tank duels: biomes, wind, supply drops, special weapons |
 | 💎 Bumper Gems | 2+ | Physics bumper arena — collect gems, shove friends |
 | 🏎️ Micro Racer | 2+ | Real-3D elimination racing (three.js): leave the picture and you are out. Nitro, brake, items, six tracks ([notes](docs/RACER.md)) |
+| ⚽ Autoball | 1+ | Car football in 3D with the racer's cars: two teams, thumb stick and boost, bots fill up ([notes](docs/AUTOBALL.md)) |
 | 🐉 Boss Raid | 1+ | Co-op neon bullet-hell against three bosses, with classes and revives |
 | 🚀 Space Arena | 2+ | Asteroids dogfight around a growing black hole |
 | 🌊 Sintflut | 2+ | Falling-sand flood war: dam, dig, blast — last dry house wins |

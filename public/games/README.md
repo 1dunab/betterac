@@ -132,6 +132,8 @@ falls back to the lobby when WebGL is unavailable. Force `background: transparen
 overlay canvases — the page's global `canvas` CSS rule would otherwise cover your scene.
 Copy both into `cv` a few times a second, or Mitschauen viewers see nothing. Keep the
 rules out of the three.js file (`racer/sim.js` runs in Node, see [docs/RACER.md](../../docs/RACER.md)).
+`core/kit3d.js` holds what Micro Racer and Autoball share: the low-poly car, particles, skid marks
+and the `Stage` that does the canvas juggling above for you.
 
 ## 4. The controller module — phone UI
 

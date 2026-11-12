@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Autoball Dev</title>
+<!-- Autoball without lobby or phones: four "players" whose cars the sim's own bots drive.
+     ?arena=stadion|eis|neon  ?minutes=N  ?teams=1 stays in the team selection  ?goal=1 / ?over=1 stage a goal
+     or the final whistle  ?sim=<ms> fast-forwards with a
+     fake clock. With ?sim the page shows the Mitschauen copy (a 2D canvas) instead of the WebGL canvas,
+     because a headless screenshot cannot see WebGL:
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
+       --screenshot out.png "http://localhost:3000/dev-autoball.html?arena=neon&sim=20000" -->
+<style>
+  html,body { margin:0; background:#0a0a14; }
+  /* identisch zur canvas-Regel in screen.html — deckt CSS-Konflikte im Test auf */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 20px); width:auto; height:auto;
+           width:min(calc(100vw - 20px), calc((100vh - 20px) * 1.6)); }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script src="core/kit3d.js"></script>
+<script>
+  // Shell-Stubs für isoliertes Testen des Autoball-Moduls
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = {
+    1: { color: '#ff2d55', name: 'Anna', named: true },
+    2: { color: '#0a84ff', name: 'Ben', named: true },
+    3: { color: '#30d158', name: 'Cleo', named: true },
+    4: { color: '#ffd60a', name: 'Dino', named: true }
+  };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  const sent = [];
+  const ac = { message(to, d) { sent.push([to, d]); if (sent.length > 400) sent.shift(); } };
+  window.__sent = sent;
+</script>
+<script src="games/autoball/meta.js"></script>
+<script src="games/autoball/sim.js"></script>
+<script src="games/autoball/render.js"></script>
+<script src="games/autoball/screen.js"></script>
+<script>
+  const logError = console.error.bind(console);
+  console.error = (...a) => devFail(a.join(' '));     // errors the game catches itself show up in the screenshot too
+  function devFail(msg) {
+    let box = document.getElementById('devFail');
+    if (!box) {
+      box = document.createElement('pre'); box.id = 'devFail';
+      box.style.cssText = 'position:fixed; left:0; top:0; right:0; margin:0; padding:14px; z-index:9; background:#400; color:#fff; font:bold 15px monospace; white-space:pre-wrap;';
+      document.body.appendChild(box);
+    }
+    box.textContent += msg + '\n';
+    logError(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+  window.__bootAutoball = function () {
+    try {
+      const q = new URLSearchParams(location.search);
+      const simMs = parseInt(q.get('sim') || '0', 10);
+      window.AutoballView.keepBuffer = true;   // or a headless screenshot shows an empty 3D canvas
+      const game = window.GAMES.autoball();
+      window.__game = game;
+      let fake = 1000;
+      if (simMs > 0) performance.now = () => fake;
+
+      game.start([1, 2, 3, 4], { arena: q.get('arena') || 'stadion', minutes: +q.get('minutes') || 3, bots: q.get('bots') || 'fill' });
+      if (document.title.startsWith('LOBBY:')) { devFail('start() -> ' + document.title); return; }
+      if (!q.get('teams')) {
+        game.onMessage(1, { t: 'abStart' });
+        // nobody holds a phone here: let the sim's bots drive the players' cars
+        game._debug().state.cars.forEach(c => { c.bot = true; });
+      }
+      const frame = () => { fake += 16.7; game.render(); };
+      if (simMs > 0) for (let t = 0; t < simMs; t += 16.7) frame();
+      // ?goal=1 / ?over=1: stage a goal or the end of the match for a screenshot
+      const st = game._debug().state, C = AutoballSim.CONST;
+      if (q.get('goal') && st) { const b = st.ball; b.x = C.L - 2; b.z = 2; b.y = 0; b.vx = 34; b.vz = 0; b.last[0] = { id: st.cars[0].id, at: st.time }; st.cars[0].bot = false; for (let i = 0; i < 40; i++) frame(); }
+      if (q.get('over') && st) { st.score[0] = 3; st.score[1] = 2; st.cars[0].goals = 2; st.cars[1].goals = 2; st.cars[2].goals = 1; st.cars.forEach(c => { c.bot = false; }); st.clock = 100; for (let i = 0; i < 600 && st.phase !== 'over'; i++) frame(); for (let i = 0; i < 20; i++) frame(); }
+      (function loop() { frame(); requestAnimationFrame(loop); })();
+      if (simMs > 0 && !q.get('teams')) { autoballStage.wrap.style.display = 'none'; cv.style.display = ''; }
+      document.title = 'AUTOBALL-RUNNING';
+    } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+  };
+</script>
+<script type="module">
+  import * as THREE from './vendor/three.module.min.js';
+  window.THREE = THREE;
+  window.__bootAutoball();
+</script>
+</body>
+</html>
