@@ -56,6 +56,7 @@ function makeDom(file, role, bus, label, opts) {
 function makeBus() {
   const clients = new Map(); let nextId = 1;
   let screenSecret = null, secrets = 0;   // like server.js: the one screen cannot be stolen, only its own tab (secret) takes the seat back
+  const phoneSecrets = new Map();         // like server.js: a phone that comes back with its secret gets its old id again
   return {
     handlers: {},
     register(label, h) { this.handlers[label] = h; },
@@ -76,7 +77,7 @@ function makeBus() {
         if (!sender || sender[0] !== 0) return;
         const id = msg.id | 0, tl = clients.get(id);
         if (id > 0 && tl !== undefined) {
-          clients.delete(id);
+          clients.delete(id); phoneSecrets.delete(id);
           this.handlers[tl].deliver({ type: 'kicked' });
           for (const [, ol] of clients) this.handlers[ol].deliver({ type: 'disconnect', device_id: id });
         }
@@ -89,9 +90,12 @@ function makeBus() {
           if (!old) screenSecret = 'screen-secret-' + (++secrets);
           else if (old !== label) this.handlers[old].deliver({ type: 'kicked' });
         }
-        const id = msg.role === 'screen' ? 0 : nextId++;
+        const back = msg.role !== 'screen' && Number.isInteger(msg.resume) && msg.resume > 0 && typeof msg.secret === 'string'
+          && phoneSecrets.get(msg.resume) === msg.secret && !clients.has(msg.resume);
+        const id = msg.role === 'screen' ? 0 : back ? msg.resume : nextId++;
         clients.set(id, label);
-        this.handlers[label].deliver({ type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: id === 0 ? screenSecret : undefined });
+        if (id > 0 && !phoneSecrets.has(id)) phoneSecrets.set(id, 'phone-secret-' + id);
+        this.handlers[label].deliver({ type: 'welcome', device_id: id, code: 'LOCAL', devices: [...clients.keys()], secret: id === 0 ? screenSecret : phoneSecrets.get(id) });
         for (const [oid, ol] of clients) if (oid !== id) this.handlers[ol].deliver({ type: 'connect', device_id: id });
         this.handlers[label]._id = id;
         return;
