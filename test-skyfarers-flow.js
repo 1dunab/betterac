@@ -194,6 +194,10 @@ async function startGame(p, cfg) {
   check(calls.evTypes.buildDone && calls.evTypes.buildStart, 'Sim-Events (buildStart/buildDone) gehen an die View');
 
   // ---- canBuild: noSlot / stage / Wiederaufbau ----
+  // The sim stands still meanwhile: these checks are about what the glue derives from the state, and a docked bot
+  // would rebuild the ruin before the next skBase (≤ 2/s) shows it (seen on CI)
+  const frozen = dbg().sim, step0 = frozen.step;
+  frozen.step = () => [];
   const saved = st().slots.map(sl => Object.assign({}, sl));
   st().stock.holz = 30; st().stock.kristall = 30;
   for (const sl of st().slots) if (sl.i > 0) Object.assign(sl, { kind: 'windrad', stage: 1, build: 1, hp: 60, fire: 0, ruined: false });
@@ -204,6 +208,7 @@ async function startGame(p, cfg) {
   await until(() => p2.last('skBase') && p2.last('skBase').canBuild.windrad === true, 3000, 'canBuild Wiederaufbau');
   check(p2.last('skBase').canBuild.windrad === true && p2.last('skBase').canBuild.kanone === 'noSlot', 'zerstörtes Gebäude gleicher Art kann wieder aufgebaut werden');
   st().slots.forEach((sl, i) => Object.assign(sl, saved[i]));
+  frozen.step = step0;
 
   // ---- Drosselung: skYou ≤ 5/s, skBase ≤ 2/s (Bildschirmzeit) ----
   p2.send({ t: 'skBoost', on: true });

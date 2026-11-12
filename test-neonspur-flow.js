@@ -159,11 +159,12 @@ const phone = (l) => ({
   check(!dbg().seats.includes(p4.id), 'noch kein Sitz in der laufenden Runde');
 
   // ---- Fahrer geht mitten in der Runde ----
-  const drv = rider(p3);
-  if (drv.alive && !st().over) {
-    bus.disconnect('c3'); await sleep(60);
-    check(!dbg().seats.includes(p3.id) && st().riders.find(r => r.pid === p3.id).killer === 'left', 'abgehender Fahrer crasht still (killer left), Sitz frei');
-  } else check(true, 'Fahrer war schon raus (übersprungen)');
+  // Cleo geht auch, wenn sie schon raus ist (das hängt von Zufall und Tempo ab): bliebe sie, säßen in Dinos Runde
+  // 4 Menschen und kein Bot, und 4 Fahrer, die geradeaus in die Wand fahren, crashen gleichzeitig: nur Unentschieden, kein Finale
+  const drv = rider(p3), wasAlive = drv.alive && !st().over;
+  bus.disconnect('c3'); await sleep(60);
+  if (wasAlive) check(!dbg().seats.includes(p3.id) && st().riders.find(r => r.pid === p3.id).killer === 'left', 'abgehender Fahrer crasht still (killer left), Sitz frei');
+  else check(!dbg().seats.includes(p3.id), 'Fahrer war schon raus und geht trotzdem: Sitz frei');
 
   // ---- Rundenende ----
   await until(() => dbg().phase === 'roundOver', 15000, 'Runde endet');
