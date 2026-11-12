@@ -45,6 +45,7 @@
   const ac = { message(to, d) { sent.push([to, d]); if (sent.length > 400) sent.shift(); }, broadcast(d) { sent.push([null, d]); } };
   window.__sent = sent;
 </script>
+<script src="core/kit3d.js"></script>
 <script src="games/racer/meta.js"></script>
 <script src="games/racer/tracks.js"></script>
 <script src="games/racer/sim.js"></script>
@@ -104,7 +105,7 @@
         for (let i = 0; i < 5; i++) game.render();
         (function loop() { bots(); game.render(); requestAnimationFrame(loop); })();
       }
-      if (simMs > 0) { racerWrap.style.display = 'none'; cv.style.display = ''; }
+      if (simMs > 0) { racerStage.wrap.style.display = 'none'; cv.style.display = ''; }
       document.title = 'RACER-RUNNING';
     } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
   };

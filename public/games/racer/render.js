@@ -1,6 +1,7 @@
 // ===== Micro Racer view (three.js): diorama, cars, items, particles =====
 // Plain script; THREE is handed to the constructor (window.THREE is set by a module script).
 // It draws what sim.js says and decides nothing. The camera, too, comes from the sim.
+// The car, the particles and the skid marks come from core/kit3d.js (shared with Autoball).
 (function (root) {
   const PARTS = 320, SKIDS = 420, AMBIENT = 420;
   const ITEM_COLOR = { rocket: '#ff5a3c', oil: '#8a6cff', shield: '#4db8ff', bolt: '#ffe14d', magnet: '#ff4fa3' };
@@ -21,8 +22,8 @@
       this.camera = new T.PerspectiveCamera((root.RacerSim && root.RacerSim.CONST.FOV) || 55, width / height, 0.5, 1800);
       this.scene = null; this.owned = [];
       this.cars = {}; this.rockets = new Map(); this.drops = new Map(); this.boxes = []; this.pulse = [];
-      this.parts = []; this.skidN = 0; this.flash = 0;
-      this.m4 = new T.Matrix4(); this.col = new T.Color();
+      this.fx = null; this.skids = null; this.flash = 0;
+      this.col = new T.Color();
     }
 
     // sharper picture on big screens: ratio 1..2 (the canvas keeps its 960×600 layout size)
@@ -39,7 +40,7 @@
       for (const x of this.owned) { try { x.dispose(); } catch (e) {} }
       this.owned = []; this.scene = null;
       this.cars = {}; this.rockets = new Map(); this.drops = new Map(); this.boxes = []; this.pulse = [];
-      this.parts = []; this.skidN = 0; this.flash = 0;
+      this.fx = null; this.skids = null; this.flash = 0;
     }
 
     dispose() { this.clear(); try { this.renderer.dispose(); } catch (e) {} }
@@ -47,13 +48,7 @@
     // ---------- small builders ----------
     lambert(color, o) { return this.own(new this.T.MeshLambertMaterial(Object.assign({ color }, o))); }
     basic(color, o) { return this.own(new this.T.MeshBasicMaterial(Object.assign({ color }, o))); }
-    canvasTex(w, h, draw) {
-      const c = document.createElement('canvas'); c.width = w; c.height = h;
-      draw(c.getContext('2d'), w, h);
-      const t = this.own(new this.T.CanvasTexture(c));
-      t.colorSpace = this.T.SRGBColorSpace;
-      return t;
-    }
+    canvasTex(w, h, draw) { return root.Kit3D.canvasTex(this.T, this, w, h, draw); }
     // a mesh lying flat on the ground whose local +y points along `heading`
     flat(mesh, x, z, heading, y) {
       const g = new this.T.Group();
@@ -430,48 +425,17 @@
 
     // ---------- shared parts for cars, rockets, particles ----------
     buildKits() {
-      const T = this.T, scene = this.scene;
-      const side = (pts, depth) => {
-        const sh = new T.Shape();
-        pts.forEach(([x, y], i) => i ? sh.lineTo(x, y) : sh.moveTo(x, y));
-        const g = this.own(new T.ExtrudeGeometry(sh, { depth, bevelEnabled: false }));
-        g.translate(0, 0, -depth / 2);
-        return g;
-      };
-      const wheel = this.own(new T.CylinderGeometry(0.44, 0.44, 0.36, 12)); wheel.rotateX(Math.PI / 2);
-      const hub = this.own(new T.CylinderGeometry(0.2, 0.2, 0.38, 8)); hub.rotateX(Math.PI / 2);
-      const glowTex = this.canvasTex(64, 64, (g) => {
-        const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-        gr.addColorStop(0, 'rgba(255,244,200,.7)'); gr.addColorStop(1, 'rgba(255,244,200,0)');
-        g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
-      });
-      this.kit = {
-        body: side([[-1.62, 0.3], [1.6, 0.3], [1.68, 0.62], [0.78, 0.8], [-1.15, 0.86], [-1.64, 0.82]], 1.62),
-        cabin: side([[0.74, 0.79], [0.3, 1.22], [-0.66, 1.25], [-1.1, 0.85]], 1.36),
-        roof: this.own(new T.BoxGeometry(1.02, 0.07, 1.3)),
-        wing: this.own(new T.BoxGeometry(0.4, 0.1, 1.86)), post: this.own(new T.BoxGeometry(0.12, 0.42, 0.12)),
-        lamp: this.own(new T.BoxGeometry(0.1, 0.16, 0.34)), wheel, hub,
-        dark: this.lambert('#1c1f26'), glass: this.lambert(this.biome.night ? '#2a3a66' : '#bfe0ff'), chrome: this.lambert('#cfd4dc'),
-        head: this.basic('#fff6c8'),
-        shadow: this.own(new T.CircleGeometry(2.0, 14)),
-        shield: this.own(new T.SphereGeometry(2.5, 16, 10)),
+      const T = this.T, scene = this.scene, Kit = root.Kit3D;
+      this.kit = Object.assign(Kit.carKit(T, this, { night: this.biome.night }), {
         beam: this.own(new T.BoxGeometry(0.16, 0.16, 1)),
-        glow: this.own(new T.PlaneGeometry(7, 5)), glowMat: this.basic('#fff', { map: glowTex, transparent: true, depthWrite: false, blending: T.AdditiveBlending }),
         rocketBody: this.own(new T.CylinderGeometry(0.28, 0.28, 1.5, 8)), rocketNose: this.own(new T.ConeGeometry(0.3, 0.6, 8)),
         rocketFin: this.own(new T.BoxGeometry(0.5, 0.06, 0.9)),
         white: this.lambert('#f2f2f2'), red: this.lambert('#ff3b30'),
         drop: this.own(new T.CircleGeometry(1.9, 16)), dropMat: this.basic('#241a3a', { transparent: true, opacity: 0.9 })
-      };
+      });
       this.kit.rocketBody.rotateZ(-Math.PI / 2); this.kit.rocketNose.rotateZ(-Math.PI / 2);
-
-      // particles and skid marks: one InstancedMesh each
-      const pm = this.parts3d = this.own(new T.InstancedMesh(this.own(new T.SphereGeometry(1, 6, 5)), this.basic('#fff', { transparent: true, opacity: 0.9 }), PARTS));
-      pm.instanceMatrix.setUsage(T.DynamicDrawUsage); pm.setColorAt(0, this.col.set('#fff')); pm.count = 0; pm.frustumCulled = false;
-      scene.add(pm);
-      const sg = this.own(new T.PlaneGeometry(0.34, 1.7)); sg.rotateX(-Math.PI / 2);
-      const sk = this.skids = this.own(new T.InstancedMesh(sg, this.basic('#101014', { transparent: true, opacity: 0.22, depthWrite: false }), SKIDS));
-      sk.instanceMatrix.setUsage(T.DynamicDrawUsage); sk.count = 0; sk.frustumCulled = false;
-      scene.add(sk);
+      this.fx = new Kit.Particles(T, this, scene, PARTS);
+      this.skids = new Kit.Skids(T, this, scene, SKIDS);
 
       // weather: snowflakes fall, embers rise (a box of points that travels with the camera)
       this.weather = null;
@@ -491,50 +455,17 @@
     }
 
     makeCar(id) {
-      const T = this.T, K = this.kit, paint = this.lambert(this.colors[id] || '#999');
-      const g = new T.Group(), tilt = new T.Group();
-      g.add(tilt);
-      const add = (geo, mat, x, y, z, to) => { const m = new T.Mesh(geo, mat); m.position.set(x, y, z); (to || tilt).add(m); return m; };
-      add(K.body, paint, 0, 0, 0); add(K.cabin, K.glass, 0, 0, 0); add(K.roof, paint, -0.18, 1.27, 0);
-      add(K.wing, paint, -1.5, 1.32, 0); add(K.post, K.dark, -1.45, 1.06, 0.55); add(K.post, K.dark, -1.45, 1.06, -0.55);
-      add(K.lamp, K.head, 1.66, 0.62, 0.52); add(K.lamp, K.head, 1.66, 0.62, -0.52);
-      const tail = this.basic('#7a0c0c');
-      add(K.lamp, tail, -1.64, 0.7, 0.52); add(K.lamp, tail, -1.64, 0.7, -0.52);
-      const front = [];
-      [[1.05, 0.9, true], [1.05, -0.9, true], [-1.1, 0.9, false], [-1.1, -0.9, false]].forEach(([x, z, steer]) => {
-        const piv = new T.Group(); piv.position.set(x, 0.44, z); tilt.add(piv);
-        add(K.wheel, K.dark, 0, 0, 0, piv); add(K.hub, K.chrome, 0, 0, 0, piv);
-        if (steer) front.push(piv);
-      });
-      const shield = add(K.shield, this.basic('#6ad6ff', { transparent: true, opacity: 0.26, depthWrite: false }), 0, 1, 0, g);
-      shield.visible = false;
-      if (this.biome.night) { const gl = add(K.glow, K.glowMat, 5, 0.1, 0, g); gl.rotation.set(-Math.PI / 2, 0, 0); }
-      const shadow = new T.Mesh(K.shadow, this.basic('#000', { transparent: true, opacity: 0.28, depthWrite: false }));
-      shadow.rotation.x = -Math.PI / 2;
-      const beam = new T.Mesh(K.beam, this.basic(ITEM_COLOR.magnet, { transparent: true, opacity: 0.7 }));
-      beam.visible = false;
-      this.scene.add(g, shadow, beam);
-      return this.cars[id] = { g, tilt, front, tail, shield, shadow, beam, scale: 1, skidX: 0, skidZ: 0 };
+      const T = this.T, c = root.Kit3D.makeCar(T, this.kit, this, { paint: this.colors[id] });
+      c.beam = new T.Mesh(this.kit.beam, this.basic(ITEM_COLOR.magnet, { transparent: true, opacity: 0.7 }));
+      c.beam.visible = false;
+      c.skidX = 0; c.skidZ = 0;
+      this.scene.add(c.g, c.shadow, c.beam);
+      return this.cars[id] = c;
     }
 
-    // ---------- particles ----------
-    puff(x, y, z, vx, vy, vz, color, life, size, grav) {
-      if (this.parts.length >= PARTS) return;
-      this.parts.push({ x, y, z, vx, vy, vz, color, life, size, age: 0, grav: grav == null ? 9 : grav });
-    }
-    burst(x, y, z, n, colors, speed, life, size) {
-      for (let i = 0; i < n; i++) {
-        const a = rnd(0, 6.283), s = rnd(0.3, 1) * speed;
-        this.puff(x, y, z, Math.cos(a) * s, rnd(0.3, 1) * speed * 0.8, Math.sin(a) * s, pick(colors), rnd(0.6, 1) * life, rnd(0.7, 1.2) * size);
-      }
-    }
-    skid(x, z, heading) {
-      const sk = this.skids, i = this.skidN % SKIDS;
-      sk.setMatrixAt(i, this.m4.makeRotationY(Math.PI / 2 - heading).setPosition(x, 0.045, z));
-      this.skidN++;
-      sk.count = Math.min(this.skidN, SKIDS);
-      sk.instanceMatrix.needsUpdate = true;
-    }
+    puff(...a) { this.fx.puff(...a); }
+    burst(...a) { this.fx.burst(...a); }
+    skid(x, z, heading) { this.skids.mark(x, z, heading); }
 
     // what just happened in the sim (the events step() returns)
     event(e, st) {
@@ -576,19 +507,8 @@
         c.g.visible = c.shadow.visible = r.alive;
         c.beam.visible = false;
         if (!r.alive) continue;
-        const spin = t < r.spinUntil ? (1 - (r.spinUntil - t) / (C.SPIN_MS || 1000)) : 0;
-        c.g.position.set(r.x, r.y, r.z);
-        c.g.rotation.y = -r.heading;
-        c.tilt.rotation.set(-r.steer * 0.08, spin ? -spin * Math.PI * 4 : 0, r.y > 0 ? Math.max(-0.28, Math.min(0.28, r.vy * 0.02)) : (r.brake ? -0.05 : 0));
-        c.scale += ((t < r.slowUntil ? 0.6 : 1) - c.scale) * Math.min(1, dt * 8);
-        c.tilt.scale.setScalar(c.scale);
-        c.front.forEach(p => { p.rotation.y = -r.steer * 0.5; });
-        c.tail.color.set(r.brake ? '#ff2a2a' : '#7a0c0c');
-        c.shield.visible = t < r.shieldUntil;
-        if (c.shield.visible) c.shield.scale.setScalar(1 + Math.sin(t / 90) * 0.05);
-        const sh = 1 / (1 + r.y * 0.14);
-        c.shadow.scale.setScalar(sh * c.scale); c.shadow.material.opacity = 0.28 * sh;
-        c.shadow.position.set(r.x, 0.04, r.z);
+        root.Kit3D.poseCar(c, { x: r.x, y: r.y, z: r.z, heading: r.heading, steer: r.steer, brake: r.brake, vy: r.vy, t,
+          spin: t < r.spinUntil ? 1 - (r.spinUntil - t) / (C.SPIN_MS || 1000) : 0, small: t < r.slowUntil, shield: t < r.shieldUntil }, dt);
         // magnet: a beam to the car it pulls towards
         const tg = t < r.magnetUntil && st.racers[r.magnetTo];
         if (tg && tg.alive) {
@@ -622,7 +542,7 @@
       this.sync(this.drops, st.drops, () => { const m = new T.Mesh(K.drop, K.dropMat); m.rotation.x = -Math.PI / 2; return m; },
         (m, d) => { m.position.set(d.x, 0.075, d.z); });
 
-      this.updateParts(dt);
+      this.fx.update(dt);
       this.updateWeather(st, dt);
 
       // lightning: the whole scene flashes
@@ -674,26 +594,6 @@
         }
         if (Math.random() < 0.5) this.puff(r.x - dx * 1.2, 0.2, r.z - dz * 1.2, rnd(-1.2, 1.2), 1.6, rnd(-1.2, 1.2), '#d4d4d4', 0.38, 0.24);
       }
-    }
-
-    updateParts(dt) {
-      const pm = this.parts3d, P = this.parts;
-      let n = 0;
-      for (let i = 0; i < P.length; i++) {
-        const p = P[i];
-        p.age += dt;
-        if (p.age >= p.life) continue;
-        p.vy -= p.grav * dt;
-        p.x += p.vx * dt; p.y = Math.max(0.1, p.y + p.vy * dt); p.z += p.vz * dt;
-        const s = p.size * (1 - p.age / p.life * 0.85);
-        pm.setMatrixAt(n, this.m4.makeScale(s, s, s).setPosition(p.x, p.y, p.z));
-        pm.setColorAt(n, this.col.set(p.color));
-        P[n++] = p;
-      }
-      P.length = n;
-      pm.count = n;
-      pm.instanceMatrix.needsUpdate = true;
-      if (pm.instanceColor) pm.instanceColor.needsUpdate = true;
     }
 
     updateWeather(st, dt) {

@@ -3,55 +3,31 @@
 // The 3D picture has its own canvas (sharp on big screens) with a 2D HUD canvas on top. Both replace
 // the shell canvas `cv` while a match runs and are copied into it a few times a second for Mitschauen.
 
-// ---- file scope: one view and one pair of canvases for all matches (no WebGL context leak) ----
-let racerView = null, racerViewCtor = null, racerWrap = null, racerHud = null, racerSlow = false;
+// ---- file scope: one view and one stage for all matches (no WebGL context leak) ----
+let racerStage = null, racerViewCtor = null;
 
 registerGame({ key: 'racer', screen: function () {
-  const W = 960, H = 600, HUD_SCALE = 2;
-  const MIRROR_MS = 120, RANK_MS = 500, BUMP_SND_MS = 250, TOAST_MS = 2200;
-  const SLOW_FRAME_MS = 30, SLOW_AFTER = 120;       // this many slow frames in a row → drop to 1× resolution
+  const W = 960, H = 600;
+  const RANK_MS = 500, BUMP_SND_MS = 250, TOAST_MS = 2200;
   const ICON = { rocket: '🚀', oil: '🛢️', shield: '🛡️', bolt: '⚡', magnet: '🧲' };
   const FONT = (px, w) => (w || 'bold') + ' ' + px + 'px system-ui,sans-serif';
 
-  let Sim = null, sim = null, view = null, hctx = null, map = null, mini = null;
-  let lastT = 0, lastMirror = 0, lastRanks = 0, lastBump = 0, slowFrames = 0, boltFlash = 0;
+  let Sim = null, sim = null, view = null, stage = null, hctx = null, map = null, mini = null;
+  let lastT = 0, lastRanks = 0, lastBump = 0, boltFlash = 0;
   let toasts = [], sentRank = {}, nitroPending = {};
 
   const send = (id, m) => { try { ac.message(id, m); } catch (e) {} };
   const colorOf = (id) => (players[id] && players[id].color) || '#999';
 
-  // ---------- canvases ----------
-  function ensureView() {
-    const T = window.THREE, C = window.RacerView;
-    if (!T || !C) return null;
-    if (racerView && racerViewCtor === C) return racerView;
-    try { if (racerView) racerView.dispose(); } catch (e) {}
-    if (racerWrap) racerWrap.remove();
-    racerView = null; racerWrap = null;
-    try { racerView = new C(T, { width: W, height: H }); racerViewCtor = C; } catch (e) { racerView = null; return null; }
-    racerWrap = document.createElement('div');
-    racerWrap.style.cssText = 'position:relative; display:none; line-height:0; width:fit-content; margin:0 auto;';
-    racerHud = document.createElement('canvas');
-    racerHud.width = W * HUD_SCALE; racerHud.height = H * HUD_SCALE;
-    // neutralise the page's global canvas rule, or the overlay would cover the 3D scene
-    racerHud.style.cssText = 'position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none;'
-      + 'background:transparent; border-radius:0; box-shadow:none; max-width:none; max-height:none;';
-    racerWrap.append(racerView.canvas, racerHud);
-    cv.insertAdjacentElement('afterend', racerWrap);
-    return racerView;
-  }
-  function show(on) {
-    if (!racerWrap) return;
-    racerWrap.style.display = on ? 'block' : 'none';
-    cv.style.display = on ? 'none' : '';
-  }
-  // render as many pixels as the screen really shows (up to 2×), unless this machine proved too slow
-  function fitRatio() {
-    if (!view || !view.setRatio) return;
-    let shown = 0;
-    try { shown = view.canvas.getBoundingClientRect().width; } catch (e) {}
-    const want = (shown || W) * (window.devicePixelRatio || 1) / W;
-    view.setRatio(racerSlow ? 1 : Math.round(clamp(want, 1, 2) * 4) / 4);
+  // ---------- canvases (core/kit3d.js: the 3D canvas with the HUD on top) ----------
+  function ensureStage() {
+    const T = window.THREE, C = window.RacerView, Kit = window.Kit3D;
+    if (!T || !C || !Kit) return null;
+    if (racerStage && racerViewCtor === C) return racerStage;
+    try { if (racerStage) { racerStage.remove(); racerStage.view.dispose(); } } catch (e) {}
+    racerStage = null;
+    try { racerStage = new Kit.Stage(new C(T, { width: W, height: H }), cv, W, H); racerViewCtor = C; } catch (e) { racerStage = null; }
+    return racerStage;
   }
 
   // ---------- phones ----------
@@ -152,8 +128,7 @@ registerGame({ key: 'racer', screen: function () {
 
   function drawHud(now) {
     const st = sim.state, C = Sim.CONST, racing = st.phase === 'race';
-    hctx.setTransform(HUD_SCALE, 0, 0, HUD_SCALE, 0, 0);
-    hctx.clearRect(0, 0, W, H);
+    hctx = stage.begin();
     hctx.textBaseline = 'middle';
 
     // lightning flash and the red warning frame
@@ -282,7 +257,7 @@ registerGame({ key: 'racer', screen: function () {
   return {
     acceptsJoin: false,
     start(ids, cfg) {
-      Sim = window.RacerSim; view = ensureView();
+      Sim = window.RacerSim; stage = ensureStage(); view = stage && stage.view;
       const Tracks = window.RacerTracks;
       if (!view || !Sim || !Tracks) { view = null; endToLobby('3D/WebGL wird von diesem Browser nicht unterstützt 😢'); return; }
       cfg = cfg || {};
@@ -293,17 +268,14 @@ registerGame({ key: 'racer', screen: function () {
       const colors = {}; ids.forEach(id => { colors[id] = colorOf(id); });
       try { view.setRound(sim, { biome: map.biome, colors }); }
       catch (e) { sim = null; view = null; endToLobby('3D/WebGL wird von diesem Browser nicht unterstützt 😢'); return; }
-      hctx = racerHud.getContext('2d');
       buildMinimap();
-      toasts = []; boltFlash = 0; slowFrames = 0;
-      lastT = performance.now(); lastMirror = 0; lastRanks = 0;
-      show(true); fitRatio();
-      window.addEventListener('resize', fitRatio);
+      toasts = []; boltFlash = 0;
+      lastT = performance.now(); lastRanks = 0;
+      stage.show(true);
       handle(sim.start());
     },
     stop() {
-      window.removeEventListener('resize', fitRatio);
-      show(false);
+      if (stage) stage.show(false);
       try { if (view && view.clear) view.clear(); } catch (e) {}
       sim = null;
     },
@@ -331,14 +303,7 @@ registerGame({ key: 'racer', screen: function () {
       tickPhones(now);
       try { view.render(sim.state, dt); } catch (e) { if (!view.failed) { view.failed = true; console.error('Micro Racer view: ' + (e.stack || e)); } }
       drawHud(now);
-      // Mitschauen reads the shell canvas: give it a copy now and then
-      if (now - lastMirror >= MIRROR_MS) {
-        lastMirror = now;
-        try { ctx.drawImage(view.canvas, 0, 0, W, H); ctx.drawImage(racerHud, 0, 0, W, H); } catch (e) {}
-      }
-      // too slow at high resolution: stay at 1× for the rest of the evening
-      slowFrames = raw > SLOW_FRAME_MS ? slowFrames + 1 : 0;
-      if (slowFrames >= SLOW_AFTER && !racerSlow && view.ratio > 1) { racerSlow = true; fitRatio(); }
+      stage.frame(raw, ctx, now);       // Mitschauen copy, and the fallback to 1× when frames get slow
     },
     _debug() { return sim ? { sim, state: sim.state, racers: sim.state.racers, samples: sim.track.samples, phase: sim.state.phase, standings: sim.standings(), map } : null; }
   };
