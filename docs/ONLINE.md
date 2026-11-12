@@ -5,9 +5,9 @@ somewhere public, let **one** person open the screen, and everybody else watches
 **👀 Mitschauen** (`/view.html`) and plays with their phone through the public URL.
 Mitschauen mirrors the screen's 2D canvas at ~8 frames per second (~150 KB/s per
 viewer), without sound. Cozy and turn-based games (Wauwau-WG, Spion, Stadt Land Fluss,
-Drawing, Fake Artist) feel fine with that; twitchy ones (Reaktionsduell) suffer, and the
-WebGL games (Racer, BREACH split screen) draw on their own canvas and are not mirrored —
-use screen sharing in a video call for those, or BREACH's own online rooms.
+Drawing, Fake Artist) feel fine with that; twitchy ones (Reaktionsduell, Micro Racer)
+suffer, and BREACH's split screen draws on its own canvas and is not mirrored — use
+screen sharing in a video call for those, or BREACH's own online rooms.
 
 ## Deploy on Render (free plan)
 

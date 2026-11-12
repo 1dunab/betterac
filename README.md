@@ -68,7 +68,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 🏙️ Stadt Land Fluss | 2+ | Scattergories with custom categories |
 | 💥 Artillery Hills | 2+ | Worms-style tank duels: biomes, wind, supply drops, special weapons |
 | 💎 Bumper Gems | 2+ | Physics bumper arena — collect gems, shove friends |
-| 🏎️ Micro Racer | 2+ | Real-3D elimination racing (three.js): nitro, ramps, three dioramas |
+| 🏎️ Micro Racer | 2+ | Real-3D elimination racing (three.js): leave the picture and you are out. Nitro, brake, items, six tracks ([notes](docs/RACER.md)) |
 | 🐉 Boss Raid | 1+ | Co-op neon bullet-hell against three bosses, with classes and revives |
 | 🚀 Space Arena | 2+ | Asteroids dogfight around a growing black hole |
 | 🌊 Sintflut | 2+ | Falling-sand flood war: dam, dig, blast — last dry house wins |

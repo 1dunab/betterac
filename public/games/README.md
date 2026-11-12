@@ -130,6 +130,8 @@ Needing WebGL? See `racer/screen.js`: it creates its own canvas + 2D HUD overlay
 replace `cv` during the game (`window.THREE` is provided by the vendored three.js) and
 falls back to the lobby when WebGL is unavailable. Force `background: transparent` on
 overlay canvases — the page's global `canvas` CSS rule would otherwise cover your scene.
+Copy both into `cv` a few times a second, or Mitschauen viewers see nothing. Keep the
+rules out of the three.js file (`racer/sim.js` runs in Node, see [docs/RACER.md](../../docs/RACER.md)).
 
 ## 4. The controller module — phone UI
 
