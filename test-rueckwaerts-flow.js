@@ -58,7 +58,7 @@ const join = (p, name) => { p.$('nameInput').value = name; p.$('joinBtn').click(
   const w = screen.window;
   check(w.RwRules && w.VoiceClip && w.RwWords && !w.Mic, 'rules, clip maths and words are on the screen page; the microphone module is not');
   check(typeof p1.dom.window.Mic.fileInput === 'function' && p1.dom.window.VoiceClip && p1.dom.window.Mic.canLive() === false, 'the phones have microphone and clip maths; over http there is no live microphone');
-  check(p1.qa('input[type=file][accept="audio/*"]').length === 1 && p1.qa('input[type=file][accept="video/*"]').length === 1, 'two ways without it: the recorder app and a short video');
+  check(p1.qa('input[type=file][accept="audio/*"]').length >= 1 && p1.qa('input[type=file][accept="video/*"]').length >= 1, 'two ways without it: the recorder app and a short video (every voice game brings its own pair)');
   const reported = [];
   const origReport = w.reportWinners;
   w.reportWinners = (ids) => { reported.push(ids.slice()); origReport(ids); };

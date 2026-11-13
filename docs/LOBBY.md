@@ -87,7 +87,7 @@ finished and before pictures inside the game are decoded. `dev-cover.html?hold=<
 the page loading as long as that address takes to answer; a three-line local server that
 answers after a few seconds does the job.
 
-Where the covers in the repo come from: 20 through `dev-cover.html` (nine of them with
+Where the covers in the repo come from: one straight from its dev page (Wer spricht da?), 20 through `dev-cover.html` (nine of them with
 `dev-any.html`: Light Cycles, Slither, Bumper Gems, Reaktionsduell, Geo-Pin, Spion, Stadt
 Land Fluss, Drawing Evolution, Fake Artist; Light Cycles without `sim`, because its
 countdown runs on real timers), seven from the pictures in `docs/` (Micro Racer, Autoball,
