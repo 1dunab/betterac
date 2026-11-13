@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kamera- und Mikrofon-Test</title>
+<!-- Test page for a phone: which ways to get a photo and a voice recording into the page work on this device?
+     Open it once over the home Wi-Fi (http://<ip>:3000/dev-kamera.html) and once over https (Render).
+     Decides how Fotosalat takes photos and how Rückwärtsgang records (.plans/fotosalat, .plans/rueckwaerts).
+     ?selftest=1 runs photo shrinking and the audio maths on made-up data (no camera, no microphone),
+     ?selftest=live also presses "A · Live-Mikrofon" (headless Firefox with fake streams). -->
+<style>
+  html, body { margin:0; font-family:system-ui,sans-serif; color:#fff; background:#16161f; }
+  body { padding:14px 14px 40px; max-width:560px; margin:0 auto; }
+  h1 { font-size:22px; margin:6px 0 4px; } h2 { font-size:18px; margin:0 0 8px; }
+  section { background:#22222e; border-radius:14px; padding:14px; margin-top:14px; }
+  button { border:none; border-radius:12px; padding:14px 16px; font-size:17px; font-weight:700; background:#3a3a4c; color:#fff; width:100%; margin-top:8px; }
+  button:active { filter:brightness(1.25); } button:disabled { opacity:.45; }
+  .row { display:flex; gap:8px; } .row button { flex:1; }
+  .muted { opacity:.72; font-size:14px; line-height:1.4; margin:4px 0; }
+  .out { font-size:14px; line-height:1.45; margin-top:6px; min-height:20px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .ok { color:#30d158; } .bad { color:#ff6b5e; } .warn { color:#ffd60a; }
+  img, canvas { display:block; max-width:100%; border-radius:10px; margin-top:8px; background:#111; }
+  #wave { width:100%; height:90px; }
+  textarea { width:100%; box-sizing:border-box; height:170px; border-radius:10px; border:none; padding:10px; font:13px/1.4 monospace; background:#111; color:#ddd; margin-top:8px; }
+</style>
+</head>
+<body>
+<h1>📸🎤 Kamera- und Mikrofon-Test</h1>
+<p class="muted" id="where"></p>
+
+<section>
+  <h2>1 · Foto</h2>
+  <p class="muted">Der Knopf öffnet die Kamera-App. Nach dem Auslösen sollte das Bild hier erscheinen.</p>
+  <div class="row"><button id="shot">📷 Foto machen</button><button id="selfie">🤳 Selfie</button></div>
+  <input id="inShot" type="file" accept="image/*" capture="environment" hidden>
+  <input id="inSelfie" type="file" accept="image/*" capture="user" hidden>
+  <div id="outFoto" class="out"></div>
+  <img id="photo" alt="" hidden>
+</section>
+
+<section>
+  <h2>2 · Mikrofon</h2>
+  <p class="muted">Drück einen Knopf und sag ein Wort, zum Beispiel „Ananas“. Probier alle drei Wege.
+    iPhone: Der Stummschalter an der Seite muss aus sein, sonst hörst du nichts.</p>
+  <button id="micA">🎤 A · Live-Mikrofon (3 Sekunden)</button>
+  <div id="outA" class="out"></div>
+  <button id="micB1">🎙️ B1 · Aufnahme-App für Ton</button>
+  <input id="inB1" type="file" accept="audio/*" capture hidden>
+  <div id="outB1" class="out"></div>
+  <button id="micB2">🎥 B2 · Aufnahme-App für Video (kurz filmen und sprechen)</button>
+  <input id="inB2" type="file" accept="video/*" capture="user" hidden>
+  <div id="outB2" class="out"></div>
+  <canvas id="wave" width="1000" height="180"></canvas>
+  <div class="row"><button id="playF" disabled>▶ vorwärts</button><button id="playR" disabled>◀ rückwärts</button></div>
+</section>
+
+<section>
+  <h2>3 · Ergebnis</h2>
+  <p class="muted">Diesen Text brauche ich: kopieren oder abfotografieren.</p>
+  <textarea id="sum" readonly></textarea>
+  <button id="copy">📋 Kopieren</button>
+</section>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search);
+  const MAX_SIDE = 720, JPEG = 0.72;        // what Fotosalat would send
+  const REC_SEC = 3, PACK_RATE = 16000;     // what Rückwärtsgang would send: 16 kHz, 16 bit, mono
+  const secure = window.isSecureContext === true;
+  const res = { foto: 'nicht probiert', a: 'nicht probiert', b1: 'nicht probiert', b2: 'nicht probiert', reload: 'nein' };
+
+  $('where').textContent = 'Geöffnet über ' + location.protocol.replace(':', '') + ' (' + location.host + '). '
+    + (secure ? 'Der Browser hält das für sicher: das Live-Mikrofon darf gehen.' : 'Der Browser hält das nicht für sicher: das Live-Mikrofon wird hier nicht gehen. Genau das soll der Test zeigen.');
+
+  function say(id, cls, text) { const el = $(id); el.className = 'out ' + cls; el.textContent = text; }
+  function summary() {
+    $('sum').value = [
+      'Kamera-Test · ' + location.protocol.replace(':', '') + ' · sicher: ' + (secure ? 'ja' : 'nein'),
+      'Gerät: ' + navigator.userAgent.replace(/Mozilla\/5\.0 /, '').slice(0, 150),
+      'Foto: ' + res.foto,
+      'Mikro A (live): ' + res.a,
+      'Mikro B1 (Ton-App): ' + res.b1,
+      'Mikro B2 (Video-App): ' + res.b2,
+      'Neu geladen nach Kamera/Aufnahme: ' + res.reload
+    ].join('\n');
+  }
+  // some phones throw the page away while the camera app is open; then it loads again and the photo is lost
+  function opening(what) { try { sessionStorage.setItem('kamOpen', what); } catch (e) {} }
+  function closed() { try { sessionStorage.removeItem('kamOpen'); } catch (e) {} }
+  try {
+    const was = sessionStorage.getItem('kamOpen');
+    if (was) { res.reload = 'JA, bei ' + was; closed(); }
+  } catch (e) {}
+
+  // ---------- Foto ----------
+  async function shrink(file) {
+    const t0 = performance.now();
+    let src = null;
+    if (window.createImageBitmap) { try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { src = null; } }
+    if (!src) src = await new Promise((ok, no) => {
+      const im = new Image();
+      im.onload = () => ok(im); im.onerror = () => no(new Error('Bild nicht lesbar (' + (file.type || 'Typ unbekannt') + ')'));
+      im.src = URL.createObjectURL(file);
+    });
+    const w = src.width, h = src.height, k = Math.min(1, MAX_SIDE / Math.max(w, h)), c = document.createElement('canvas');
+    c.width = Math.round(w * k); c.height = Math.round(h * k);
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    const url = c.toDataURL('image/jpeg', JPEG);
+    return { url, w, h, cw: c.width, ch: c.height, kb: Math.round(url.length * 0.75 / 1024), ms: Math.round(performance.now() - t0) };
+  }
+  async function gotPhoto(file, what) {
+    closed();
+    if (!file) { res.foto = '❌ kein Bild zurückbekommen'; say('outFoto', 'bad', res.foto); summary(); return; }
+    try {
+      const r = await shrink(file);
+      $('photo').src = r.url; $('photo').hidden = false;
+      res.foto = '✅ ' + what + ' ' + r.w + '×' + r.h + ' (' + Math.round(file.size / 1024) + ' KB, ' + (file.type || '?') + ') → ' + r.cw + '×' + r.ch + ', ' + r.kb + ' KB, ' + r.ms + ' ms';
+      say('outFoto', 'ok', res.foto + '\nSteht das Bild richtig herum? Wenn nicht, sag es mir.');
+    } catch (e) { res.foto = '❌ ' + e.message; say('outFoto', 'bad', res.foto); }
+    summary();
+  }
+  [['shot', 'inShot', 'Foto'], ['selfie', 'inSelfie', 'Selfie']].forEach(([btn, inp, what]) => {
+    $(btn).addEventListener('click', () => { opening(what); $(inp).value = ''; $(inp).click(); });
+    $(inp).addEventListener('change', () => gotPhoto($(inp).files[0], what));
+  });
+
+  // ---------- Ton: rechnen ----------
+  let ac = null, clip = null;
+  function audio() {
+    if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') ac.resume();
+    return ac;
+  }
+  const decode = (buf) => new Promise((ok, no) => { const p = audio().decodeAudioData(buf, ok, no); if (p && p.catch) p.catch(no); });
+  const readFile = (file) => file.arrayBuffer ? file.arrayBuffer() : new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsArrayBuffer(file); });
+  function mono(buf) {
+    const out = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) out[i] += d[i] / buf.numberOfChannels; }
+    return out;
+  }
+  const peakOf = (x) => { let p = 0; for (let i = 0; i < x.length; i++) { const v = Math.abs(x[i]); if (v > p) p = v; } return p; };
+  // cut the silence before and after the word; leave 50 ms of air
+  function trim(x, rate) {
+    const th = Math.max(0.008, peakOf(x) * 0.06), pad = Math.round(rate * 0.05);
+    let a = 0, b = x.length - 1;
+    while (a < x.length && Math.abs(x[a]) < th) a++;
+    while (b > a && Math.abs(x[b]) < th) b--;
+    return x.slice(Math.max(0, a - pad), Math.min(x.length, b + pad));
+  }
+  function normalize(x) { const p = peakOf(x), g = p > 0 ? Math.min(12, 0.9 / p) : 1, out = new Float32Array(x.length); for (let i = 0; i < x.length; i++) out[i] = x[i] * g; return out; }
+  function resample(x, from, to) {
+    if (from === to) return x;
+    const n = Math.floor(x.length * to / from), out = new Float32Array(n), step = from / to, w = Math.max(1, Math.round(step));
+    for (let i = 0; i < n; i++) { let s = 0; const j = Math.floor(i * step); for (let k = 0; k < w; k++) s += x[Math.min(x.length - 1, j + k)]; out[i] = s / w; }
+    return out;
+  }
+  function drawWave(x) {
+    const cv = $('wave'), c = cv.getContext('2d'), W = cv.width, H = cv.height;
+    c.fillStyle = '#111'; c.fillRect(0, 0, W, H);
+    c.fillStyle = '#64d2ff';
+    const per = Math.max(1, Math.floor(x.length / W));
+    for (let px = 0; px < W; px++) { let p = 0; for (let i = px * per; i < (px + 1) * per && i < x.length; i++) p = Math.max(p, Math.abs(x[i])); c.fillRect(px, H / 2 - p * H / 2, 1, Math.max(1, p * H)); }
+  }
+  function play(reverse) {
+    if (!clip) return;
+    const a = audio(), buf = a.createBuffer(1, clip.x.length, clip.rate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = clip.x[reverse ? d.length - 1 - i : i];
+    const s = a.createBufferSource(); s.buffer = buf; s.connect(a.destination); s.start();
+  }
+  $('playF').addEventListener('click', () => play(false));
+  $('playR').addEventListener('click', () => play(true));
+
+  // a recording arrived by one of the three ways: cut, level, show, and say what it would cost to send
+  function gotClip(key, outId, raw, rate, note) {
+    const peak = peakOf(raw), cut = normalize(trim(raw, rate)), sec = (n) => (n / rate).toFixed(1) + ' s';
+    const kb = Math.round(resample(cut, rate, PACK_RATE).length * 2 * 4 / 3 / 1024);
+    if (peak < 0.008) { res[key] = '⚠️ Aufnahme kam an, ist aber still (' + sec(raw.length) + ', Pegel ' + peak.toFixed(3) + ')' + (note ? ' · ' + note : ''); say(outId, 'warn', res[key]); summary(); return; }
+    clip = { x: cut, rate };
+    drawWave(cut);
+    $('playF').disabled = $('playR').disabled = false;
+    res[key] = '✅ ' + sec(raw.length) + ' bei ' + rate + ' Hz, Pegel ' + peak.toFixed(2) + ', nach dem Schnitt ' + sec(cut.length) + ', Paket ' + kb + ' KB' + (note ? ' · ' + note : '');
+    say(outId, 'ok', res[key] + '\nJetzt unten ▶ und ◀ drücken: Hörst du dein Wort vorwärts und rückwärts?');
+    summary();
+  }
+  const whyNot = (e) => ({ NotAllowedError: 'nicht erlaubt (abgelehnt oder vom Browser gesperrt)', NotFoundError: 'kein Mikrofon gefunden', NotReadableError: 'Mikrofon ist belegt', SecurityError: 'vom Browser gesperrt', EncodingError: 'der Browser kann diese Datei nicht lesen' }[e && e.name] || ((e && (e.name || '')) + ' ' + ((e && e.message) || e || 'unbekannter Fehler')).trim());
+
+  // ---------- A: Live-Mikrofon (nur über https oder localhost) ----------
+  $('micA').addEventListener('click', async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      res.a = '❌ gibt es hier nicht' + (secure ? '' : ' (kein https)'); say('outA', 'bad', res.a); summary(); return;
+    }
+    $('micA').disabled = true;
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false } });
+      const a = audio(), src = a.createMediaStreamSource(stream), proc = a.createScriptProcessor(4096, 1, 1), mute = a.createGain(), chunks = [];
+      mute.gain.value = 0;
+      proc.onaudioprocess = (e) => chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      src.connect(proc); proc.connect(mute); mute.connect(a.destination);
+      for (let s = REC_SEC; s > 0; s--) { say('outA', 'warn', '🔴 Aufnahme läuft… ' + s); await new Promise(r => setTimeout(r, 1000)); }
+      src.disconnect(); proc.disconnect(); proc.onaudioprocess = null;
+      const n = chunks.reduce((sum, c) => sum + c.length, 0), raw = new Float32Array(n);
+      let o = 0; for (const c of chunks) { raw.set(c, o); o += c.length; }
+      if (!n) throw new Error('keine Tondaten bekommen');
+      gotClip('a', 'outA', raw, a.sampleRate);
+    } catch (e) { res.a = '❌ ' + whyNot(e); say('outA', 'bad', res.a); summary(); }
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    $('micA').disabled = false;
+  });
+
+  // ---------- B: die Aufnahme-App des Handys liefert eine Datei ----------
+  [['micB1', 'inB1', 'b1', 'outB1', 'Ton-App'], ['micB2', 'inB2', 'b2', 'outB2', 'Video-App']].forEach(([btn, inp, key, out, what]) => {
+    $(btn).addEventListener('click', () => { audio(); opening(what); $(inp).value = ''; $(inp).click(); });
+    $(inp).addEventListener('change', async () => {
+      closed();
+      const file = $(inp).files[0];
+      if (!file) { res[key] = '❌ keine Datei zurückbekommen'; say(out, 'bad', res[key]); summary(); return; }
+      const info = (file.type || 'Typ unbekannt') + ', ' + Math.round(file.size / 1024) + ' KB';
+      say(out, 'warn', 'Datei da (' + info + '), lese den Ton…');
+      try {
+        const buf = await decode(await readFile(file));
+        gotClip(key, out, mono(buf), buf.sampleRate, info);
+      } catch (e) { res[key] = '❌ Datei kam an (' + info + '), aber der Ton ist nicht lesbar: ' + whyNot(e); say(out, 'bad', res[key]); summary(); }
+    });
+  });
+
+  $('copy').addEventListener('click', () => {
+    const t = $('sum');
+    const done = () => { $('copy').textContent = '✅ Kopiert'; setTimeout(() => { $('copy').textContent = '📋 Kopieren'; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t.value).then(done, () => { t.select(); });
+    else { t.select(); try { if (document.execCommand('copy')) done(); } catch (e) {} }
+  });
+  summary();
+
+  // ---------- Selbsttest ohne Kamera und Mikrofon ----------
+  if (q.get('selftest')) (async () => {
+    const c = document.createElement('canvas'); c.width = 2400; c.height = 1800;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 12; i++) { g.fillStyle = 'hsl(' + i * 30 + ',70%,50%)'; g.fillRect(i * 200, 0, 200, 1800); }
+    g.fillStyle = '#fff'; g.font = 'bold 300px sans-serif'; g.fillText('TEST', 700, 1000);
+    await gotPhoto(await new Promise(ok => c.toBlob(ok, 'image/png')), 'Selbsttest');
+    const rate = 48000, x = new Float32Array(rate * 2);        // half a second of silence, a rising tone, silence
+    for (let i = rate / 2; i < rate * 1.5; i++) { const t = (i - rate / 2) / rate; x[i] = 0.3 * t * Math.sin(2 * Math.PI * (300 + 500 * t) * t); }
+    gotClip('b1', 'outB1', x, rate, 'Selbsttest');
+    if (q.get('selftest') === 'live') $('micA').click();
+  })();
+})();
+</script>
+</body>
+</html>
