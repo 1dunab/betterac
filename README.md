@@ -7,7 +7,7 @@ server; a TV (or laptop) shows the big screen, and everyone joins from their pho
 over Wi-Fi. No apps, no accounts, no internet required.
 
 Inspired by AirConsole, built from scratch: a tiny WebSocket relay, a vanilla-JS game shell,
-and **25 games** — from social deduction and drawing chains to real-3D racing, co-op
+and **26 games** — from social deduction and drawing chains to real-3D racing, co-op
 bullet-hell boss fights, a falling-sand flood war, a flat-share full of dogs, 3D light-cycle duels,
 a werewolf night with an automatic narrator, a co-op airship crew defending a floating island
 and castle lords feuding across the fords of a river valley.
@@ -71,6 +71,7 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 | 🏎️ Micro Racer | 2+ | Real-3D elimination racing (three.js): leave the picture and you are out. Nitro, brake, items, six tracks ([notes](docs/RACER.md)) |
 | ⚽ Autoball | 1+ | Car football in 3D with the racer's cars: two teams, thumb stick and boost, bots fill up ([notes](docs/AUTOBALL.md)) |
 | 🎶 Bandsalat | 1+ | Jam session: every phone is an instrument (drums, keyboard, bass, shaker box, step patterns), a looper, and a grid that keeps everybody in time ([notes](docs/BANDSALAT.md)) |
+| 📸 Fotosalat | 2+ | Camera mini-games: re-enact famous paintings and each other's poses, a zoom riddle, a scavenger hunt ([notes](docs/FOTOSALAT.md)) |
 | 🐉 Boss Raid | 1+ | Co-op neon bullet-hell against three bosses, with classes and revives |
 | 🚀 Space Arena | 2+ | Asteroids dogfight around a growing black hole |
 | 🌊 Sintflut | 2+ | Falling-sand flood war: dam, dig, blast — last dry house wins |

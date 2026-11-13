@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Fotosalat Dev</title>
+<!-- Fotosalat without lobby or phones: bots send painted placeholder photos, give hearts, vote and solve riddles.
+     ?spiel=nachmachen|zoom|jagd|mix  ?vorlagen=mix|gemaelde|posen  ?runden=1..6  ?zeit=<s>  ?wertung=an|aus  ?n=2..8
+     ?phone=1  adds the real phone UI as player 1 (at a desk the photo button opens a file picker: pick any picture)
+     ?only=1   the phone alone (for screenshots)   ?host=0  the phone is not the host   ?auto=1  a bot taps "weiter" for the host
+     ?album=1  shows the picture the 💾 button would save
+     ?sim=<ms> fast-forwards with a fake clock. Photos decode a moment later than the page loads, so a headless
+     screenshot needs a short wait (load this page in an iframe and hold the outer page's load event back). -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24;
+               -webkit-user-select:none; user-select:none; }
+  body { display:flex; align-items:center; justify-content:center; gap:14px; }
+  /* identisch zur canvas-Regel in screen.html */
+  #c { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18); min-width:0; flex:1 1 auto;
+       max-width:calc(100vw - 20px); max-height:calc(100vh - 20px); width:auto; height:auto; object-fit:contain; }
+  body:not(.phone) #c { width:min(calc(100vw - 20px), calc((100vh - 20px) * 1.6)); flex:none; }
+  /* die Shell-Klassen aus controller.html */
+  #phone { display:none; position:relative; width:390px; max-width:100%; height:min(100%, 844px); flex:none; touch-action:none; overflow:hidden; }
+  body.phone #phone { display:block; }
+  body.only #c { display:none; } body.only #phone { width:100%; height:100%; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .word { font-size:22px; font-weight:800; }
+  .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .btn.go { background:#30d158; color:#06250f; flex:1; }
+  .muted { opacity:.75; font-size:15px; }
+  #abortBtn { position:absolute; top:8px; right:8px; z-index:1000; display:none; border:none; border-radius:10px;
+              padding:8px 12px; font-weight:800; font-size:15px; background:#ff3b30; color:#fff; }
+</style>
+</head>
+<body>
+<div id="phone"><button id="abortBtn">✕ Abbrechen</button></div>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/snap.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  // Shell-Stubs für beide Seiten: der Fernseher und (mit ?phone=1) ein Handy auf derselben Seite
+  const q = new URLSearchParams(location.search);
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const NAMES = ['Anna', 'Ben', 'Cleo', 'Dino', 'Eva', 'Finn', 'Gül', 'Hugo'];
+  const COLORS = ['#ff2d55', '#0a84ff', '#30d158', '#ffd60a', '#bf5af2', '#ff9f0a', '#64d2ff', '#ff6482'];
+  const players = {};
+  const N = Math.max(2, Math.min(8, +q.get('n') || 4));
+  for (let i = 1; i <= N; i++) players[i] = { color: COLORS[i - 1], name: NAMES[i - 1], named: true };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const HUMAN = q.get('phone') ? 1 : null;
+  const hostId = () => (q.get('host') === '0' ? 2 : 1);
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); window.__winners = ids; }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } }
+  const $ = (id) => document.getElementById(id);
+  const VIEWS = [];
+  function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  let timerInt = null;
+  function startTimer(ms, el) { clearInterval(timerInt); const end = Date.now() + ms, upd = () => { el.textContent = Math.max(0, Math.ceil((end - Date.now()) / 1000)); }; upd(); timerInt = setInterval(upd, 200); }
+  function stopTimer() { clearInterval(timerInt); }
+  const AirConsole = { SCREEN: 0 };
+  const copy = (d) => JSON.parse(JSON.stringify(d));
+  const ac = { message(to, d) {
+    if (to === 0) { if (window.__game) window.__game.onMessage(HUMAN, copy(d)); }
+    else if (to === HUMAN && window.CONTROLLERS.fotosalat) window.CONTROLLERS.fotosalat.onMessage(copy(d));
+  } };
+</script>
+<script src="games/fotosalat/meta.js"></script>
+<script src="games/fotosalat/rules.js"></script>
+<script src="games/fotosalat/art.js"></script>
+<script src="games/fotosalat/tasks.js"></script>
+<script src="games/fotosalat/screen.js"></script>
+<script src="games/fotosalat/controller.js"></script>
+<script>
+  const logError = console.error.bind(console);
+  function devFail(msg) {
+    let box = document.getElementById('devFail');
+    if (!box) {
+      box = document.createElement('pre'); box.id = 'devFail';
+      box.style.cssText = 'position:fixed; left:0; top:0; right:0; margin:0; padding:14px; z-index:2000; background:#400; color:#fff; font:bold 15px monospace; white-space:pre-wrap;';
+      document.body.appendChild(box);
+    }
+    box.textContent += msg + '\n';
+    logError(msg);
+  }
+  console.error = (...a) => devFail(a.join(' '));
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+  try {
+    const simMs = parseInt(q.get('sim') || '0', 10);
+    let fake = 1000;
+    if (simMs > 0) performance.now = () => fake;
+
+    $('phone').appendChild($('v-fotosalat'));
+    if (HUMAN) document.body.classList.add('phone');
+    if (q.get('only')) document.body.classList.add('only');
+    $('abortBtn').style.display = HUMAN && hostId() === 1 ? 'block' : 'none';
+
+    const game = window.GAMES.fotosalat();
+    window.__game = game;
+    game.start(Object.keys(players).map(Number), { spiel: q.get('spiel') || 'nachmachen', vorlagen: q.get('vorlagen') || 'mix',
+      runden: +q.get('runden') || 3, zeit: +q.get('zeit') || 90, wertung: q.get('wertung') || 'aus' });
+    const st = () => game._debug().state;
+    const say = (id, m) => game.onMessage(id, m);
+    if (HUMAN) window.CONTROLLERS.fotosalat.activate();
+
+    // ---- a painted stand-in for a photo ----
+    const THINGS = ['🧦', '🍌', '🪴', '☕', '🧸', '🔑', '🕶️', '🧀', '🎧', '🥄', '🧢', '🍎'];
+    function fakePhoto(id, ph) {
+      const c = document.createElement('canvas'), tall = (id + ph.round) % 2 === 0;
+      c.width = tall ? 480 : 640; c.height = tall ? 640 : 480;
+      const g = c.getContext('2d'), grad = g.createLinearGradient(0, 0, c.width, c.height);
+      grad.addColorStop(0, players[id].color); grad.addColorStop(1, '#222');
+      g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = '220px sans-serif'; g.fillText(ph.kind === 'pose' ? '🕺' : ph.kind === 'copy' ? '🤳' : THINGS[(id * 3 + ph.round * 5) % THINGS.length], c.width / 2, c.height / 2);
+      g.font = 'bold 40px sans-serif'; g.fillStyle = '#fff'; g.fillText(nameOf(id) + ' · ' + ph.kind, c.width / 2, c.height - 44);
+      return c.toDataURL('image/jpeg', 0.7);
+    }
+
+    // ---- bots ----
+    const SHOOT = ['pose', 'copy', 'task', 'zshoot'];
+    const botIds = Object.keys(players).map(Number).filter(id => id !== HUMAN);
+    const hostBot = hostId() !== HUMAN || q.get('auto') ? hostId() : null;
+    let lastKey = '', keyAt = 0, done = {};
+    function bots(now) {
+      const s = st(), ph = s.phase, key = s.at + ':' + (ph.i || 0) + ':' + (ph.step || 0) + ':' + (ph.solved ? 1 : 0);
+      if (key !== lastKey) { lastKey = key; keyAt = now; done = {}; }
+      const age = now - keyAt;
+      botIds.forEach((id, k) => {
+        if (done[id]) return;
+        if (SHOOT.includes(ph.kind) && age > 1500 + k * 900) {
+          done[id] = 1; say(id, { t: 'fsPhoto', url: fakePhoto(id, ph) });
+          if (ph.kind === 'zshoot') say(id, { t: 'fsFocus', x: 0.5, y: 0.5 });
+        } else if (ph.kind === 'show' && ph.step === 1 && age > 600 + k * 300) { done[id] = 1; if ((id + ph.i) % 3) say(id, { t: 'fsHeart' }); }
+        else if (ph.kind === 'gallery' && age > 800 + k * 400) { done[id] = 1; const o = ph.items.filter(it => it.id !== id); if (o.length) say(id, { t: 'fsVote', id: o[(id + k) % o.length].id }); }
+        else if (ph.kind === 'riddle' && !ph.solved && ph.items[ph.i].id === id && age > 9000) { done[id] = 1; const o = s.players.filter(p => p !== id); say(id, { t: 'fsGuess', id: o[ph.i % o.length] }); }
+      });
+      if (hostBot && !done.host && ((ph.kind === 'show' && ph.step === 1 && age > 2600) || (ph.kind === 'gallery' && age > 5000))) { done.host = 1; game.onMessage(hostBot, { t: 'fsNext' }); }
+    }
+    function frame() { bots(performance.now()); game.render(); }
+    if (simMs > 0) for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; frame(); }
+    (function loop() { if (simMs > 0) fake += 16.7; frame(); requestAnimationFrame(loop); })();
+    // ?album=1: show what the 💾 button would save, once the pictures are decoded
+    if (q.get('album')) setTimeout(() => { const a = game._debug().buildCanvas(); a.style.cssText = 'max-width:100vw; max-height:100vh;'; document.body.innerHTML = ''; document.body.appendChild(a); }, 1200);
+    document.title = 'FOTOSALAT-RUNNING';
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>

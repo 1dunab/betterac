@@ -174,6 +174,7 @@ The controller **injects its own views** — `controller.html` only contains the
 | `VIEWS`, `showView(key)` | view registry — push your view keys, switch with showView |
 | `myHost`, `updateAbort()` | if the screen tells you `host: true`, set `myHost = d.host; updateAbort();` so the ✕ abort button appears |
 | `startTimer(ms, el, cb)`, `stopTimer()` | shared countdown (renders seconds into `el`, calls `cb` at zero) |
+| `Snap.bind(button, { onPhoto })` | photo button (`core/snap.js`): opens the phone's camera app, shrinks the picture and hands `onPhoto({ url, w, h })` a small JPEG data URL. Works over plain http, where the live camera does not — see `fotosalat/controller.js` |
 
 Touch tips: always `e.preventDefault()` in touch handlers; bind `touchstart/touchend/
 touchcancel` *and* `mousedown/mouseup` (desktop testing); `navigator.vibrate` (in a
