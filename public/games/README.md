@@ -175,6 +175,7 @@ The controller **injects its own views** — `controller.html` only contains the
 | `myHost`, `updateAbort()` | if the screen tells you `host: true`, set `myHost = d.host; updateAbort();` so the ✕ abort button appears |
 | `startTimer(ms, el, cb)`, `stopTimer()` | shared countdown (renders seconds into `el`, calls `cb` at zero) |
 | `Snap.bind(button, { onPhoto })` | photo button (`core/snap.js`): opens the phone's camera app, shrinks the picture and hands `onPhoto({ url, w, h })` a small JPEG data URL. Works over plain http, where the live camera does not — see `fotosalat/controller.js` |
+| `Mic.start(…)`, `Mic.fileInput(…)` | voice recording (`core/mic.js`): the live microphone where the browser allows it (https), otherwise the phone's recorder app; both deliver raw samples — see `rueckwaerts/controller.js` |
 
 Touch tips: always `e.preventDefault()` in touch handlers; bind `touchstart/touchend/
 touchcancel` *and* `mousedown/mouseup` (desktop testing); `navigator.vibrate` (in a
