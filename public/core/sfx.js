@@ -6,6 +6,7 @@
 //   sfx.ambient('wind')     Ambient-Loop starten (ersetzt einen laufenden)
 //   sfx.ambient(null)       Ambient stoppen (macht die Shell bei Spielende)
 //   sfx.setMuted(bool)      global stumm (persistiert), sfx.muted zum Lesen
+//   sfx.audio()             { ctx, out } für Spiele mit eigenem Synth (Bandsalat), null solange gesperrt
 //
 // Browser-Autoplay-Policy: der AudioContext läuft erst nach der ersten
 // Nutzer-Geste auf DIESER Seite (Klick/Taste, z.B. der ⛶- oder 🔊-Button).
@@ -17,7 +18,7 @@
   const noop = function () {};
   if (!AC) {
     const stub = noop;
-    stub.ambient = noop; stub.setMuted = noop; stub.muted = false;
+    stub.ambient = noop; stub.setMuted = noop; stub.muted = false; stub.audio = function () { return null; };
     window.sfx = stub;
     return;
   }
@@ -160,5 +161,10 @@
     if (master) master.gain.value = muted ? 0 : 0.6;
   };
   sfx.muted = muted;
+  // Eigener Synth eines Spiels: derselbe Kontext und Master, damit 🔊 und die Freischaltung auch dort gelten
+  sfx.audio = function () {
+    ensureCtx();
+    return running() ? { ctx: ctx, out: master } : null;
+  };
   window.sfx = sfx;
 })();

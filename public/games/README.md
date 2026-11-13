@@ -126,6 +126,10 @@ in `endToLobby`): `sfx.ambient('wind' | 'drone' | 'space' | 'rain')`. Start one 
 `start()` if it fits the mood — Sintflut uses `wind`, Boss Raid `drone`, Space Arena
 `space`. Keep it subtle; ambients are quiet by design.
 
+A game with its own synth (Bandsalat) takes the engine's AudioContext instead of opening a second
+one: `sfx.audio()` returns `{ ctx, out }`, or `null` while audio is still locked. Connect to `out`,
+and the 🔊 button and the autoplay unlock apply to your sounds too.
+
 Needing WebGL? See `racer/screen.js`: it creates its own canvas + 2D HUD overlay that
 replace `cv` during the game (`window.THREE` is provided by the vendored three.js) and
 falls back to the lobby when WebGL is unavailable. Force `background: transparent` on
