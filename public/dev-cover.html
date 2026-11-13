@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Dev: cover picture</title>
+<!-- Makes a clean 960×600 picture of any dev page's game canvas, for the lobby's cover pictures (public/covers/).
+     The dev pages lay their canvas out differently; this page loads one in a frame, waits, and copies the game
+     canvas (or all visible canvases, stacked) into its own, which fills the window exactly.
+       ?u=<dev page with its parameters, url-encoded>   ?wait=<ms after the frame loaded, default 1500>
+       ?hold=<url>  an address that answers late: keeps this page "loading", so a headless screenshot waits
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=960,600 --screenshot out.png \
+       "http://localhost:3000/dev-cover.html?u=dev-any.html%3Fgame%3Dslither%26sim%3D25000"
+     How the covers in the repo were made: docs/LOBBY.md -->
+<style>
+  html, body { margin:0; background:#000; overflow:hidden; }
+  #out { display:block; width:100vw; height:100vh; }
+  iframe { position:absolute; left:0; top:0; width:980px; height:620px; border:0; opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+<canvas id="out" width="960" height="600"></canvas>
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.get('hold')) document.write('<img src="' + q.get('hold').replace(/"/g, '') + '" width="1" height="1" style="position:absolute">');
+  const out = document.getElementById('out'), g = out.getContext('2d');
+  const fr = document.createElement('iframe');
+  fr.src = q.get('u') || 'dev-any.html?game=slither';
+  document.body.appendChild(fr);
+  fr.addEventListener('load', () => setTimeout(() => {
+    const doc = fr.contentDocument, win = fr.contentWindow;
+    const shown = [...doc.querySelectorAll('canvas')].filter(c => { const r = c.getBoundingClientRect(), s = win.getComputedStyle(c); return r.width > 200 && s.display !== 'none' && s.visibility !== 'hidden'; });
+    g.fillStyle = '#0d0d1a'; g.fillRect(0, 0, 960, 600);
+    // one game canvas: copy it. Several (a 3D scene with a HUD on top): stack them in page order
+    const main = shown.find(c => c.id === 'c');
+    (main && shown.length === 1 ? [main] : shown).forEach(c => { try { g.drawImage(c, 0, 0, 960, 600); } catch (e) {} });
+    document.title = 'COVER-READY ' + shown.length;
+  }, +q.get('wait') || 1500));
+</script>
+</body>
+</html>

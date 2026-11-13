@@ -1,4 +1,4 @@
-registerGame({ key: 'neonspur', label: '⚡ Neonspur', min: 1, settings: {
+registerGame({ key: 'neonspur', label: '⚡ Neonspur', min: 1, about: 'Lichtspur-Duell in 3D, mit Sprüngen und Extras.', cat: 'action', settings: {
   map: { label: 'Arena', type: 'choice', default: 'raster', options: [
     { v: 'raster', label: '🟦 Raster' }, { v: 'saeulen', label: '🏛️ Säulenhalle' },
     { v: 'terrassen', label: '🪜 Terrassen' }, { v: 'random', label: '🎲 Zufall' }] },

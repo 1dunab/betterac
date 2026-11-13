@@ -1,4 +1,4 @@
-registerGame({ key: 'racer', label: '🏎️ Micro Racer', min: 2, settings: {
+registerGame({ key: 'racer', label: '🏎️ Micro Racer', min: 2, about: '3D-Rennen: Wer aus dem Bild fällt, ist raus. Mit Items.', cat: 'action', settings: {
   track: { label: 'Strecke', type: 'choice', default: 'desert', options: [
     { v: 'desert', label: '🌵 Wüste' }, { v: 'snow', label: '❄️ Schnee' },
     { v: 'beach', label: '🏖️ Strand' }, { v: 'vulkan', label: '🌋 Vulkan' },

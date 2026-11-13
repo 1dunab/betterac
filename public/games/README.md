@@ -25,8 +25,9 @@ loads `controller.js`** — but both load `meta.js`, so label/min/settings live 
 one place. `registerGame()` merges all three registrations by `key`:
 
 ```js
-// meta.js — loaded by BOTH pages
-registerGame({ key: 'meingame', label: '🎮 Mein Spiel', min: 2, settings: { /* see §5 */ } });
+// meta.js — loaded by BOTH pages. `about` (one German sentence) and `cat` are what the lobby shows
+registerGame({ key: 'meingame', label: '🎮 Mein Spiel', min: 2, about: 'Was man hier tut, in einem Satz.', cat: 'action',
+  settings: { /* see §5 */ } });
 
 // screen.js — factory returning a fresh game instance per round
 registerGame({ key: 'meingame', screen: function () { return { start() {}, /* §3 */ }; } });
@@ -196,7 +197,8 @@ settings: {
 }
 ```
 
-Games never build settings UI themselves.
+Games never build settings UI themselves. The lobby shows a `choice` as a row of its options without the setting's
+label, so every option has to say what it is about (`'Ohne Wertung'`, not `'Aus'`).
 
 ## 6. Messaging
 
@@ -259,6 +261,7 @@ is deterministic, add a `test-<key>.js` following `test-categories.js` and chain
 ## 10. Checklist before you open a PR
 
 - [ ] `meta.js` / `screen.js` / `controller.js` registered under one unique key
+- [ ] `about` and `cat` in `meta.js`, and a cover picture `public/covers/<key>.jpg` ([how](../../docs/LOBBY.md#making-a-cover-picture))
 - [ ] Script tags added to **both** HTMLs at the marker, exact one-line format
 - [ ] `onDisconnect` handled; `stop()` clears any timers
 - [ ] Settings (if any) declared in meta — no hand-rolled settings UI

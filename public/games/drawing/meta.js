@@ -1,4 +1,4 @@
-registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, settings: {
+registerGame({ key: 'drawing', label: '🎨 Drawing Evolution', min: 2, about: 'Stille Post mit Stift: zeichnen, raten, zeichnen. Am Ende die Show.', cat: 'kreativ', settings: {
   mode: { label: 'Wörter', type: 'choice', default: 'casual', options: [
     { v: 'casual', label: 'Casual' }, { v: 'tiere', label: 'Tiere' }, { v: 'laender', label: 'Länder' },
     { v: 'versaut', label: 'Versaut' }, { v: 'custom', label: 'Eigene' }] },

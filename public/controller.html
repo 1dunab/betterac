@@ -9,7 +9,37 @@
                -webkit-user-select:none; user-select:none; touch-action:none; }
   .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
   .view.on { display:flex; }
-  #v-shelllobby{overflow-y:auto;touch-action:pan-y}#v-shelllobby>.center{flex:1 0 auto}
+  /* ---- Lobby: Spiele-Katalog zum Blättern, unten die Leiste des Hosts ---- */
+  #v-shelllobby { overflow:hidden; }
+  #lobHead { display:flex; align-items:center; gap:10px; padding:12px 14px 6px; }
+  #lobDot { width:16px; height:16px; border-radius:50%; flex:none; background:#0a84ff; }
+  #helloName { font-size:21px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #lobInfo { font-size:13px; white-space:nowrap; }
+  #gameCats { display:flex; gap:6px; padding:4px 12px 8px; overflow-x:auto; touch-action:pan-x; flex:none; scrollbar-width:none; }
+  #gameCats::-webkit-scrollbar { display:none; }
+  .catchip { border:none; border-radius:16px; padding:7px 12px; font-size:14px; font-weight:700; background:#2c2c3a; color:#fff; white-space:nowrap; flex:none; }
+  .catchip.sel { background:#fff; color:#10141a; }
+  #gamePicker { flex:1; min-height:0; overflow-y:auto; touch-action:pan-y; -webkit-overflow-scrolling:touch; display:flex; flex-direction:column;
+                flex-wrap:nowrap; justify-content:flex-start; gap:8px; padding:2px 12px 12px; }
+  #lobTools { display:flex; gap:8px; flex:none; }
+  #lobTools .gamebtn { flex:1; padding:10px 8px; }
+  .gcard { display:grid; grid-template-columns:104px 1fr auto; gap:0 10px; align-items:start; background:#24242f; border-radius:14px; padding:8px;
+           border:2px solid transparent; flex:none; text-align:left; }
+  .gcard.cur { border-color:#ffd60a; background:#2d2a22; }
+  .gcard.far { opacity:.55; }
+  .gcard img { width:104px; height:65px; border-radius:9px; object-fit:cover; background:#15151d; display:block; }
+  .gcard .gamebtn { background:none; padding:0; font-size:17px; font-weight:800; text-align:left; display:block; margin-bottom:2px; }
+  .gcard .gamebtn.sel { background:none; color:#ffd60a; }
+  .gabout { font-size:13px; line-height:1.3; opacity:.8; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .gmeta { font-size:12px; opacity:.55; margin-top:3px; }
+  .gwish { border-radius:14px; padding:8px 10px; font-size:15px; font-weight:800; background:#33333f; white-space:nowrap; }
+  .gwish.on { background:#ff2d55; }
+  .gcard #gameSettings { grid-column:1 / -1; margin-top:12px; padding-top:12px; border-top:1px solid rgba(255,255,255,.12); text-align:center; }
+  #lobBar { flex:none; padding:10px 12px 12px; background:#15151d; border-top:1px solid rgba(255,255,255,.08); }
+  #guestLobby { text-align:center; padding:4px 0; }
+  #hostMore { max-height:38vh; overflow-y:auto; touch-action:pan-y; margin-bottom:10px; }
+  #lobRow { display:flex; gap:8px; align-items:stretch; }
+  #moreBtn { flex:none; }
   .bar { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
   .word { font-size:22px; font-weight:800; }
   .timer { font-size:22px; font-weight:800; min-width:46px; text-align:right; }
@@ -50,21 +80,27 @@
   </div>
 </div>
 
-<!-- ZENTRALE LOBBY -->
+<!-- ZENTRALE LOBBY: oben wer ich bin, in der Mitte der Spiele-Katalog (alle blättern und wünschen, der Host wählt),
+     unten die Leiste: beim Host Einstellungen-Rest und START, bei den anderen, was der Host gerade ansieht -->
 <div id="v-shelllobby" class="view">
-  <div class="center">
-    <div id="helloName" class="big">Lobby</div>
-    <div id="hostLobby" style="display:none; width:100%; max-width:360px;">
-      <div class="muted" style="margin-bottom:6px">Spiel wählen:</div>
-      <div class="games" id="gamePicker"></div>
-      <div id="gameSettings" style="margin-top:16px"></div>
-      <button id="startBtn" class="btn go" style="margin-top:22px; width:100%">START</button>
-      <div id="needPlayers" class="muted" style="margin-top:10px"></div>
-      <div id="playerAdmin" style="margin-top:16px; text-align:left"></div>
-      <button id="nightBtn" class="btn" style="display:none; margin-top:16px; width:100%; background:#4a3d14; color:#ffd60a">🌙 Feierabend — Champion küren</button>
-    </div>
+  <div id="lobHead"><span id="lobDot"></span><div id="helloName" class="big">Lobby</div><span id="lobInfo" class="muted"></span></div>
+  <div id="gameCats"></div>
+  <div class="games" id="gamePicker"></div>
+  <div id="lobBar">
     <div id="guestLobby" class="muted" style="display:none"></div>
+    <div id="hostLobby" style="display:none">
+      <div id="hostMore" style="display:none">
+        <div id="playerAdmin" style="text-align:left"></div>
+        <button id="nightBtn" class="btn" style="display:none; margin-top:10px; width:100%; background:#4a3d14; color:#ffd60a">🌙 Feierabend — Champion küren</button>
+      </div>
+      <div id="lobRow">
+        <button id="moreBtn" class="btn">👥</button>
+        <button id="startBtn" class="btn go">START</button>
+      </div>
+      <div id="needPlayers" class="muted" style="margin-top:8px; text-align:center"></div>
+    </div>
   </div>
+  <div id="gameSettings"></div>
 </div>
 
 <!-- SPECTATE -->
@@ -104,19 +140,75 @@
   let curCfg = {}, selected = 'lightcycles', playerCount = 0;
   function sendSelect(g) { ac.message(AirConsole.SCREEN, { t: 'shellSelect', game: g }); }
   function sendCfg() { ac.message(AirConsole.SCREEN, { t: 'shellConfig', game: selected, cfg: curCfg }); }
+  // Der Katalog: eine Karte pro Spiel mit Bild, einem Satz und 👍. Der Titel ist der Knopf, mit dem der Host wählt
+  // (bei allen anderen wünscht ein Tipp auf die Karte). Gebaut wird einmal; danach ändern sich nur Markierungen.
+  let cat = 'alle', builtFor = '', lobby = { wish: {}, mine: [], host: false };
+  const catsOf = () => (window.GAME_CATS || []);
+  const sortedGames = () => { const keys = catsOf().map(c => c.key), ci = (g) => Math.max(0, keys.indexOf(g.cat)); return gamesMeta.map((g, i) => ({ g, i })).sort((a, b) => ci(a.g) - ci(b.g) || a.i - b.i).map(x => x.g); };
+  function sendWish(g) { ac.message(AirConsole.SCREEN, { t: 'shellWish', game: g }); }
   function buildPicker() {
-    const wrap = $('gamePicker'); wrap.innerHTML = '';
-    gamesMeta.forEach(g => { const b = document.createElement('button'); b.className = 'gamebtn' + (g.key === selected ? ' sel' : ''); b.textContent = g.label; b.addEventListener('click', () => sendSelect(g.key)); wrap.appendChild(b); });
-    // 🎲 Zufall: würfelt ein Spiel, das mit der aktuellen Spielerzahl startbar ist
-    const rnd = document.createElement('button');
-    rnd.className = 'gamebtn';
-    rnd.style.background = '#6e2a5e';
-    rnd.textContent = '🎲 Zufall';
-    rnd.addEventListener('click', () => {
-      const pool = gamesMeta.filter(g => playerCount >= (g.min || 1) && g.key !== selected);
-      if (pool.length) sendSelect(pool[Math.floor(Math.random() * pool.length)].key);
+    const wrap = $('gamePicker'), sig = gamesMeta.map(g => g.key).join();
+    if (sig !== builtFor) {
+      builtFor = sig;
+      $('v-shelllobby').appendChild($('gameSettings'));           // parken, bevor die Karten neu entstehen
+      wrap.innerHTML = '';
+      // nur für den Host: würfeln, oder nehmen, was sich die meisten wünschen
+      const tools = document.createElement('div'); tools.id = 'lobTools';
+      const rnd = document.createElement('button'); rnd.className = 'gamebtn'; rnd.style.background = '#6e2a5e'; rnd.textContent = '🎲 Zufall';
+      rnd.addEventListener('click', () => {
+        // 🎲 Zufall: würfelt ein Spiel, das mit der aktuellen Spielerzahl startbar ist
+        const pool = gamesMeta.filter(g => playerCount >= (g.min || 1) && g.key !== selected);
+        if (pool.length) sendSelect(pool[Math.floor(Math.random() * pool.length)].key);
+      });
+      const top = document.createElement('button'); top.className = 'gamebtn'; top.id = 'wishTop'; top.style.background = '#7a2440'; top.textContent = '👍 Meistgewünscht';
+      top.addEventListener('click', () => {
+        const best = sortedGames().filter(g => lobby.wish[g.key]).sort((a, b) => lobby.wish[b.key] - lobby.wish[a.key])[0];
+        if (best) sendSelect(best.key);
+      });
+      tools.append(rnd, top); wrap.appendChild(tools);
+      sortedGames().forEach(g => {
+        const card = document.createElement('div'); card.className = 'gcard'; card.dataset.key = g.key; card.dataset.cat = g.cat || '';
+        const img = document.createElement('img'); img.alt = ''; img.src = 'covers/' + g.key + '.jpg';
+        img.addEventListener('error', () => { img.style.visibility = 'hidden'; });
+        const body = document.createElement('div');
+        const b = document.createElement('button'); b.className = 'gamebtn'; b.textContent = g.label;
+        const about = document.createElement('div'); about.className = 'gabout'; about.textContent = g.about || '';
+        const meta = document.createElement('div'); meta.className = 'gmeta';
+        body.append(b, about, meta);
+        const wish = document.createElement('span'); wish.className = 'gwish'; wish.setAttribute('role', 'button');
+        wish.addEventListener('click', (e) => { e.stopPropagation(); sendWish(g.key); });
+        // der Host wählt mit einem Tipp auf die Karte; alle anderen wünschen damit
+        card.addEventListener('click', (e) => { if (e.target.closest('#gameSettings')) return; if (lobby.host) sendSelect(g.key); else sendWish(g.key); });
+        card.append(img, body, wish); wrap.appendChild(card);
+      });
+      const chips = $('gameCats'); chips.innerHTML = '';
+      [{ key: 'alle', label: 'Alle' }, { key: 'wunsch', label: '👍 Gewünscht' }].concat(catsOf()).forEach(c => {
+        const b = document.createElement('button'); b.className = 'catchip'; b.dataset.cat = c.key; b.textContent = c.label;
+        b.addEventListener('click', () => { cat = c.key; refreshPicker(); $('gamePicker').scrollTop = 0; });
+        chips.appendChild(b);
+      });
+    }
+    refreshPicker();
+  }
+  function refreshPicker() {
+    const wrap = $('gamePicker'), labels = {}; catsOf().forEach(c => { labels[c.key] = c.label; });
+    $('lobTools').style.display = lobby.host ? 'flex' : 'none';
+    $('wishTop').style.display = Object.keys(lobby.wish).length ? '' : 'none';
+    [...$('gameCats').children].forEach(b => b.classList.toggle('sel', b.dataset.cat === cat));
+    let cur = null;
+    wrap.querySelectorAll('.gcard').forEach(card => {
+      const key = card.dataset.key, g = gamesMeta.find(x => x.key === key) || {}, n = lobby.wish[key] || 0, mine = lobby.mine.includes(key), need = g.min || 1;
+      const on = key === selected;
+      card.style.display = cat === 'alle' || cat === card.dataset.cat || (cat === 'wunsch' && n > 0) || on ? '' : 'none';
+      card.classList.toggle('cur', on); card.classList.toggle('far', playerCount < need);
+      card.querySelector('.gamebtn').classList.toggle('sel', on);
+      card.querySelector('.gmeta').textContent = (playerCount < need ? '🔒 braucht ' + need + ' Spieler' : 'ab ' + need + (need > 1 ? ' Spielern' : ' Spieler')) + (labels[g.cat] ? ' · ' + labels[g.cat] : '');
+      const w = card.querySelector('.gwish'); w.textContent = '👍' + (n ? ' ' + n : ''); w.classList.toggle('on', mine);
+      if (on) cur = card;
     });
-    wrap.appendChild(rnd);
+    // die Einstellungen des gewählten Spiels klappen beim Host in dessen Karte auf
+    if (cur && lobby.host) cur.appendChild($('gameSettings')); else $('v-shelllobby').appendChild($('gameSettings'));
+    $('gameSettings').style.display = cur && lobby.host ? '' : 'none';
   }
   // Settings-UI generisch aus dem Schema des gewählten Spiels (meta.js)
   function renderSettings() {
@@ -158,6 +250,8 @@
     }
   }
   $('startBtn').addEventListener('click', () => ac.message(AirConsole.SCREEN, { t: 'shellStart' }));
+  // 👥: Spieler umbenennen und entfernen, Feierabend — selten gebraucht, deshalb hinter einem Knopf
+  $('moreBtn').addEventListener('click', () => { const m = $('hostMore'); m.style.display = m.style.display === 'none' ? 'block' : 'none'; $('moreBtn').textContent = m.style.display === 'none' ? '👥' : '✕'; });
 
   // Host-Tools: Spielerliste mit Umbenennen (✏️→✓) und Kick (✖ mit Zwei-Tap)
   function renderAdmin(d) {
@@ -301,15 +395,24 @@
       else if (d.cmd === 'lobby') {
         inGame = false; activeC = null; updateAbort();
         $('helloName').textContent = 'Hallo, ' + (d.name || 'Spieler') + '!';
-        document.body.style.background = shade(d.color || '#0a84ff');
-        gamesMeta = d.games || []; selected = d.selected; playerCount = d.playerCount || 0; buildPicker();
+        $('lobDot').style.background = d.color || '#0a84ff';
+        $('lobInfo').textContent = (d.playerCount || 0) + ' Spieler' + (d.host ? ' · du bist Host ⭐' : '');
+        document.body.style.background = '';
+        const wasSelected = selected;
+        gamesMeta = d.games || []; selected = d.selected; playerCount = d.playerCount || 0;
+        lobby = { wish: d.wish || {}, mine: d.mine || [], host: !!d.host };
         curCfg = d.cfg || {};
         if (d.host) renderSettings();
+        buildPicker();
+        // wechselt die Wahl, rückt die Karte ins Bild — beim Host die eigene, bei allen anderen die des Hosts
+        if (wasSelected !== selected) { const cur = $('gamePicker').querySelector('.gcard.cur'); if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
         $('hostLobby').style.display = d.host ? 'block' : 'none';
         $('guestLobby').style.display = d.host ? 'none' : 'block';
-        if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }
-        else { const lab = (gamesMeta.find(g => g.key === d.selected) || {}).label || d.selected; $('guestLobby').textContent = 'Host wählt: ' + lab + ' — warte auf Start…'; }
+        const lab = (gamesMeta.find(g => g.key === d.selected) || {}).label || d.selected;
+        if (d.host) { $('startBtn').disabled = !d.minOk; $('startBtn').style.opacity = d.minOk ? 1 : 0.5; $('startBtn').textContent = '▶ START · ' + lab; $('needPlayers').textContent = d.minOk ? (d.playerCount + ' Spieler bereit') : 'Mehr Spieler nötig…'; }
+        else $('guestLobby').textContent = '⭐ ' + (d.hostName || 'Host') + ' wählt: ' + lab + ' · tippe 👍 für deine Wünsche';
         $('nightBtn').style.display = (d.host && d.night) ? 'block' : 'none';
+        $('moreBtn').style.display = (d.roster || []).length > 1 || d.night ? '' : 'none';
         renderAdmin(d);
         showView('shelllobby');
       }

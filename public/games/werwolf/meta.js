@@ -1,6 +1,6 @@
 (function () {
   const onOff = (label) => ({ label, type: 'choice', default: 'on', options: [{ v: 'on', label: 'An' }, { v: 'off', label: 'Aus' }] });
-  registerGame({ key: 'werwolf', label: '🐺 Werwolfnacht', min: 5, settings: {
+  registerGame({ key: 'werwolf', label: '🐺 Werwolfnacht', min: 5, about: 'Werwolf mit automatischem Erzähler. Wer lügt hier?', cat: 'raten', settings: {
     wolves: { label: 'Werwölfe', type: 'choice', default: 'auto', options: [
       { v: 'auto', label: 'Automatisch' }, { v: '1', label: '1' }, { v: '2', label: '2' }, { v: '3', label: '3' }, { v: '4', label: '4' }] },
     seer: onOff('🔮 Seherin'),

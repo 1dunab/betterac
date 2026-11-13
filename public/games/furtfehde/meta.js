@@ -1,4 +1,4 @@
-registerGame({ key: 'furtfehde', label: '🏰 Furt & Fehde', min: 1, settings: {
+registerGame({ key: 'furtfehde', label: '🏰 Furt & Fehde', min: 1, about: 'Burgen bauen, Truppen schicken, Nachbarn überfallen.', cat: 'duell', settings: {
   dauer: { label: 'Dauer', type: 'number', default: 20, min: 6, max: 40, step: 2, unit: ' Min' },
   burgen: { label: 'Burgen', type: 'number', default: 4, min: 2, max: 4, step: 1 },
   staerke: { label: 'Bot-Stärke', type: 'choice', default: 'ritter', options: [

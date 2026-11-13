@@ -65,7 +65,8 @@
 
   // ===== Shell-Status =====
   let players = {};                 // id -> {color, name, named}
-  let shell = { state: 'lobby', selected: 'lightcycles' };
+  let shell = { state: 'lobby', selected: 'lightcycles', wishes: {} };   // wishes: id -> [game keys] (👍 in der Lobby)
+  const MAX_WISHES = 3;
   const gameCfg = {};               // key -> aktuelle Settings-Werte (Schema in GAME_META)
   let active = null, activeKey = null;
   let banner = '', bannerUntil = 0;
@@ -166,9 +167,11 @@
   // ===== Shell-Nachrichten an Controller =====
   function sendLobby() {
     saveShellSnapshot();
-    const h = hostId();
+    const h = hostId(), wish = {};
+    namedIds().forEach(id => (shell.wishes[id] || []).forEach(k => { wish[k] = (wish[k] || 0) + 1; }));
     namedIds().forEach(id => ac.message(id, {
-      t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id,
+      t: 'shell', cmd: 'lobby', host: id === h, name: nameOf(id), player: id, color: players[id].color, hostName: h === null ? '' : nameOf(h),
+      wish, mine: shell.wishes[id] || [],
       selected: shell.selected, games: GAME_LIST, cfg: cfgFor(shell.selected),
       playerCount: namedIds().length, minOk: namedIds().length >= minFor(shell.selected),
       night: Object.keys(nightScore).length > 0,
@@ -181,6 +184,7 @@
   function startGame(key) {
     if (!GAMES[key]) return;
     activeKey = key; active = GAMES[key]();
+    Object.keys(shell.wishes).forEach(id => { shell.wishes[id] = shell.wishes[id].filter(k => k !== key); });   // der Wunsch ist erfüllt
     shell.state = 'playing';
     const h = hostId();
     namedIds().forEach(id => ac.message(id, { t: 'shell', cmd: 'enterGame', game: key, host: id === h }));
@@ -245,6 +249,7 @@
   ac.onDisconnect = (id) => {
     const wasNamed = players[id] && players[id].named;
     delete players[id];
+    delete shell.wishes[id];
     if (active) {
       if (active.onDisconnect) active.onDisconnect(id);
       if (active) sendHostUpdate();           // Host könnte gewechselt haben
@@ -266,6 +271,12 @@
       else ac.message(id, { t: 'shell', cmd: 'spectate', host: id === hostId() });
     } else if (d.t === 'shellSelect' && id === hostId() && !active) {
       if (GAMES[d.game]) { shell.selected = d.game; sfx('tick'); sendLobby(); }
+    } else if (d.t === 'shellWish' && !active && players[id] && players[id].named && GAMES[d.game]) {
+      // 👍: jeder darf sich bis zu drei Spiele wünschen; nochmal tippen nimmt den Wunsch zurück
+      const w = shell.wishes[id] || (shell.wishes[id] = []), at = w.indexOf(d.game);
+      if (at >= 0) w.splice(at, 1);
+      else { if (w.length >= MAX_WISHES) w.shift(); w.push(d.game); sfx('pop'); lobbyToast('👍 ' + nameOf(id) + ' wünscht sich ' + GAME_META[d.game].label, players[id].color); }
+      sendLobby();
     } else if (d.t === 'shellConfig' && id === hostId() && !active) {
       if (d.game === shell.selected) { applyCfg(d.game, d.cfg); sendLobby(); }
     } else if (d.t === 'shellStart' && id === hostId() && !active) {
@@ -333,65 +344,7 @@
     buildQr(location.host);
   }
 
-  // ===== Shell-Lobby-Render =====
-  function renderLobby() {
-    ctx.fillStyle = '#0d0d1a'; ctx.fillRect(0, 0, cv.width, cv.height);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px system-ui,sans-serif'; ctx.fillText('🎉 Party Hub', cv.width / 2, 58);
-    const sel = GAME_LIST.find(g => g.key === shell.selected) || GAME_LIST[0];
-    ctx.fillStyle = '#bf5af2'; ctx.font = 'bold 26px system-ui,sans-serif'; ctx.fillText('Gewählt: ' + sel.label, cv.width / 2, 104);
-    const schema = (GAME_META[shell.selected] || {}).settings || {};
-    const parts = Object.keys(schema).map(f => {
-      const def = schema[f], v = cfgFor(shell.selected)[f];
-      if (def.when && !Object.entries(def.when).every(([key, value]) => cfgFor(shell.selected)[key] === value)) return null;
-      if (def.type === 'choice') { const o = (def.options || []).find(o => o.v === v); return def.label + ': ' + (o ? o.label : v); }
-      if (def.type === 'text') { const s = String(v || ''); return s ? (s.length > 40 ? s.slice(0, 39) + '…' : s) : null; }
-      return def.label + ' ' + v + (def.unit || '');
-    }).filter(Boolean);
-    if (parts.length) {
-      ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif';
-      ctx.fillText(parts.join(' · '), cv.width / 2, 134);
-    }
-    const list = namedIds().sort((a, b) => a - b), h = hostId();
-    const joining = connectedIds().length - list.length;
-    ctx.font = 'bold 20px system-ui,sans-serif';
-    list.forEach((id, i) => {
-      const col = 2, perCol = Math.ceil(list.length / col);
-      const c = Math.floor(i / perCol), rIdx = i % perCol;
-      const bx = cv.width / 2 - 200 + c * 220, y = 190 + rIdx * 40;
-      ctx.fillStyle = players[id].color; ctx.beginPath(); ctx.arc(bx, y, 11, 0, Math.PI * 2); ctx.fill();
-      ctx.textAlign = 'left'; ctx.fillStyle = '#eee'; ctx.fillText(nameOf(id) + (id === h ? ' ⭐' : ''), bx + 20, y);
-      ctx.textAlign = 'center';
-    });
-    if (joining > 0) { ctx.fillStyle = '#888'; ctx.font = '15px system-ui,sans-serif'; ctx.fillText(joining + ' tippt noch einen Namen…', cv.width / 2, cv.height - 84); }
-    // Beitritts-QR unten links
-    if (qrCanvas) {
-      const qx = 22, qy = cv.height - qrCanvas.height - 46;
-      ctx.drawImage(qrCanvas, qx, qy);
-      ctx.fillStyle = '#aaa'; ctx.font = 'bold 14px system-ui,sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('📱 Mitspielen:', qx, qy - 12);
-      ctx.font = '12px system-ui,sans-serif'; ctx.fillStyle = '#777';
-      ctx.fillText(joinUrl.replace(/^https?:\/\//, ''), qx, qy + qrCanvas.height + 16);
-      ctx.textAlign = 'center';
-    }
-    const ok = list.length >= minFor(shell.selected);
-    ctx.fillStyle = ok ? '#30d158' : '#ff9f0a'; ctx.font = '20px system-ui,sans-serif';
-    ctx.fillText(ok ? '⭐ Host wählt das Spiel und tippt START' : ('Mind. ' + minFor(shell.selected) + ' Spieler für ' + sel.label + '…'), cv.width / 2, cv.height - 54);
-    // Abend-Wertung rechts (Siege des Abends, Feierabend kürt den Champion)
-    const st = nightStandings().slice(0, 8);
-    if (st.length) {
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#ffd60a'; ctx.font = 'bold 16px system-ui,sans-serif';
-      ctx.fillText('🏆 Abend-Wertung', cv.width - 22, 180);
-      ctx.font = '15px system-ui,sans-serif';
-      st.forEach((e, i) => {
-        ctx.fillStyle = i === 0 ? '#fff' : '#aaa';
-        const n = e.name.length > 11 ? e.name.slice(0, 10) + '…' : e.name;
-        ctx.fillText(n + '  ' + e.pts, cv.width - 22, 208 + i * 24);
-      });
-      ctx.textAlign = 'center';
-    }
-  }
+  // ===== Shell-Lobby-Render: core/lobby.js (renderLobby, lobbyToast) =====
 
   // ===== Feierabend: Champion-Zeremonie (9s, dann zurück zur Lobby) =====
   function renderChampion() {
@@ -423,6 +376,7 @@
 
   // ============================================================
   </script>
+<script src="core/lobby.js"></script>
 <script src="games/lightcycles/meta.js"></script>
 <script src="games/lightcycles/screen.js"></script>
 <script src="games/slither/meta.js"></script>

@@ -56,6 +56,10 @@ Host the server on Render for rounds across homes — see [Playing online](docs/
 
 ## The games
 
+The start menu is a shop window: the TV shows the game the host is looking at with a picture and one
+sentence, every phone has the whole catalogue to browse, and everybody can wish for games with 👍
+([notes](docs/LOBBY.md)).
+
 | Game | Players | What it is |
 |---|---|---|
 | 🏍️ Light Cycles | 2+ | Tron-style light-cycle duel |

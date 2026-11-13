@@ -1,4 +1,4 @@
-registerGame({ key: 'skyfarers', label: '🎈 Skyfarers', min: 1, settings: {
+registerGame({ key: 'skyfarers', label: '🎈 Skyfarers', min: 1, about: 'Luftschiff-Crew verteidigt gemeinsam eine fliegende Insel.', cat: 'koop', settings: {
   dauer: { label: 'Tageslänge', type: 'choice', default: 'normal', options: [
     { v: 'kurz', label: '⏱️ Kurz · 4 Min' }, { v: 'normal', label: '☀️ Normal · 6 Min' }, { v: 'lang', label: '🌙 Lang · 8 Min' }] },
   schwierigkeit: { label: 'Unwetter', type: 'choice', default: 'normal', options: [

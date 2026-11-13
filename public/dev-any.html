@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Dev: any game</title>
+<!-- Runs any game's TV side without lobby or phones: ?game=<key>. It reads the game's script list from screen.html,
+     stubs the shell and starts the game with its default settings. For the small games that have no harness of
+     their own, simple bots press buttons (drivers below), so there is something to see.
+     Made for the lobby's cover pictures (public/covers/, see docs/LOBBY.md):
+       ?game=slither&n=4&sim=12000     n players, fast-forward <ms> with a fake clock
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
+       --screenshot out.png "http://localhost:3000/dev-any.html?game=slither&sim=12000" -->
+<style>
+  html,body { margin:0; background:#0a0a14; }
+  /* identisch zur canvas-Regel in screen.html */
+  canvas { background:#0d0d1a; border-radius:10px; box-shadow:0 0 50px rgba(120,90,255,.18);
+           max-width:calc(100vw - 20px); max-height:calc(100vh - 20px); width:auto; height:auto;
+           width:min(calc(100vw - 20px), calc((100vh - 20px) * 1.6)); display:block; margin:10px auto; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<button id="saveBtn" hidden></button>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  // ---- shell stubs ----
+  const q = new URLSearchParams(location.search);
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const NAMES = ['Anna', 'Ben', 'Cleo', 'Dino', 'Eva', 'Finn', 'Gül', 'Hugo'];
+  const COLORS = ['#ff2d55', '#0a84ff', '#30d158', '#ffd60a', '#bf5af2', '#64d2ff', '#ff9f0a', '#ac8e68'];
+  const players = {};
+  const N = Math.max(1, Math.min(8, +q.get('n') || 4));
+  for (let i = 1; i <= N; i++) players[i] = { color: COLORS[i - 1], name: NAMES[i - 1], named: true };
+  const ids = Object.keys(players).map(Number);
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(w) { console.log('Sieger:', w); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; console.log('endToLobby:', m); }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.moveTo(x + r, y); o.arcTo(x + w, y, x + w, y + h, r); o.arcTo(x + w, y + h, x, y + h, r); o.arcTo(x, y + h, x, y, r); o.arcTo(x, y, x + w, y, r); o.closePath(); }
+  function fitFont(o, text, max, start) { let f = start; o.font = 'bold ' + f + 'px system-ui,sans-serif'; while (o.measureText(text).width > max && f > 10) { f -= 2; o.font = 'bold ' + f + 'px system-ui,sans-serif'; } }
+  function drawStrokesOn(o, strokes, bx, by, bw, bh) {
+    o.save(); o.fillStyle = '#fff'; o.fillRect(bx, by, bw, bh);
+    o.beginPath(); o.rect(bx, by, bw, bh); o.clip();
+    o.lineCap = 'round'; o.lineJoin = 'round';
+    for (const s of (strokes || [])) {
+      if (!s.p || !s.p.length) continue;
+      o.strokeStyle = s.c; o.lineWidth = Math.max(1, s.w * bw);
+      o.beginPath(); o.moveTo(bx + s.p[0][0] * bw, by + s.p[0][1] * bh);
+      for (let i = 1; i < s.p.length; i++) o.lineTo(bx + s.p[i][0] * bw, by + s.p[i][1] * bh);
+      o.stroke();
+    }
+    o.restore();
+  }
+  const sent = [];
+  const ac = { message(to, d) { sent.push([to, d]); if (sent.length > 300) sent.shift(); } };
+  function devFail(msg) {
+    ctx.fillStyle = '#300'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    String(msg).match(/.{1,78}/g).forEach((line, i) => ctx.fillText(line, 20, 40 + i * 28));
+    console.error(msg);
+  }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message));
+
+  // ---- a doodle for the drawing games: a sun, a house or a face, as normalized strokes ----
+  const circle = (cx, cy, r, c, w) => ({ c, w, p: Array.from({ length: 25 }, (x, i) => [cx + r * Math.cos(i / 24 * 6.283), cy + r * Math.sin(i / 24 * 6.283)]) });
+  const line = (pts, c, w) => ({ c, w, p: pts });
+  function doodle(k) {
+    if (k % 3 === 0) return [circle(0.5, 0.45, 0.2, '#ff9f0a', 0.03)].concat(Array.from({ length: 8 }, (x, i) => line([[0.5 + 0.26 * Math.cos(i * 0.785), 0.45 + 0.26 * Math.sin(i * 0.785)], [0.5 + 0.38 * Math.cos(i * 0.785), 0.45 + 0.38 * Math.sin(i * 0.785)]], '#ff9f0a', 0.025)));
+    if (k % 3 === 1) return [line([[0.25, 0.8], [0.25, 0.45], [0.75, 0.45], [0.75, 0.8], [0.25, 0.8]], '#0a84ff', 0.025), line([[0.2, 0.47], [0.5, 0.18], [0.8, 0.47]], '#ff2d55', 0.03), line([[0.45, 0.8], [0.45, 0.6], [0.57, 0.6], [0.57, 0.8]], '#222', 0.02)];
+    return [circle(0.5, 0.5, 0.3, '#222', 0.025), circle(0.4, 0.42, 0.03, '#222', 0.03), circle(0.6, 0.42, 0.03, '#222', 0.03), line(Array.from({ length: 13 }, (x, i) => [0.36 + i * 0.0233, 0.6 + 0.07 * Math.sin(i / 12 * 3.14)]), '#ff2d55', 0.025)];
+  }
+
+  // ---- drivers: what the bots send. (say, frame number, ms since start) ----
+  const rnd = (n) => Math.floor(Math.random() * n);
+  const DRIVERS = {
+    lightcycles: (say, f) => { if (f % 22 === 0) ids.forEach(id => { if (Math.random() < 0.14) say(id, { turn: rnd(2) ? 'left' : 'right' }); }); },
+    slither: (say, f) => { if (f % 14 === 0) ids.forEach(id => say(id, { steer: rnd(3) - 1, boost: Math.random() < 0.12 })); },
+    bumpergems: (say, f) => { if (f % 16 === 0) ids.forEach(id => say(id, { t: 'bumperMove', x: rnd(3) - 1, y: rnd(3) - 1 })); },
+    reaction: (say, f) => { if (f % 45 === 0) say(ids[rnd(N)], { t: 'rxTap' }); },
+    geoguess: (say, f) => { if (f % 240 === 90) ids.forEach(id => say(id, { t: 'pin', lat: 20 + Math.random() * 40, lng: -20 + Math.random() * 70 })); },
+    spy: (say, f) => { if (f === 30) ids.forEach(id => say(id, { t: 'spySeen' })); },
+    categories: (say, f) => {       // answers have to start with the round's letter: make some up
+      if (f !== 150) return;
+      const round = sent.map(x => x[1]).filter(d => d && d.t === 'slfRound').pop();
+      if (!round) return;
+      const tails = ['onstadt', 'ordland', 'ilbach', 'asel', 'ormann', 'uss'];
+      ids.forEach((id, k) => { const a = {}; round.cats.forEach((cat, i) => { a[cat] = (i + k) % 4 ? round.letter + tails[(i + (k % 2)) % tails.length] : ''; }); say(id, { t: 'slfAnswers', a }); });
+    },
+    drawing: (say, f) => {
+      if (f % 50 !== 0) return;
+      ids.forEach((id, k) => { say(id, { t: 'drawing', strokes: doodle(k + f / 50) }); say(id, { t: 'guess', text: ['Sonne', 'Haus', 'Gesicht', 'Pizza'][(k + f / 50) % 4] }); });
+      say(1, { t: 'startRecap' }); if (f % 200 === 0) say(1, { t: 'advance' });
+    },
+    fakeartist: (say, f) => {
+      if (f === 30) ids.forEach(id => say(id, { t: 'faSeen' }));
+      if (f > 60 && f % 45 === 0) { const d = doodle(rnd(3)); ids.forEach(id => say(id, { t: 'faStroke', s: d[(f / 45) % d.length] })); }
+    }
+  };
+</script>
+<script>
+  (async () => {
+    try {
+      const key = q.get('game');
+      const html = await (await fetch('screen.html')).text();
+      const srcs = [...html.matchAll(/<script src="(games\/([a-z_]+)\/[^"]+)"><\/script>/g)].filter(m => m[2] === key).map(m => m[1]);
+      if (!srcs.length) { devFail('Kein Spiel "' + key + '" in screen.html. ?game=<key>'); return; }
+      for (const src of srcs) await new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('lädt nicht: ' + src)); document.body.appendChild(s); });
+
+      const simMs = parseInt(q.get('sim') || '0', 10);
+      let fake = 1000, frameNo = 0;
+      if (simMs > 0) performance.now = () => fake;
+      const cfg = {}, schema = (window.GAME_META[key] || {}).settings || {};
+      for (const f in schema) cfg[f] = q.get(f) !== null ? (schema[f].type === 'number' ? +q.get(f) : q.get(f)) : schema[f].default;
+      const game = window.GAMES[key]();
+      window.__game = game;
+      game.start(ids.slice(), cfg);
+      const say = (id, m) => { try { game.onMessage(id, m); } catch (e) { devFail('onMessage: ' + e.message); } };
+      const frame = () => { frameNo++; if (DRIVERS[key]) DRIVERS[key](say, frameNo, frameNo * 16.7); game.render(); };
+      if (simMs > 0) for (let t = 0; t < simMs; t += 16.7) { fake += 16.7; frame(); }
+      (function loop() { if (simMs > 0) fake += 16.7; frame(); requestAnimationFrame(loop); })();
+      document.title = 'ANY-RUNNING ' + key;
+    } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+  })();
+</script>
+</body>
+</html>

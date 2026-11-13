@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Lobby Dev</title>
+<!-- The real lobby on one page: the TV (screen.html) and a few phones (controller.html) in frames, joined by
+     themselves. For looking at the start menu without picking up a phone. Needs a server whose screen seat is
+     free (close other screen tabs first).
+     ?n=3            phones (0..6); 0 shows the TV flipping through the games by itself
+     ?pick=autoball  the host chooses that game   ?wish=1  the guests wish for a few games
+     ?show=tv|host|guest  only that one, filling the window (for screenshots)
+     firefox --headless --no-remote --profile /tmp/ffp --window-size=980,620 \
+       --screenshot lobby.png "http://localhost:3000/dev-lobby.html?show=tv&pick=fotosalat&wish=1" -->
+<style>
+  html, body { margin:0; height:100%; background:#000; }
+  body { display:flex; gap:8px; padding:8px; box-sizing:border-box; }
+  iframe { border:0; border-radius:10px; background:#111; height:100%; }
+  #tv { flex:1; min-width:0; }
+  .ph { width:300px; flex:none; }
+  body.one { padding:0; } body.one iframe { display:none; border-radius:0; } body.one iframe.shown { display:block; width:100%; flex:1; }
+</style>
+</head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const N = q.get('n') === null ? 3 : Math.max(0, Math.min(6, +q.get('n')));
+  const NAMES = ['Anna', 'Ben', 'Cleo', 'Dino', 'Eva', 'Finn'];
+  const show = q.get('show');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const frame = (src, cls) => { const f = document.createElement('iframe'); f.src = src; f.className = cls; document.body.appendChild(f); return f; };
+  if (show) document.body.classList.add('one');
+  const tv = frame('screen.html', show === 'tv' ? 'shown' : ''); tv.id = 'tv';
+  (async () => {
+    await sleep(700);                                   // the screen takes its seat first
+    const phones = [];
+    for (let i = 0; i < N; i++) {
+      // frames of one tab share the storage a phone keeps its seat in: forget it, or every frame is the same player
+      try { sessionStorage.removeItem('ac_resume'); } catch (e) {}
+      const f = frame('controller.html', 'ph' + ((show === 'host' && i === 0) || (show === 'guest' && i === 1) ? ' shown' : ''));
+      phones.push(f);
+      await new Promise(r => f.addEventListener('load', r));
+      const d = f.contentDocument, on = (v) => d.getElementById(v).classList.contains('on');
+      // join once the phone has its seat (a click before that is lost), then wait until it is in the lobby
+      for (let t = 0; t < 60 && !f.contentWindow.eval('ac.device_id'); t++) await sleep(50);
+      d.getElementById('nameInput').value = NAMES[i]; d.getElementById('joinBtn').click();
+      for (let t = 0; t < 60 && !on('v-shelllobby'); t++) await sleep(50);
+    }
+    const card = (f, key) => f.contentDocument.querySelector('.gcard[data-key="' + key + '"]');
+    if (phones.length && q.get('pick')) { const c = card(phones[0], q.get('pick')); if (c) c.querySelector('.gamebtn').click(); await sleep(300); }
+    if (q.get('wish')) {
+      const wishes = [['autoball', 'fotosalat'], ['fotosalat', 'werwolf', 'bandsalat'], ['fotosalat'], ['racer'], ['autoball']];
+      for (let i = 1; i < phones.length; i++) for (const k of wishes[i - 1] || []) { const c = card(phones[i], k); if (c) c.querySelector('.gwish').click(); await sleep(120); }
+    }
+    document.title = 'LOBBY-READY';
+  })();
+</script>
+</body>
+</html>

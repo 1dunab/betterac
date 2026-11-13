@@ -1,4 +1,4 @@
-registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, settings: {
+registerGame({ key: 'geoguess', label: '📍 Geo-Pin', min: 1, about: 'Wo liegt das? Pin auf die Weltkarte, wer am nächsten ist, gewinnt.', cat: 'raten', settings: {
   scope: { label: 'Gebiet', type: 'choice', default: 'world', options: [
     { v: 'world', label: 'Welt' }, { v: 'europe', label: 'Europa' }, { v: 'germany', label: 'Deutschland' }] },
   category: { label: 'Kategorie', type: 'choice', default: 'cities', options: [

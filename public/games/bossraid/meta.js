@@ -1,4 +1,4 @@
-registerGame({ key: 'bossraid', label: '🐉 Boss Raid', min: 1, settings: {
+registerGame({ key: 'bossraid', label: '🐉 Boss Raid', min: 1, about: 'Gemeinsam gegen drei Bosse im Kugelhagel.', cat: 'koop', settings: {
   boss: { label: 'Boss', type: 'choice', default: 'kraken', options: [
     { v: 'kraken', label: '🐙 Void-Kraken' }, { v: 'mecha', label: '🤖 Mecha-Kern' },
     { v: 'dragon', label: '🐉 Neon-Drache' }, { v: 'random', label: '🎲 Zufall' }] },

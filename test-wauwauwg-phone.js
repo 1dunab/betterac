@@ -128,7 +128,7 @@ function sweepPath(d) {
   check(!!pick, 'the host finds 🐶 Wauwau-WG in the game picker');
   pick.click();
   await sleep(50);
-  check([...doc(c1).querySelectorAll('#gamePicker .sel')].map(b => b.textContent).join() === '🐶 Wauwau-WG', 'the picker marks Wauwau-WG as selected');
+  check([...doc(c1).querySelectorAll('#gamePicker .gamebtn.sel')].map(b => b.textContent).join() === '🐶 Wauwau-WG', 'the picker marks Wauwau-WG as selected');
   el(c1, 'startBtn').click();
   await sleep(150);
   check(dbg() && dbg().phase === 'home' && dbg().day === 1, 'the TV runs day 1 at home');

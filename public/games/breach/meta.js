@@ -1,4 +1,4 @@
-registerGame({ key: 'breach', label: '🎯 BREACH · Station NEXUS', min: 1, settings: {
+registerGame({ key: 'breach', label: '🎯 BREACH · Station NEXUS', min: 1, about: '3D-Taktik-Shooter im Splitscreen: Bombe legen oder entschärfen.', cat: 'duell', settings: {
   difficulty: { label: 'Bots', type: 'choice', default: 'easy', options: [
     { v: 'easy', label: 'Entspannt' }, { v: 'normal', label: 'Taktisch' }, { v: 'hard', label: 'Veteran' }
   ] },
