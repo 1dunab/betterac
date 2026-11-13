@@ -1,6 +1,6 @@
 // Rule tests for Rückwärtsgang: clip.js (the sums on a recording) and rules.js (turns, what the TV plays when,
 // recap, vote). No DOM, no sound: a recording is a made-up wave or just a number.
-const C = require('./public/games/rueckwaerts/clip.js');
+const C = require('./public/core/voiceclip.js');
 const R = require('./public/games/rueckwaerts/rules.js');
 const WORDS = require('./public/games/rueckwaerts/words.js');
 
@@ -57,7 +57,7 @@ function wave(rate, amp) {
 }
 
 // ---- rules.js ----
-const mk = (cfg, ids, seed) => { const g = R.create({ ids: ids || [1, 2, 3], cfg: cfg || {}, words: WORDS, seed: seed || 3 }); g.start(0); return g; };
+const mk = (cfg, ids, seed) => { const g = R.create({ ids: ids || [1, 2, 3], cfg: Object.assign({ modus: 'einzeln' }, cfg), words: WORDS, seed: seed || 3 }); g.start(0); return g; };
 {
   const g = mk({ stufe: 'leicht', runden: 2, wertung: 'an' }), st = g.state;
   eq(st.turns.length, 6, 'three players, two rounds: six turns');
@@ -185,6 +185,105 @@ const mk = (cfg, ids, seed) => { const g = R.create({ ids: ids || [1, 2, 3], cfg
   late.skip(0); late.skip(1);
   late.join(5);
   eq(late.state.turns.filter(t => t.id === 5).length, 0, 'who joins after the turns are over gets none');
+}
+
+// ---- mode "alle dasselbe Wort" ----
+const mkAll = (cfg, ids, seed) => { const g = R.create({ ids: ids || [1, 2, 3], cfg: Object.assign({ modus: 'alle' }, cfg), words: WORDS, seed: seed || 3 }); g.start(0); return g; };
+{
+  eq(R.create({ ids: [1], cfg: {}, words: WORDS }).cfg.modus, 'alle', 'the default mode is "alle"');
+  const g = mkAll({ anzahl: 2, wertung: 'an', stufe: 'leicht' }), st = g.state;
+  const sp = st.phase.id, others = [1, 2, 3].filter(x => x !== sp);
+  ok(st.phase.kind === 'say' && st.phase.round === 1 && WORDS.leicht.includes(st.phase.word), 'round one: a speaker and a word');
+  let v = g.view(sp, 0), vo = g.view(others[0], 0);
+  ok(v.modus === 'alle' && v.mine && v.canRec && !vo.mine && !vo.canRec && vo.cur === sp && v.rounds === 2, 'only the speaker can record the word');
+  ok(!g.clip(others[0], 1, 500, 10).ok, 'nobody else');
+  ok(g.clip(sp, 10, 800, 1000).ok && st.phase.kind === 'listen', 'the word is in: everybody listens');
+  eq(g.cues().map(c => c.label + c.rev).join(), 'vorfalse,zuruecktrue', 'forwards, then backwards');
+  ok(!g.done(sp, 1500) && !g.replay(sp, 1500), 'not while the TV is playing');
+  const end = 1000 + g.total();
+  ok(!g.done(others[0], end) && !g.replay(others[0], end) && !g.again(others[0], end).ok, 'replay, again and "go" are the speaker\'s');
+  ok(g.replay(sp, end) && st.phase.at === end, 'the speaker lets everybody hear it again');
+  const back = g.again(sp, end + 5000);
+  ok(back.ok && back.old === 10 && st.phase.kind === 'say', 'or says the word again');
+  g.clip(sp, 11, 800, end + 6000);
+  const t0 = end + 6000 + g.total();
+  ok(g.done(sp, t0), 'the speaker says go');
+  // everybody at once
+  ok(st.phase.kind === 'rec' && st.phase.turn === null && st.phase.until === t0 + R.REC_MS, 'everybody records at once, with a time limit');
+  v = g.view(others[0], t0);
+  ok(v.canRec && !v.reihum && !v.done && v.count === 0 && v.of === 3 && v.left === R.REC_MS && g.view(sp, t0).canRec, 'every phone may record, the speaker too');
+  ok(g.clip(others[0], 21, 700, t0 + 100).ok && g.view(others[0], t0 + 100).done && g.view(sp, t0 + 100).count === 1, 'a recording is in');
+  const again = g.clip(others[0], 22, 650, t0 + 200);
+  ok(again.ok && again.old === 21 && st.phase.clips[others[0]].ref === 22, 'a second one replaces the first');
+  g.clip(sp, 23, 700, t0 + 300);
+  eq(st.phase.until, t0 + R.REC_MS, 'two of three: still waiting');
+  g.clip(others[1], 24, 900, t0 + 400);
+  eq(st.phase.until, t0 + 400 + R.REC_GRACE, 'everybody delivered: a short grace period');
+  g.step(t0 + 400 + R.REC_GRACE);
+  // the show
+  ok(st.phase.kind === 'show' && st.phase.items.length === 3 && st.phase.i === 0, 'the show: three imitations');
+  eq(st.phase.items.map(it => it.ref).sort().join(), '22,23,24', 'each player\'s last recording');
+  let it = st.phase.items[0], t1 = st.phase.at;
+  eq(g.cues().map(c => c.label + c.ref + c.rev).join(), 'ergebnis' + it.ref + 'true', 'an imitation is played backwards');
+  eq(g.total(), R.SHOW_IN + it.dur + R.CLAP_MS, 'with time to clap after it');
+  const fan = [1, 2, 3].find(x => x !== it.id);
+  v = g.view(it.id, t1); vo = g.view(fan, t1);
+  ok(v.mine && !v.canClap && vo.canClap && !vo.mine && vo.by === it.id && vo.i === 1 && vo.n === 3, 'everybody but its owner may clap');
+  ok(!g.clap(it.id) && !g.clap(9), 'no applause for yourself, none from strangers');
+  const rev0 = st.rev;
+  for (let i = 0; i < R.CLAP_MAX + 5; i++) g.clap(fan);
+  ok(it.total === R.CLAP_MAX && it.claps[fan] === R.CLAP_MAX, 'taps count up to a limit per player');
+  eq(st.rev, rev0, 'clapping does not make the screen talk to every phone');
+  g.step(t1 + g.total() - 1); eq(st.phase.i, 0, 'still this one');
+  g.step(t1 + g.total()); eq(st.phase.i, 1, 'then the next, by itself');
+  const second = st.phase.items[1], fan2 = [1, 2, 3].find(x => x !== second.id);
+  g.clap(fan2); g.clap(fan2);
+  g.skip(t1 + 9000); eq(st.phase.i, 2, 'the host can hurry');
+  g.skip(t1 + 9001);
+  // the result
+  ok(st.phase.kind === 'result' && g.cues().map(c => c.label + c.ref + c.rev).join() === 'original11false', 'after the last one: the original once more');
+  ok(st.score[it.id] === R.CLAP_MAX && st.score[second.id] === 2, 'applause is the score');
+  ok(g.view(it.id, 0).best && g.view(it.id, 0).claps === R.CLAP_MAX && !g.view(second.id, 0).best && g.view(second.id, 0).claps === 2, 'the phones know their applause and who got the most');
+  const t2 = st.phase.at;
+  g.step(t2 + g.total());
+  ok(st.phase.kind === 'say' && st.phase.round === 2 && st.phase.id !== sp, 'round two: another speaker');
+  g.skip(t2 + 20000);
+  ok(st.phase.kind === 'over' && st.over && g.winners().join() === String(it.id) && g.view(it.id, 0).won, 'after the last word: over, the most applause wins');
+}
+{
+  // one after the other
+  const g = mkAll({ aufnahme: 'reihum', anzahl: 1 }, [1, 2, 3]), st = g.state, sp = st.phase.id;
+  g.clip(sp, 1, 500, 0);
+  g.step(g.total() + R.LISTEN_WAIT - 1); eq(st.phase.kind, 'listen', 'the speaker has not said go yet');
+  g.step(g.total() + R.LISTEN_WAIT);
+  ok(st.phase.kind === 'rec' && st.phase.turn !== null, 'after a while recording starts by itself, one player at a time');
+  const t0 = st.phase.at, first = st.phase.turn, queue = st.phase.queue.slice();
+  eq(queue.length, 2, 'the other two wait');
+  let v = g.view(first, t0), vq = g.view(queue[1], t0);
+  ok(v.reihum && v.canRec && v.wait === 0 && !vq.canRec && vq.wait === 2 && vq.turn === first, 'the phones know whose turn it is and how long they wait');
+  ok(!g.clip(queue[0], 5, 500, t0 + 10).ok, 'not out of turn');
+  ok(g.clip(first, 6, 500, t0 + 20).ok && st.phase.turn === queue[0] && st.phase.until === t0 + 20 + R.TURN_MS, 'a recording passes the turn on');
+  ok(!g.clip(first, 7, 500, t0 + 30).ok, 'no second go');
+  g.step(t0 + 20 + R.TURN_MS);
+  eq(st.phase.turn, queue[1], 'who takes too long is passed over');
+  g.leave(queue[1], t0 + 40000);
+  ok(st.phase.kind === 'show' && st.phase.items.length === 1, 'the last one leaves: the show with what there is');
+  ok(g.winners().length === 0 && !g.view(first, 0).canClap, 'scoring off: nobody wins; your own imitation gets no applause from you');
+  // nobody imitates; the speaker leaves; a latecomer joins the queue
+  const h = mkAll({ anzahl: 2 }, [1, 2]), hs = h.state, s1 = hs.phase.id;
+  h.clip(s1, 1, 500, 0); h.skip(10); h.skip(20);
+  ok(hs.phase.kind === 'say' && hs.phase.round === 2, 'nobody recorded: no show, next round');
+  const s2 = hs.phase.id;
+  h.leave(s2, 30);
+  ok(hs.phase.kind === 'say' && hs.phase.round === 2 && hs.phase.id === s1, 'the speaker leaves: somebody else speaks this round');
+  const k = mkAll({ aufnahme: 'reihum', anzahl: 1 }, [1, 2]), ks = k.state;
+  k.clip(ks.phase.id, 1, 500, 0); k.skip(10);
+  k.join(7);
+  ok(ks.phase.queue.includes(7) && k.view(7, 20).wait === ks.phase.queue.length, 'a latecomer joins the end of the queue');
+  const z = mkAll({ anzahl: 1 }, [1, 2]), zs = z.state;
+  z.clip(zs.phase.id, 1, 500, 0); z.skip(10);
+  z.join(7);
+  ok(z.view(7, 20).canRec && z.clip(7, 9, 400, 30).ok, 'with everybody at once a latecomer just records along');
 }
 
 console.log(process.exitCode ? '❌ Rückwärtsgang-Regeln fehlgeschlagen' : '✅ Rückwärtsgang: ' + checks + ' Regel-Checks bestanden');

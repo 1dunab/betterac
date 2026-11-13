@@ -1,4 +1,4 @@
-// Rückwärtsgang end to end: the real shell + real controllers in JSDOM. JSDOM has no microphone and no WebAudio,
+// Rückwärtsgang end to end, mode "jeder sein Wort": the real shell + real controllers in JSDOM. JSDOM has no microphone and no WebAudio,
 // so reading a recorded file is replaced by a stand-in that returns a made-up wave. The phone's own cutting,
 // shrinking and packing (clip.js) runs for real, and so does the screen's unpacking.
 // Checks a whole turn, a silent recording, trying again, the host skipping, a phone reload, joining and leaving,
@@ -56,8 +56,8 @@ const join = (p, name) => { p.$('nameInput').value = name; p.$('joinBtn').click(
   const [p1, p2, p3] = ['c1', 'c2', 'c3'].map(addPhone);
   await sleep(100);
   const w = screen.window;
-  check(w.RwRules && w.RwClip && w.RwWords && !w.Mic, 'rules, clip maths and words are on the screen page; the microphone module is not');
-  check(typeof p1.dom.window.Mic.fileInput === 'function' && p1.dom.window.RwClip && p1.dom.window.Mic.canLive() === false, 'the phones have microphone and clip maths; over http there is no live microphone');
+  check(w.RwRules && w.VoiceClip && w.RwWords && !w.Mic, 'rules, clip maths and words are on the screen page; the microphone module is not');
+  check(typeof p1.dom.window.Mic.fileInput === 'function' && p1.dom.window.VoiceClip && p1.dom.window.Mic.canLive() === false, 'the phones have microphone and clip maths; over http there is no live microphone');
   check(p1.qa('input[type=file][accept="audio/*"]').length === 1 && p1.qa('input[type=file][accept="video/*"]').length === 1, 'two ways without it: the recorder app and a short video');
   const reported = [];
   const origReport = w.reportWinners;
@@ -73,7 +73,7 @@ const join = (p, name) => { p.$('nameInput').value = name; p.$('joinBtn').click(
   const picker = () => [...p1.dom.window.document.querySelectorAll('#gamePicker button')].find(b => b.textContent === '⏪ Rückwärtsgang');
   check(!!picker(), 'Rückwärtsgang is in the game picker');
   picker().click(); await sleep(60);
-  p1.send({ t: 'shellConfig', game: 'rueckwaerts', cfg: { woerter: 'liste', stufe: 'leicht', runden: 1, wertung: 'an' } });
+  p1.send({ t: 'shellConfig', game: 'rueckwaerts', cfg: { modus: 'einzeln', woerter: 'liste', stufe: 'leicht', runden: 1, wertung: 'an' } });
   await sleep(40);
   p1.$('startBtn').click();
   await sleep(150);
@@ -86,7 +86,7 @@ const join = (p, name) => { p.$('nameInput').value = name; p.$('joinBtn').click(
   check(others.every(p => !p.shown('rwRec') && p.$('rwText').textContent.includes('ist dran')), 'the others see who is on');
   check(all.filter(p => p.shown('rwNext')).length === (a === p1 ? 0 : 1) && !p2.shown('rwNext'), 'only the host can skip, and not their own turn');
   await others[0].record();
-  others[0].send({ t: 'rwClip', pcm: w.RwClip.pack(new w.Float32Array(4000).fill(0.5)) });
+  others[0].send({ t: 'rwClip', pcm: w.VoiceClip.pack(new w.Float32Array(4000).fill(0.5)) });
   a.send({ t: 'rwClip', pcm: 'not-base64!!' }); a.send({ t: 'rwClip', pcm: 'QUJD' }); a.send({ t: 'rwClip' }); a.send({ t: 'rwClip', pcm: 'A'.repeat(400000) });
   await sleep(40);
   check(st().phase.kind === 'say' && Object.keys(dbg().clips).length === 0, 'recordings from the wrong player and garbage are ignored');
@@ -180,7 +180,7 @@ const join = (p, name) => { p.$('nameInput').value = name; p.$('joinBtn').click(
   // ---- abort, and everybody leaving ----
   p1.$('abortBtn').click(); await sleep(150);
   check(w.eval('active') === null && visible(p1.dom) === 'v-shelllobby', 'abort → lobby');
-  p1.send({ t: 'shellConfig', game: 'rueckwaerts', cfg: { woerter: 'frei', wertung: 'aus' } }); await sleep(40);
+  p1.send({ t: 'shellConfig', game: 'rueckwaerts', cfg: { modus: 'einzeln', woerter: 'frei', wertung: 'aus' } }); await sleep(40);
   p1.$('startBtn').click(); await sleep(150);
   const f = cur();
   check(st().phase.word === null && /ein Wort oder einen kurzen Satz/.test(f.$('rwWord').textContent), 'own words: the phone asks for any word');

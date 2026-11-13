@@ -6,7 +6,8 @@
 <title>Rückwärtsgang Dev</title>
 <!-- Rückwärtsgang without lobby or phones: bots "speak" little melodies and imitate them backwards, not quite
      right. Click the page once to unlock the sound.
-     ?woerter=liste|frei  ?stufe=leicht|mittel|schwer  ?runden=1..3  ?wertung=an|aus  ?n=1..8
+     ?modus=alle|einzeln  ?aufnahme=zugleich|reihum  ?anzahl=1..8 (words, mode alle)  ?runden=1..3 (mode einzeln)
+     ?woerter=liste|frei  ?stufe=leicht|mittel|schwer  ?wertung=an|aus  ?n=1..8
      ?phone=1  adds the real phone UI as player 1. On localhost the browser allows the live microphone, so you
                can play a whole turn at the desk with the computer's microphone.
      ?only=1   the phone alone (for screenshots)   ?host=0  the phone is not the host
@@ -44,6 +45,7 @@
 <script>window.__AC_ROLE__ = 'screen';</script>
 <script src="core/sfx.js"></script>
 <script src="core/mic.js"></script>
+<script src="core/voiceclip.js"></script>
 <script src="core/game-registry.js"></script>
 <script>
   // Shell-Stubs für beide Seiten: der Fernseher und (mit ?phone=1) ein Handy auf derselben Seite
@@ -68,6 +70,9 @@
   const $ = (id) => document.getElementById(id);
   const VIEWS = [];
   function showView(v) { VIEWS.forEach(n => $('v-' + n).classList.toggle('on', n === v)); }
+  let timerInt = null;
+  function startTimer(ms, el) { clearInterval(timerInt); const end = Date.now() + ms, upd = () => { el.textContent = Math.max(0, Math.ceil((end - Date.now()) / 1000)); }; upd(); timerInt = setInterval(upd, 200); }
+  function stopTimer() { clearInterval(timerInt); }
   const AirConsole = { SCREEN: 0 };
   const copy = (d) => JSON.parse(JSON.stringify(d));
   const ac = { message(to, d) {
@@ -76,7 +81,6 @@
   } };
 </script>
 <script src="games/rueckwaerts/meta.js"></script>
-<script src="games/rueckwaerts/clip.js"></script>
 <script src="games/rueckwaerts/words.js"></script>
 <script src="games/rueckwaerts/rules.js"></script>
 <script src="games/rueckwaerts/screen.js"></script>
@@ -107,7 +111,8 @@
 
     const game = window.GAMES.rueckwaerts();
     window.__game = game;
-    game.start(Object.keys(players).map(Number), { woerter: q.get('woerter') || 'liste', stufe: q.get('stufe') || 'mittel', runden: +q.get('runden') || 1, wertung: q.get('wertung') || 'aus' });
+    game.start(Object.keys(players).map(Number), { modus: q.get('modus') || 'alle', aufnahme: q.get('aufnahme') || 'zugleich', anzahl: +q.get('anzahl') || 3,
+      woerter: q.get('woerter') || 'liste', stufe: q.get('stufe') || 'mittel', runden: +q.get('runden') || 1, wertung: q.get('wertung') || 'aus' });
     const dbg = () => game._debug();
     const say = (id, m) => game.onMessage(id, m);
     if (q.get('nolive')) window.Mic.canLive = () => false;          // look at the phone as it is on the home Wi-Fi
@@ -115,7 +120,7 @@
     if (HUMAN) window.CONTROLLERS.rueckwaerts.activate();
 
     // ---- a bot's "voice": a few syllables, each a tone that rises or falls. Different for every bot and turn ----
-    const RATE = RwClip.RATE;
+    const RATE = VoiceClip.RATE;
     function melody(seed) {
       const n = 3 + seed % 3, len = Math.round(RATE * 0.26), x = new Float32Array(n * len);
       for (let k = 0; k < n; k++) {
@@ -127,24 +132,34 @@
     }
     // the imitation: the reverse, a little off in speed and with a wobble, as a person would manage
     function imitate(x, seed) {
-      const r = RwClip.reverse(x), k = 0.9 + (seed % 5) * 0.05, out = new Float32Array(Math.floor(r.length / k));
+      const r = VoiceClip.reverse(x), k = 0.9 + (seed % 5) * 0.05, out = new Float32Array(Math.floor(r.length / k));
       for (let i = 0; i < out.length; i++) out[i] = r[Math.min(r.length - 1, Math.floor(i * k))] * (0.8 + 0.2 * Math.sin(i / 900));
       return out;
     }
 
     // ---- bots ----
     const botIds = Object.keys(players).map(Number).filter(id => id !== HUMAN);
-    let lastKey = '', keyAt = 0, done = false;
+    let lastKey = '', keyAt = 0, done = false, did = {};
     function bots(now) {
-      const st = dbg().state, ph = st.phase, key = ph.kind + ':' + st.t + ':' + (ph.at || 0);
-      if (key !== lastKey) { lastKey = key; keyAt = now; done = false; }
+      const st = dbg().state, ph = st.phase, key = ph.kind + ':' + st.t + ':' + (ph.at || 0) + ':' + (ph.turn || 0);
+      if (key !== lastKey) { lastKey = key; keyAt = now; done = false; did = {}; }
       const age = now - keyAt, id = ph.id, seed = (id || 0) * 7 + st.t * 13;
       // ?drive=listen|reveal: a bot also records for the phone's player until that phase is reached (for screenshots)
       const drive = q.get('drive'), driven = id === HUMAN && drive && ph.kind !== drive && !(drive === 'listen' && ph.kind === 'reveal');
       if (!done && (botIds.includes(id) || driven)) {
-        if (ph.kind === 'say' && age > 1500) { done = true; say(id, { t: 'rwClip', pcm: RwClip.pack(melody(seed)) }); }
-        else if (ph.kind === 'listen' && !dbg().game.busy(now) && age > dbg().game.total() + 1200) { done = true; say(id, { t: 'rwClip', pcm: RwClip.pack(imitate(dbg().clips[ph.a].x, seed)) }); }
+        if (ph.kind === 'say' && age > 1500) { done = true; say(id, { t: 'rwClip', pcm: VoiceClip.pack(melody(seed)) }); }
+        else if (ph.kind === 'listen' && !dbg().game.busy(now) && age > dbg().game.total() + 1200) { done = true; say(id, { t: 'rwClip', pcm: VoiceClip.pack(imitate(dbg().clips[ph.a].x, seed)) }); }
         else if (ph.kind === 'reveal' && age > dbg().game.total() + 1500) { done = true; say(id, { t: 'rwDone' }); }
+      }
+      // mode "alle": every bot imitates the speaker's word, claps for the others, and the speaker says go
+      if (st.cfg.modus === 'alle') {
+        if (ph.kind === 'listen' && !done && botIds.includes(id) && age > dbg().game.total() + 900) { done = true; say(id, { t: 'rwDone' }); }
+        if (ph.kind === 'rec') botIds.forEach((b, k) => {
+          if (did[b] || (ph.turn !== null && ph.turn !== b) || age < (ph.turn !== null ? 1200 : 1500 + k * 1100)) return;
+          did[b] = 1; say(b, { t: 'rwClip', pcm: VoiceClip.pack(imitate(dbg().clips[ph.a].x, b * 7 + st.t * 13)) });
+        });
+        if (ph.kind === 'show' && dbg().game.playing(now) === null && age > 700) botIds.forEach((b, k) => { if (Math.random() < 0.06 + 0.03 * ((b + ph.i) % 3)) say(b, { t: 'rwClap' }); });
+        return;
       }
       if (!done && ph.kind === 'vote' && age > 1500) { done = true; botIds.forEach((b, k) => { const o = dbg().game.view(b, now).options; if (o.length) say(b, { t: 'rwVote', i: o[k % o.length].i }); }); }
     }

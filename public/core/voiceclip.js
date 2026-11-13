@@ -1,6 +1,7 @@
-// ===== Rückwärtsgang: the sums on a voice recording =====
+// Party Hub: the sums on a voice recording. Used by the games that record voices (Rückwärtsgang, Wer spricht da?).
 // No DOM and no WebAudio, so it runs in Node (test-rueckwaerts.js). A recording is a Float32Array of samples.
-// The phone cuts and shrinks it (prepare) and sends 16 kHz / 16 bit / mono as base64; the TV unpacks and reverses.
+// The phone cuts and shrinks it (prepare) and sends 16 kHz / 16 bit / mono as base64; the TV unpacks and plays.
+// Loaded by BOTH pages.
 (function (root) {
   const RATE = 16000;        // enough for a voice, and 4 seconds stay below 180 KB as text
   const MAX_SEC = 5;         // a longer recording is cut off
@@ -74,5 +75,5 @@
   }
 
   const api = { RATE, MAX_SEC, SILENT, peakOf, trim, normalize, resample, reverse, pack, unpack, envelope, prepare };
-  if (typeof module === 'object' && module.exports) module.exports = api; else root.RwClip = api;
+  if (typeof module === 'object' && module.exports) module.exports = api; else root.VoiceClip = api;
 })(typeof window !== 'undefined' ? window : globalThis);
