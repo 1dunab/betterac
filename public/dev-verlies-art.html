@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Würfelverlies Art</title>
+<!-- every portrait and crest of Würfelverlies on one page: dev-verlies-art.html?px=96 -->
+<style>
+  body { margin:0; background:#0b0b12; color:#ddd; font:12px system-ui,sans-serif; }
+  #grid { display:flex; flex-wrap:wrap; gap:8px; padding:10px; }
+  .c { text-align:center; width:var(--w); }
+  .c canvas { border-radius:50%; display:block; }
+  .c.sq canvas { border-radius:10px; }
+</style>
+</head>
+<body>
+<div id="grid"></div>
+<script src="games/verlies/data.js"></script>
+<script src="games/verlies/art.js"></script>
+<script>
+  const q = new URLSearchParams(location.search), px = +(q.get('px') || 96), sq = q.get('sq') === '1';
+  document.documentElement.style.setProperty('--w', px + 'px');
+  const grid = document.getElementById('grid');
+  for (const key of Object.keys(VerliesData.MONSTERS)) {
+    const d = document.createElement('div'); d.className = 'c' + (sq ? ' sq' : '');
+    const c = document.createElement('canvas'); c.width = px; c.height = px;
+    c.getContext('2d').drawImage(VerliesArt.portrait(key, px * (window.devicePixelRatio || 1)), 0, 0, px, px);
+    d.append(c, document.createTextNode(VerliesData.MONSTERS[key].name));
+    grid.append(d);
+  }
+  const crests = document.createElement('div');
+  crests.innerHTML = VerliesData.CRESTS.map((t) => VerliesArt.crestSVG(t, 40)).join(' ');
+  grid.append(crests);
+</script>
+</body>
+</html>

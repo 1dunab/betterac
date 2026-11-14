@@ -90,6 +90,7 @@ sentence, every phone has the whole catalogue to browse, and everybody can wish 
 | 🐺 Werwolfnacht | 5–16 | Werewolf with an automatic moderator: secret roles and night actions on the phones, narrated village on the TV |
 | 🎈 Skyfarers | 1–8 | Co-op 3D airship crew: harvest, build and defend a floating island through storms and dragons until dawn |
 | 🏰 Furt & Fehde | 1–8 | 3D castle-building strategy: farm, build walls and send banners across fords and bridges at up to three rival castles — flood truce, rams, mercenaries, fire, pacts and a bounty on the crown |
+| 🎲 Würfelverlies | 1–4 | Dice-dungeon board game: roll three of your 15 monster dice, summon pairs, unfold the die into a dungeon path on the TV board and topple the other masters — phones hold your dice, crests and monsters ([notes](docs/VERLIES.md)) |
 
 Game UI is in **German** (it's a living-room game night thing) — contributions keep that
 convention, docs are in English.
@@ -204,6 +205,32 @@ with ramps). Mitschauen works: the 3D picture is drawn into the shared canvas.
 `/dev-neonspur.html?n=2&bots=2&sim=9000&freeze=1` is the TV harness with autopilot riders,
 `/dev-neonspur-view.html` previews the renderer, `/dev-neonspur-phone.html?state=live` the
 phone UI. See the [Neonspur design notes](docs/NEONSPUR.md).
+
+## Würfelverlies
+
+An original dice-dungeon board game for 2–4 seats (humans and bots). Everyone picks one of four
+dice bags (🔥 Glutschmiede, 🌿 Wildwuchs, 💀 Gebeinkammer, 🌊 Tiefenflut): 15 dice, each one a
+monster or an item with six fixed faces. On your turn you tap three dice on your phone and roll
+them (they tumble in 3D on the phone and in the tray on the TV). Movement, attack, defence, magic
+and trap crests go into your private crest pool; two summon stars of the same level call one of
+those monsters. Its die then unfolds into one of the eleven cube nets: you turn, mirror and move the
+six-cell piece on your phone's mini board (dots show every valid spot, the TV shows the preview) and
+it becomes dungeon path. Monsters walk along paths only — anyone's — spend crests to move, attack,
+cast and lay traps, and when one reaches another master it takes a heart. Three hearts, and the
+last master standing wins.
+
+Attacks wait for the defender's phone: take it, 🛡️ defend, or answer with a trap reaction
+(counter, dodge, mirror shield). Settings: victory mode (last standing, first knock-out, two
+against two), hearts, crest cap, damage formula, board size, what happens to a fallen player's
+monsters and paths, think time, round limit, camera. The TV board zooms with the mouse wheel
+and pans by dragging; the camera otherwise follows the action. 28 monsters with their own
+portraits, painted in code — no pictures, sounds or texts from any existing game.
+
+`node test-verlies.js` checks the rules and bot games (cube nets are folded to prove they are
+nets), `node test-verlies-flow.js` plays through the real screen and phone pages.
+`/dev-verlies.html?n=4&sim=150000` runs the TV with bots, `/dev-verlies-phone.html?stage=place`
+the phone, `/dev-verlies-art.html` shows every portrait. See the
+[Würfelverlies design notes](docs/VERLIES.md).
 
 ## Werwolfnacht
 

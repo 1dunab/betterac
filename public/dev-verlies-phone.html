@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Würfelverlies Handy</title>
+<!-- The real Würfelverlies phone UI fed with made-up states (no server, no TV): bots play a few rounds in the page,
+     then the phone shows ?stage=prep|roll|summon|place|act|move|wait|defend|over for seat 1.
+     firefox --headless --window-size=400,860 --screenshot out.png "http://localhost:3001/dev-verlies-phone.html?stage=act" -->
+<style>
+  html, body { margin:0; height:100%; font-family:system-ui,sans-serif; color:#fff; background:#1a1a24; -webkit-user-select:none; user-select:none; }
+  .view { display:none; flex-direction:column; height:100%; box-sizing:border-box; }
+  .view.on { display:flex; }
+  .btn { border:none; border-radius:12px; padding:12px 16px; font-size:16px; font-weight:700; background:#3a3a48; color:#fff; }
+  .btn.go { background:#30d158; color:#06250f; }
+  .muted { opacity:.75; font-size:15px; }
+  canvas { background:#fff; }
+</style>
+</head>
+<body>
+<script src="core/game-registry.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const VIEWS = [];
+  function showView(v) { VIEWS.forEach((n) => $('v-' + n).classList.toggle('on', n === v)); }
+  let myHost = true; function updateAbort() {}
+  const AirConsole = { SCREEN: 0 };
+  const sent = [];
+  const ac = { message(to, d) { sent.push(d); if (window.__onSend) window.__onSend(d); } };
+</script>
+<script src="games/verlies/meta.js"></script>
+<script src="games/verlies/data.js"></script>
+<script src="games/verlies/rules.js"></script>
+<script src="games/verlies/bots.js"></script>
+<script src="games/verlies/art.js"></script>
+<script src="games/verlies/controller.js"></script>
+<script>
+  const D = VerliesData, R = VerliesRules, B = VerliesBots;
+  const q = new URLSearchParams(location.search), stage = q.get('stage') || 'act', n = +(q.get('n') || 2);
+  const seats = [{ name: 'Anna', color: '#ff3b4e' }, { name: 'Ben', color: '#2f8bff' }, { name: 'Cleo', color: '#2fd36a' }, { name: 'Dora', color: '#b45cff' }].slice(0, n);
+  const st = R.newGame({ seats: seats.map((s, i) => ({ bag: ['glut', 'tiefe', 'wild', 'gebein'][i] })), seed: +(q.get('seed') || 11) });
+  let r = 5; const rand = () => { r = (r * 16807) % 2147483647; return r / 2147483647; };
+  // bots play until round `rounds`
+  const rounds = +(q.get('rounds') || 6);
+  for (let k = 0; k < 4000 && !st.over && st.turn.round < rounds; k++) {
+    if (st.turn.pending) { R.respond(st, st.turn.pending.seat, B.answer(st, st.turn.pending.seat)); continue; }
+    const s = st.turn.seat, res = B.apply(st, s, B.plan(st, s, rand)); if (!res.ok) R.endTurn(st, s);
+  }
+  // now seat 0 is dran
+  st.turn.seat = 0; st.turn.pending = null; st.turn.roll = null; st.turn.chosen = null;
+  st.seats[0].crests = { MOV: 6, ATK: 3, DEF: 2, MAG: 4, TRP: 2 };
+  for (const m of st.mons) { m.moves = 0; m.attacked = false; m.used = {}; }
+  if (stage === 'roll') st.turn.stage = 'roll';
+  if (stage === 'summon' || stage === 'place') {
+    st.turn.stage = 'roll';
+    const free = R.freeDice(st, 0), pick = free.filter((k) => D.MONSTERS[st.seats[0].dice[k].key].level === 1).concat(free).slice(0, 3);
+    for (let seed = 1; seed < 4000; seed++) { const c = JSON.parse(JSON.stringify(st)); c.rng = seed; const x = R.roll(c, 0, pick); if (x.ok && x.ev[0].opts.length) { st.rng = seed; R.roll(st, 0, pick); break; } }
+    if (stage === 'place') R.summon(st, 0, st.turn.roll.opts[0]);
+  }
+  if (stage === 'act' || stage === 'move' || stage === 'defend' || stage === 'over') st.turn.stage = 'act';
+  if (stage === 'wait' || stage === 'defend') st.turn.seat = 1;
+  if (stage === 'defend') {
+    const t = st.mons.find((m) => m.seat === 0), a = st.mons.find((m) => m.seat === 1) || t;
+    st.turn.pending = { att: a.id, tgt: t.id, seat: 0, atk: a.atk, opts: R.defenseOptions(st, t).concat(['counter']) };
+  }
+  if (stage === 'over') st.over = { winners: [0], why: 'last', round: st.turn.round };
+  function boardString() { let s = ''; for (let i = 0; i < st.kind.length; i++) s += st.kind[i] === R.EMPTY ? '.' : String.fromCharCode((st.kind[i] === R.MASTER ? 65 : 97) + st.owner[i]); return s; }
+  const g = { w: st.w, h: st.h, n: st.n, teams: st.teams, cfg: st.cfg, board: boardString(), seats: st.seats, mons: st.mons, items: st.items, turn: st.turn, over: st.over, nextId: st.nextId };
+  const msg = stage === 'prep'
+    ? { t: 'vlState', phase: 'prep', me: 0, host: true, seats: seats.map((s) => Object.assign({ bot: false }, s)), prep: { bags: ['glut', null, 'gebein', null].slice(0, n), left: 31 } }
+    : { t: 'vlState', phase: st.over ? 'over' : 'play', me: 0, host: true, seats: seats.map((s, i) => Object.assign({ bot: i > 1, bag: st.seats[i].bag }, s)), g, secs: 74, defSecs: 14 };
+  CONTROLLERS.verlies.activate();
+  CONTROLLERS.verlies.onMessage(msg);
+  if (stage === 'move') { const b = document.querySelector('[data-act="move"]:not([disabled])'); if (b) b.click(); }
+  if (stage === 'roll') ['0', '1', '2'].forEach((k) => { const d = document.querySelector('[data-die="' + k + '"]'); if (d) d.click(); });
+  if ((stage === 'summon' || stage === 'place') && q.get('cubes') !== '1') document.getElementById('vlRollOk').click();
+  document.title = 'PHONE-READY';
+</script>
+</body>
+</html>

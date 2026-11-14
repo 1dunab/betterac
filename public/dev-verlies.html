@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>Würfelverlies Dev</title>
+<!-- Würfelverlies TV without phones: bots on every seat. ?n=2..4 seats, ?sim=<ms> fast-forwards with a fake clock,
+     ?humans=1 keeps seat 1 for a pretend human (it never acts, so the clock runs out), ?zug=0 no think time.
+     firefox --headless --window-size=1600,900 --screenshot out.png "http://localhost:3001/dev-verlies.html?n=4&sim=120000" -->
+<style>
+  html,body { margin:0; background:#0a0a14; height:100%; overflow:hidden; }
+  canvas#c { display:none; }
+</style>
+</head>
+<body>
+<canvas id="c" width="960" height="600"></canvas>
+<script>window.__AC_ROLE__ = 'screen';</script>
+<script src="core/sfx.js"></script>
+<script src="core/game-registry.js"></script>
+<script>
+  const cv = document.getElementById('c');
+  const ctx = cv.getContext('2d');
+  const players = { 1: { color: '#ff2d55', name: 'Anna', named: true } };
+  const nameOf = (id) => players[id] ? players[id].name : 'Spieler ' + id;
+  const shortName = nameOf;
+  const hostId = () => 1;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  function shuffle(a) { return a; }
+  function setBanner(t) { console.log('BANNER:', t); }
+  function reportWinners(ids) { console.log('Sieger:', ids); }
+  function endToLobby(m) { document.title = 'LOBBY:' + m; }
+  function rr(o, x, y, w, h, r) { o.beginPath(); o.roundRect ? o.roundRect(x, y, w, h, r) : o.rect(x, y, w, h); }
+  const ac = { message() {} };
+  function devFail(msg) { document.body.insertAdjacentHTML('beforeend', '<pre style="position:fixed;left:10px;top:10px;color:#fff;background:#600;padding:10px;z-index:99;white-space:pre-wrap">' + msg + '</pre>'); console.error(msg); }
+  window.addEventListener('error', (e) => devFail('JS-Fehler: ' + e.message + ' ' + (e.filename || '') + ':' + (e.lineno || '')));
+</script>
+<script src="games/verlies/meta.js"></script>
+<script src="games/verlies/data.js"></script>
+<script src="games/verlies/rules.js"></script>
+<script src="games/verlies/bots.js"></script>
+<script src="games/verlies/art.js"></script>
+<script src="games/verlies/render.js"></script>
+<script src="games/verlies/screen.js"></script>
+<script>
+  try {
+    const q = new URLSearchParams(location.search);
+    const simMs = parseInt(q.get('sim') || '0', 10), n = Math.max(2, Math.min(4, +(q.get('n') || 4))), humans = +(q.get('humans') || 0);
+    let fake = 1000;
+    if (simMs > 0) performance.now = () => fake;
+    const game = window.GAMES.verlies();
+    window.__game = game;
+    const cfg = {};
+    for (const k in GAME_META.verlies.settings) cfg[k] = GAME_META.verlies.settings[k].default;
+    cfg.bots = n - humans; cfg.zugzeit = q.get('zug') || '0';
+    if (q.get('modus')) cfg.modus = q.get('modus');
+    if (q.get('feld')) cfg.feld = q.get('feld');
+    game.start(humans ? [1] : [], cfg);
+    if (humans) game.onMessage(1, { t: 'vlBag', bag: q.get('bag') || 'tiefe' });
+    if (simMs > 0) {
+      window.VL_SKIPDRAW = true;
+      for (let t = 0; t < simMs; t += 33) { fake += 33; game.render(); }
+      window.VL_SKIPDRAW = false;
+      // ?show=place: after the fast-forward seat 1 is a human halfway through placing a piece (needs humans=1)
+      if (q.get('show') === 'place' && humans) {
+        const R = VerliesRules, st = game._debug().st;
+        st.turn.seat = 0; st.turn.pending = null; st.turn.stage = 'roll';
+        const free = R.freeDice(st, 0), pick = free.slice(0, 3);
+        for (let seed = 1; seed < 5000; seed++) { const c = JSON.parse(JSON.stringify(st)); c.rng = seed; const x = R.roll(c, 0, pick); if (x.ok && x.ev[0].opts.length) { st.rng = seed; break; } }
+        game.onMessage(1, { t: 'vlRoll', dice: pick });
+        game.onMessage(1, { t: 'vlPick', die: st.turn.roll.opts[0] });
+        const sh = +(q.get('shape') || 4), a = R.validAnchors(st, 0, sh, 0)[+(q.get('k') || 0)] || [st.w >> 1, st.h >> 1];
+        game.onMessage(1, { t: 'vlPiece', shape: sh, ori: 0, x: a[0] + +(q.get('dx') || 0), y: a[1] + +(q.get('dy') || 0) });
+      }
+      for (let t = 0; t < 1500; t += 33) { fake += 33; game.render(); }
+      (function loop() { fake += 16.7; game.render(); requestAnimationFrame(loop); })();
+    } else (function loop() { game.render(); requestAnimationFrame(loop); })();
+    document.title = 'DEV-RUNNING';
+  } catch (e) { devFail('Boot-Fehler: ' + (e.stack || e.message)); }
+</script>
+</body>
+</html>
